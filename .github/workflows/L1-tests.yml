@@ -642,7 +642,7 @@ jobs:
           ls -l /dev/disk/by-id/usb-JetFlash_Transcend_16GB_UEUIRCXT-0
 
       - name: Run unit tests without valgrind
-      if: ${{ env.RDK_SERVICES_L1_TEST == 'ON' }}
+        if: ${{ env.RDK_SERVICES_L1_TEST == 'ON' }}
         run: >
           PATH=$GITHUB_WORKSPACE/install/usr/bin:${PATH}
           LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:$GITHUB_WORKSPACE/install/usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH}
@@ -652,8 +652,7 @@ jobs:
           rm -rf $(pwd)/rdkL1TestResults.json
 
       - name: Run unit tests with valgrind
-      if: ${{ env.RDK_SERVICES_L1_TEST == 'ON' }}
-        if: ${{ !env.ACT }}
+        if: ${{ !env.ACT && env.RDK_SERVICES_L1_TEST == 'ON' }}
         run: >
           PATH=$GITHUB_WORKSPACE/install/usr/bin:${PATH}
           LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:$GITHUB_WORKSPACE/install/usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH}
@@ -670,8 +669,7 @@ jobs:
           rm -rf $(pwd)/rdkL1TestResults.json
 
       - name: Generate coverage
-      if: ${{ env.RDK_SERVICES_L1_TEST == 'ON' }}
-        if: ${{ matrix.coverage == 'with-coverage' && !env.ACT }}
+        if: ${{ matrix.coverage == 'with-coverage' && !env.ACT && env.RDK_SERVICES_L1_TEST == 'ON' }}
         run: >
           cp $GITHUB_WORKSPACE/entservices-testframework/Tests/L1Tests/.lcovrc_l1 ~/.lcovrc
           &&
@@ -696,7 +694,7 @@ jobs:
           filtered_coverage.info
 
       - name: Upload artifacts
-      if: ${{ env.RDK_SERVICES_L1_TEST == 'ON' }}
+        if: ${{ env.RDK_SERVICES_L1_TEST == 'ON' }}
         uses: actions/upload-artifact@v4
         with:
           name: artifacts-L1-displaysettings
