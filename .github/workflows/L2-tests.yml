@@ -100,7 +100,7 @@ jobs:
         with:
           repository: rdkcentral/entservices-displaysettings
           path: entservices-displaysettings
-          ref: develop
+          ref: feature/RDKEMW-13171
 
       - name: Checkout entservices-powermanager
         uses: actions/checkout@v3
