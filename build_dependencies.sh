@@ -95,4 +95,44 @@ cmake -G Ninja -S entservices-apis  -B build/entservices-apis \
 
 cmake --build build/entservices-apis --target install
 
+############################
+# generating extrnal headers
+cd $GITHUB_WORKSPACE
+cd entservices-testframework/Tests
+echo " Empty mocks creation to avoid compilation errors"
+echo "======================================================================================"
+mkdir -p headers
+mkdir -p headers/rdk/ds
+echo "dir created successfully"
+echo "======================================================================================"
+
+echo "======================================================================================"
+echo "empty headers creation"
+cd headers
+echo "current working dir: "${PWD}
+touch rdk/ds/audioOutputPort.hpp
+touch rdk/ds/compositeIn.hpp
+touch rdk/ds/dsDisplay.h
+touch rdk/ds/dsError.h
+touch rdk/ds/dsMgr.h
+touch rdk/ds/dsTypes.h
+touch rdk/ds/dsUtl.h
+touch rdk/ds/exception.hpp
+touch rdk/ds/hdmiIn.hpp
+touch rdk/ds/host.hpp
+touch rdk/ds/list.hpp
+touch rdk/ds/manager.hpp
+touch rdk/ds/sleepMode.hpp
+touch rdk/ds/videoDevice.hpp
+touch rdk/ds/videoOutputPort.hpp
+touch rdk/ds/videoOutputPortConfig.hpp
+touch rdk/ds/videoOutputPortType.hpp
+touch rdk/ds/videoResolution.hpp
+touch rdk/ds/audioOutputPortType.hpp
+touch rdk/ds/audioOutputPortConfig.hpp
+touch rdk/ds/pixelResolution.hpp
+touch edid-parser.hpp
+echo "files created successfully"
+echo "======================================================================================"
+
 ls -la ${GITHUB_WORKSPACE}
