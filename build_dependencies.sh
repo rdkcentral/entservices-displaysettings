@@ -132,6 +132,7 @@ touch rdk/ds/audioOutputPortType.hpp
 touch rdk/ds/audioOutputPortConfig.hpp
 touch rdk/ds/pixelResolution.hpp
 touch edid-parser.hpp
+touch rfcapi.h
 echo "files created successfully"
 echo "======================================================================================"
 
