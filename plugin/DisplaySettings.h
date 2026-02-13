@@ -287,6 +287,7 @@ namespace WPEFramework {
 	    std::condition_variable arcRoutingCV;
 	    bool m_hdmiInAudioDeviceConnected;
             bool m_arcEarcAudioEnabled;
+	    bool m_arcEarcConnectionNotifiedToUI;
             bool m_arcPendingSADRequest;   
 	    bool m_hdmiCecAudioDeviceDetected;
 	    bool m_systemAudioMode_Power_RequestedAndReceived;
@@ -360,6 +361,12 @@ namespace WPEFramework {
 		AVR_POWER_STATE_STANDBY,
 		AVR_POWER_STATE_STANDBY_TO_ON_TRANSITION
 	    };
+
+	    enum {
+		ARC_EARC_DISCONNECTED,
+		ARC_EARC_CONNECTED,
+	    };
+
            typedef enum {
 		SEND_AUDIO_DEVICE_POWERON_MSG = 1,
 		REQUEST_SHORT_AUDIO_DESCRIPTOR,
