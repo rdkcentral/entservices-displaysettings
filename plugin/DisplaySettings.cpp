@@ -4456,6 +4456,7 @@ namespace WPEFramework {
 void DisplaySettings::sendMsgThread()
 {
 	LOGINFO("%s: message Thread Start\n",__FUNCTION__);
+    printf("Test coverity flow: %s\n");
 	bool result = false;
         SendMsgInfo msgInfo;
 	

@@ -42,7 +42,7 @@ if (RDK_SERVICE_L2_TEST)
 endif (RDK_SERVICES_L2_TEST)
 
 target_compile_definitions(${MODULE_NAME} PRIVATE MODULE_NAME=Plugin_${PLUGIN_NAME})
-
+target_compile_options(${MODULE_NAME} PRIVATE -Wno-error)
 target_include_directories(${MODULE_NAME} PRIVATE ../helpers)
 
 find_package(DS)
