@@ -1562,8 +1562,8 @@ namespace WPEFramework {
             //sample this thunder plugin    : {"EDID":"AP///////wBSYgYCAQEBAQEXAQOAoFp4CvCdo1VJmyYPR0ovzgCBgIvAAQEBAQEBAQEBAQEBAjqAGHE4LUBYLEUAQIRjAAAeZiFQsFEAGzBAcDYAQIRjAAAeAAAA/ABUT1NISUJBLVRWCiAgAAAA/QAXSw9EDwAKICAgICAgAbECAytxSpABAgMEBQYHICImCQcHEQcYgwEAAGwDDAAQADgtwBUVHx/jBQMBAR2AGHEcFiBYLCUAQIRjAACeAR0AclHQHiBuKFUAQIRjAAAejArQiiDgLRAQPpYAsIRDAAAYjAqgFFHwFgAmfEMAsIRDAACYAAAAAAAAAAAAAAAA9w"}
             LOGINFOMETHOD();
 
-            bool success = true;
             vector<uint8_t> edidVec({'u','n','k','n','o','w','n' });
+			string edidbase64 = "";
             try
             {
                 vector<uint8_t> edidVec2;
@@ -1578,24 +1578,20 @@ namespace WPEFramework {
                     uint16_t size = min(edidVec.size(), (size_t)numeric_limits<uint16_t>::max());
                     if(edidVec.size() > (size_t)numeric_limits<uint16_t>::max())
                         LOGERR("Size too large to use ToString base64 wpe api");
-                    string edidbase64;
                     Core::ToString((uint8_t*)&edidVec[0], size, true, edidbase64);
-                    response["EDID"] = edidbase64;
 
                 }
                 else
                 {
                     LOGWARN("failure: HDMI0 not connected!");
-                    success = false;
                 }
             }
             catch (const device::Exception& err)
             {
                 LOG_DEVICE_EXCEPTION0();
-                success = false;
             }
-
-            returnResponse(success);
+            response["EDID"] = edidbase64;
+            returnResponse(true);
         }
 
         uint32_t DisplaySettings::readHostEDID(const JsonObject& parameters, JsonObject& response)
