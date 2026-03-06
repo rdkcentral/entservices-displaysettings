@@ -465,7 +465,7 @@ namespace WPEFramework {
 				// Send power request immediately to query power status of the AVR
 				// Coverity Fix: ID 229 - Data race: Protect timer start with mutex
 				 LOGINFO("[HDMI_ARC0] Starting the timer to check audio device power status after power on msg!!!\n");
-				     m_AudioDevicePowerOnStatusTimer.start(AUDIO_DEVICE_POWER_TRANSITION_TIME_IN_MILLISECONDS);
+				 m_AudioDevicePowerOnStatusTimer.start(AUDIO_DEVICE_POWER_TRANSITION_TIME_IN_MILLISECONDS);
 			     } /*m_hdmiCecAudioDeviceDetected */
                              else {
                                  // Coverity Fix: ID 229 - Data race: Protect m_AudioDeviceDetectTimer access with m_callMutex
