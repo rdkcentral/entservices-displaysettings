@@ -4189,7 +4189,7 @@ namespace WPEFramework {
 				if(m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_eARC)
 				{
 					aPort.enableARC(dsAUDIOARCSUPPORT_eARC, false);
-					m_arcEarcAudioEnabled = false; 
+					m_arcEarcAudioEnabled = false;
 					LOGINFO("Disable eARC \n");
 	                                if (m_hdmiInAudioDeviceConnected == false) {
 					   /* Update Arctype only when device is disconneced */
@@ -4199,7 +4199,7 @@ namespace WPEFramework {
 				else if (m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_ARC)
 				{				   
 					aPort.enableARC(dsAUDIOARCSUPPORT_ARC, false);
-					m_arcEarcAudioEnabled = false;	
+					m_arcEarcAudioEnabled = false;  
 					LOGINFO("Disable ARC \n");
 	                                if (m_hdmiInAudioDeviceConnected == false) {
 					   /* Update Arctype only when device is disconnected */
@@ -4506,19 +4506,19 @@ void DisplaySettings::sendMsgThread()
                  return;
 
 	// Coverity Fix: ID 227 - Data race: Use condition variable pattern to safely check exit flag
-	while(true) 
+	while(true)
 	{
         {
             std::unique_lock<std::mutex> lock(DisplaySettings::_instance->m_sendMsgMutex);
             if (!_instance->m_sendMsgThreadExit)
             {
 		        msgInfo.msg = -1;
-        	    msgInfo.param = NULL;
+                msgInfo.param = NULL;
 		        {
                     LOGINFO("%s: Debug: Wait for message \n",__FUNCTION__);
 		            // Coverity Fix: ID 227 - Data race: Wait on condition variable with lock held
 		            _instance->m_sendMsgCV.wait(lock, []{return (_instance->m_sendMsgThreadRun == true);});
-		       
+
 		            // Coverity Fix: ID 227 - Check exit flag with lock held to prevent data race
 		            if (_instance->m_sendMsgThreadExit == true)
 		            {
@@ -5112,10 +5112,10 @@ void DisplaySettings::sendMsgThread()
 	    static int retryArcCount = 0;
 	    std::lock_guard<std::mutex> lock(m_callMutex);
             int types = dsAUDIOARCSUPPORT_NONE;
-	    
+
 	    // Coverity Fix: ID 224 - Data race: Use existing function to protect m_currentArcRoutingState read
 	    int currentArcState = getCurrentArcRoutingState();
-	    
+            
 	    try{
             device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort("HDMI_ARC0");
             aPort.getSupportedARCTypes(&types);
@@ -5123,7 +5123,7 @@ void DisplaySettings::sendMsgThread()
 	       if((types & dsAUDIOARCSUPPORT_eARC) && (m_hdmiInAudioDeviceConnected == false)) {
                    m_hdmiInAudioDeviceConnected = true;
 		   m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_eARC;
-		    if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_DISCONNECTED) {
+		   if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_DISCONNECTED) {
                        LOGINFO("Triggered from HPD: eARC audio device power on: Notify UI !!! \n");
                        connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, true);
 		       m_arcEarcConnectionNotifiedToUI = ARC_EARC_CONNECTED;
