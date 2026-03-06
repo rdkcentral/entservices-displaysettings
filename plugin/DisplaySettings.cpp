@@ -1619,7 +1619,8 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION0();
             }
 
-            returnResponse(success);
+            response["EDID"] = edidbase64;
+            returnResponse(true);
         }
 
         uint32_t DisplaySettings::readHostEDID(const JsonObject& parameters, JsonObject& response)
@@ -4188,7 +4189,7 @@ namespace WPEFramework {
 				if(m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_eARC)
 				{
 					aPort.enableARC(dsAUDIOARCSUPPORT_eARC, false);
-					m_arcEarcAudioEnabled = false;
+					m_arcEarcAudioEnabled = false; 
 					LOGINFO("Disable eARC \n");
 	                                if (m_hdmiInAudioDeviceConnected == false) {
 					   /* Update Arctype only when device is disconneced */
@@ -5122,12 +5123,12 @@ void DisplaySettings::sendMsgThread()
 	       if((types & dsAUDIOARCSUPPORT_eARC) && (m_hdmiInAudioDeviceConnected == false)) {
                    m_hdmiInAudioDeviceConnected = true;
 		   m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_eARC;
-		   if (m_arcEarcAudioEnabled == false) {
+		    if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_DISCONNECTED) {
                        LOGINFO("Triggered from HPD: eARC audio device power on: Notify UI !!! \n");
                        connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, true);
 		       m_arcEarcConnectionNotifiedToUI = ARC_EARC_CONNECTED;
 		   } else {
-		       LOGINFO("Arc enabled already m_arcEarcAudioEnabled =%d", m_arcEarcAudioEnabled);
+		       LOGINFO("Arc connection notification is already sent m_arcEarcConnectionNotifiedToUI = %d", m_arcEarcConnectionNotifiedToUI);
 		   }
                } else if(m_hdmiInAudioDeviceConnected == false) {
 		    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
