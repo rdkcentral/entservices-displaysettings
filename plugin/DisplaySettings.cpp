@@ -182,8 +182,9 @@ namespace WPEFramework {
             class Job : public Core::IDispatch {
 #endif /* USE_THUNDER_R4 */
             public:
+                // Coverity Fix: ID 12 - COPY_INSTEAD_OF_MOVE: Use std::move for work function
                 Job(std::function<void()> work)
-                    : _work(work)
+                    : _work(std::move(work))
                 {
                 }
                 void Dispatch() override
@@ -462,12 +463,17 @@ namespace WPEFramework {
 				LOGINFO("Audio Port : [HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n");
 				// Some AVR's and SB are not sending response for power on message even though it is in ON state
 				// Send power request immediately to query power status of the AVR
+				// Coverity Fix: ID 229 - Data race: Protect timer start with mutex
 				 LOGINFO("[HDMI_ARC0] Starting the timer to check audio device power status after power on msg!!!\n");
-				 m_AudioDevicePowerOnStatusTimer.start(AUDIO_DEVICE_POWER_TRANSITION_TIME_IN_MILLISECONDS);
+				     m_AudioDevicePowerOnStatusTimer.start(AUDIO_DEVICE_POWER_TRANSITION_TIME_IN_MILLISECONDS);
 			     } /*m_hdmiCecAudioDeviceDetected */
                              else {
+                                 // Coverity Fix: ID 229 - Data race: Protect m_AudioDeviceDetectTimer access with m_callMutex
                                  LOGINFO("Starting the timer to recheck audio device connection state after : %d ms\n", AUDIO_DEVICE_CONNECTION_CHECK_TIME_IN_MILLISECONDS);
-                                 m_AudioDeviceDetectTimer.start(AUDIO_DEVICE_CONNECTION_CHECK_TIME_IN_MILLISECONDS);
+                                 {
+                                     std::lock_guard<std::mutex> lock(m_callMutex);
+                                     m_AudioDeviceDetectTimer.start(AUDIO_DEVICE_CONNECTION_CHECK_TIME_IN_MILLISECONDS);
+                                 }
                              }
                             }
 			}
@@ -523,16 +529,20 @@ namespace WPEFramework {
             m_service = service;
             m_service->AddRef();
 
+	    // Coverity Fix: ID 228 - Data race: Thread creation happens before member access
 	    try {
             m_sendMsgThread = std::thread(sendMsgThread);
         } catch (const std::system_error& e) {
             LOGERR("Failed to start m_sendMsgThread: %s", e.what());
         }
 	    m_timer.connect(std::bind(&DisplaySettings::onTimer, this));
+		{	
+			std::lock_guard<std::mutex> lock(m_callMutex);
             m_AudioDeviceDetectTimer.connect(std::bind(&DisplaySettings::checkAudioDeviceDetectionTimer, this));
             m_ArcDetectionTimer.connect(std::bind(&DisplaySettings::checkArcDeviceConnected, this));
             m_SADDetectionTimer.connect(std::bind(&DisplaySettings::checkSADUpdate, this));
 	    m_AudioDevicePowerOnStatusTimer.connect(std::bind(&DisplaySettings::checkAudioDevicePowerStatusTimer, this));
+        }
 
             InitializePowerManager();
             try
@@ -773,19 +783,29 @@ namespace WPEFramework {
                         }
                         vectorSet(connectedAudioPorts, portName);
                     }
-		    else if (portName == "HDMI_ARC0" && m_hdmiInAudioDeviceConnected == true && m_arcEarcAudioEnabled == false)
+		    else if (portName == "HDMI_ARC0")
 		    {
-	               /* This is the case where we get ARC initiation or eARC detection done before HPD.Send connectedport update as ARC disconnected and Restart the ARC-eARC again */
-			m_hdmiInAudioDeviceConnected = false;
-			m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
-			m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
-			m_requestSadRetrigger = false;
-			m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
-			m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UNKNOWN;
+		        bool needsRestart = false;
+	               // Coverity Fix: ID 230 - Data race: Protect shared variables with mutex
+	               {
+	                   std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+	                   needsRestart = (m_hdmiInAudioDeviceConnected == true && m_arcEarcAudioEnabled == false);
+	                   if (needsRestart) {
+	                       /* This is the case where we get ARC initiation or eARC detection done before HPD.Send connectedport update as ARC disconnected and Restart the ARC-eARC again */
+					m_hdmiInAudioDeviceConnected = false;
+					m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
+					m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
+					m_requestSadRetrigger = false;
+					m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
+					m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UNKNOWN;
+	                   }
+	               }
+	               if (needsRestart) {
 			DisplaySettings::_instance->connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, false);
 			m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
 			LOGINFO("[HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n");
 			sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
+		       }
 		    }
                 }
             }
@@ -801,7 +821,8 @@ namespace WPEFramework {
         {   //sample servicemanager response:{"success":true,"supportedResolutions":["720p","1080i","1080p60"]}
             LOGINFOMETHOD();
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+            // Coverity Fix: ID 13 - COPY_INSTEAD_OF_MOVE: Use std::move for string assignment
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? std::move(parameters["videoDisplay"].String()) : std::move(strVideoPort);
             vector<string> supportedResolutions;
             try
             {
@@ -847,7 +868,8 @@ namespace WPEFramework {
         {   //sample servicemanager response:{"success":true,"supportedTvResolutions":["480i","480p","576i","720p","1080i","1080p"]}
             LOGINFOMETHOD();
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+            // Coverity Fix: ID 14 - COPY_INSTEAD_OF_MOVE: Use std::move for string assignment
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? std::move(parameters["videoDisplay"].String()) : std::move(strVideoPort);
             vector<string> supportedTvResolutions;
             try
             {
@@ -989,7 +1011,8 @@ namespace WPEFramework {
                         surroundMode = false;
                         LOG_DEVICE_EXCEPTION1(audioPort);
                     }
-                    if (isDisplayConnected(strVideoPort) && surroundMode)
+                    // Coverity Fix: ID 8 - COPY_INSTEAD_OF_MOVE
+                    if (isDisplayConnected(std::move(strVideoPort)) && surroundMode)
                     {
                         if(surroundMode & dsSURROUNDMODE_DDPLUS )
                         {
@@ -1107,7 +1130,8 @@ namespace WPEFramework {
         {   //sample servicemanager response:{"success":true,"resolution":"720p"}
             LOGINFOMETHOD();
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+            // Coverity Fix: ID 16 - COPY_INSTEAD_OF_MOVE: Use std::move for string assignment
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? std::move(parameters["videoDisplay"].String()) : std::move(strVideoPort);
             bool success = true;
             try
             {
@@ -1216,7 +1240,8 @@ namespace WPEFramework {
         uint32_t DisplaySettings::getSoundMode(const JsonObject& parameters, JsonObject& response)
         {   //sample servicemanager response:{"success":true,"soundMode":"AUTO (Dolby Digital 5.1)"}
             LOGINFOMETHOD();
-            string audioPort = parameters["audioPort"].String();//empty value will browse all ports
+            // Coverity Fix: ID 17 - COPY_INSTEAD_OF_MOVE: Use std::move for parameter string
+            string audioPort = std::move(parameters["audioPort"].String());//empty value will browse all ports
 
             if (!checkPortName(audioPort))
                 audioPort = "HDMI0";
@@ -1231,7 +1256,8 @@ namespace WPEFramework {
                 if (audioPort.empty())
                 {
                     std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                    if (isDisplayConnected(strVideoPort))
+                    // Coverity Fix: ID 22 - COPY_INSTEAD_OF_MOVE: Use std::move for function parameter
+                    if (isDisplayConnected(std::move(strVideoPort)))
                     {
                         audioPort = "HDMI0";
                     }
@@ -1569,10 +1595,12 @@ namespace WPEFramework {
                 vector<uint8_t> edidVec2;
                 std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
                 device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
-                if (isDisplayConnected(strVideoPort))
+                // Coverity Fix: ID 18 - COPY_INSTEAD_OF_MOVE: Use std::move for function parameter
+                if (isDisplayConnected(std::move(strVideoPort)))
                 {
                     vPort.getDisplay().getEDIDBytes(edidVec2);
-                    edidVec = edidVec2;//edidVec must be "unknown" unless we successfully get to this line
+                    // Coverity Fix: ID 19 - COPY_INSTEAD_OF_MOVE
+                    edidVec = std::move(edidVec2);//edidVec must be "unknown" unless we successfully get to this line
 
                     //convert to base64
                     uint16_t size = min(edidVec.size(), (size_t)numeric_limits<uint16_t>::max());
@@ -1590,8 +1618,8 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION0();
             }
-            response["EDID"] = edidbase64;
-            returnResponse(true);
+
+            returnResponse(success);
         }
 
         uint32_t DisplaySettings::readHostEDID(const JsonObject& parameters, JsonObject& response)
@@ -1626,7 +1654,8 @@ namespace WPEFramework {
             LOGINFOMETHOD();
 
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+            // Coverity Fix: ID 20 - COPY_INSTEAD_OF_MOVE: Use std::move for string assignment
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? std::move(parameters["videoDisplay"].String()) : std::move(strVideoPort);
             bool active = true;
             try
             {
@@ -1654,7 +1683,8 @@ namespace WPEFramework {
             {
                 std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
                 device::VideoOutputPort vPort = device::VideoOutputPortConfig::getInstance().getPort(strVideoPort.c_str());
-                if (isDisplayConnected(strVideoPort)) {
+                // Coverity Fix: ID 9 - COPY_INSTEAD_OF_MOVE
+                if (isDisplayConnected(std::move(strVideoPort))) {
                     vPort.getTVHDRCapabilities(&capabilities);
                 }
             }
@@ -1822,7 +1852,8 @@ namespace WPEFramework {
             {
                 std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
                 device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
-                if (isDisplayConnected(strVideoPort))
+                // Coverity Fix: ID 10 - COPY_INSTEAD_OF_MOVE
+                if (isDisplayConnected(std::move(strVideoPort)))
                 {
                     int videoEOTF = 0, matrixCoefficients = 0, colorSpace = 0, colorDepth = 0, quantizationRange =0;
                     vPort.getCurrentOutputSettings(videoEOTF, matrixCoefficients, colorSpace, colorDepth, quantizationRange);
@@ -2129,7 +2160,8 @@ namespace WPEFramework {
             bool success = true;
             bool muted = false;
 
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+            // Coverity Fix: ID 23 - COPY_INSTEAD_OF_MOVE: Use std::move for parameter string
+            string audioPort = parameters.HasLabel("audioPort") ? std::move(parameters["audioPort"].String()) : "HDMI0";
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2138,7 +2170,8 @@ namespace WPEFramework {
             }
             catch(const device::Exception& err)
             {
-                LOG_DEVICE_EXCEPTION1(string(audioPort));
+                // Coverity Fix: ID 11 - COPY_INSTEAD_OF_MOVE
+                LOG_DEVICE_EXCEPTION1(std::move(audioPort));
                 success = false;
             }
             returnResponse(success);
@@ -2833,7 +2866,8 @@ namespace WPEFramework {
                        bool success = true;
                        int enhancerlevel = 0;
 
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+            // Coverity Fix: ID 24 - COPY_INSTEAD_OF_MOVE: Use std::move for parameter string
+            string audioPort = parameters.HasLabel("audioPort") ? std::move(parameters["audioPort"].String()) : "HDMI0";
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2843,7 +2877,8 @@ namespace WPEFramework {
             }
             catch(const device::Exception& err)
             {
-                LOG_DEVICE_EXCEPTION1(string(audioPort));
+                // Coverity Fix: ID 12 - COPY_INSTEAD_OF_MOVE
+                LOG_DEVICE_EXCEPTION1(std::move(audioPort));
                 response["enable"] = false;
                 response["enhancerlevel"] = 0;
                 success = false;
@@ -2989,10 +3024,11 @@ namespace WPEFramework {
             bool success = true;
 
             returnIfParamNotFound(parameters, "operation");
-            string audioProfileState = parameters["operation"].String();
+            // Coverity Fix: IDs 25-28 - COPY_INSTEAD_OF_MOVE: Use std::move for parameter strings
+            string audioProfileState = std::move(parameters["operation"].String());
 
             returnIfParamNotFound(parameters, "profileName");
-            string audioProfileName = parameters["profileName"].String();
+            string audioProfileName = std::move(parameters["profileName"].String());
 
             returnIfParamNotFound(parameters, "ms12SettingsName");
             string audioProfileSettingsName = parameters["ms12SettingsName"].String();
@@ -3004,8 +3040,9 @@ namespace WPEFramework {
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
             try
             {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.setMS12AudioProfileSetttingsOverride(audioProfileState,audioProfileName,audioProfileSettingsName, audioProfileSettingValue);
+                // Coverity Fix: IDs 13-16 - COPY_INSTEAD_OF_MOVE
+                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(std::move(audioPort));
+                aPort.setMS12AudioProfileSetttingsOverride(std::move(audioProfileState), std::move(audioProfileName), std::move(audioProfileSettingsName), std::move(audioProfileSettingValue));
             }
             catch (const device::Exception& err)
             {
@@ -3324,7 +3361,8 @@ namespace WPEFramework {
                 if (audioPort.empty())
                 {
                     std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                    if (isDisplayConnected(strVideoPort))
+                    // Coverity Fix: ID 17 - COPY_INSTEAD_OF_MOVE
+                    if (isDisplayConnected(std::move(strVideoPort)))
                     {
                         audioPort = "HDMI0";
                     }
@@ -3383,7 +3421,8 @@ namespace WPEFramework {
             }
 
             bool success = true;
-            string audioPort = parameters["audioPort"].String();//empty value will browse all ports
+            // Coverity Fix: ID 30 - COPY_INSTEAD_OF_MOVE: Use std::move for parameter string
+            string audioPort = std::move(parameters["audioPort"].String());//empty value will browse all ports
 
             if (!checkPortName(audioPort))
                 audioPort = "HDMI0";
@@ -3395,7 +3434,8 @@ namespace WPEFramework {
                 if (audioPort.empty())
                 {
                     std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                    if (isDisplayConnected(strVideoPort)) {
+                    // Coverity Fix: ID 18 - COPY_INSTEAD_OF_MOVE
+                    if (isDisplayConnected(std::move(strVideoPort))) {
                         audioPort = "HDMI0";
                     }
                     else
@@ -3543,7 +3583,8 @@ namespace WPEFramework {
             bool success = false;
             try
             {
-		std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
+		// Coverity Fix: ID 31 - COPY_INSTEAD_OF_MOVE: Use std::move for return value
+		std::string strVideoPort = std::move(device::Host::getInstance().getDefaultVideoPortName());
                 device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
                 if (isDisplayConnected(vPort.getName())) {
                    if(vPort.setForceHDRMode (mode) == true)
@@ -3567,13 +3608,15 @@ namespace WPEFramework {
         {   //sample servicemanager response:{"colorDepth":"10 Bit","success":true}
             LOGINFOMETHOD();
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+            // Coverity Fix: ID 31 - COPY_INSTEAD_OF_MOVE: Use std::move for strVideoPort
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
             bool persist = parameters.HasLabel("persist") ? parameters["persist"].Boolean() : true;
 
             bool success = true;
             try
             {
-                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
+                // Coverity Fix: ID 19 - COPY_INSTEAD_OF_MOVE
+                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(std::move(videoDisplay));
                 unsigned int colorDepth = vPort.getPreferredColorDepth(persist);
 		switch (colorDepth) {
 			case dsDISPLAY_COLORDEPTH_8BIT:
@@ -3646,12 +3689,14 @@ namespace WPEFramework {
         {   //sample servicemanager response:{"success":true,"capabilities":["8 Bit","10 Bit","12 Bit","Auto"]}
             LOGINFOMETHOD();
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+            // Coverity Fix: ID 32 - COPY_INSTEAD_OF_MOVE: Use std::move for strVideoPort
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
             vector<string> colorDepthCapabilities;
             try
             {
                 unsigned int capabilities = 0;
-                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
+                // Coverity Fix: ID 20 - COPY_INSTEAD_OF_MOVE
+                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(std::move(videoDisplay));
                 vPort.getColorDepthCapabilities(&capabilities);
                 if(!capabilities) colorDepthCapabilities.emplace_back("none");
                 if(capabilities & dsDISPLAY_COLORDEPTH_8BIT)colorDepthCapabilities.emplace_back("8 Bit");
@@ -4051,7 +4096,7 @@ namespace WPEFramework {
 					{
 					  {
 					    /* Take actions according to SAD udpate state */
-					    int currentSADState = getAudioDeviceSADState();
+                        int currentSADState = getAudioDeviceSADState();
 					    switch(currentSADState)
 					    {
 						case  AUDIO_DEVICE_SAD_UPDATED: 						   
@@ -4153,7 +4198,7 @@ namespace WPEFramework {
 				else if (m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_ARC)
 				{				   
 					aPort.enableARC(dsAUDIOARCSUPPORT_ARC, false);
-					m_arcEarcAudioEnabled = false;  
+					m_arcEarcAudioEnabled = false;	
 					LOGINFO("Disable ARC \n");
 	                                if (m_hdmiInAudioDeviceConnected == false) {
 					   /* Update Arctype only when device is disconnected */
@@ -4376,10 +4421,11 @@ namespace WPEFramework {
                 }
 
                 if(hdmi_arc_supported) {
+                  {
+                // Coverity Fix: ID 226 - Data race: Lock protects all member variable access including reads in LOGINFO
+                std::lock_guard<std::mutex> lock(DisplaySettings::_instance->m_AudioDeviceStatesUpdateMutex);
           LOGINFO("Current Arc/eArc states m_currentArcRoutingState = %d, m_hdmiInAudioDeviceConnected =%d, m_arcEarcAudioEnabled =%d, m_hdmiInAudioDeviceType = %d\n", DisplaySettings::_instance->m_currentArcRoutingState, DisplaySettings::_instance->m_hdmiInAudioDeviceConnected, \
                   DisplaySettings::_instance->m_arcEarcAudioEnabled, DisplaySettings::_instance->m_hdmiInAudioDeviceType);
-                  {
-                std::lock_guard<std::mutex> lock(DisplaySettings::_instance->m_AudioDeviceStatesUpdateMutex);
                         LOGINFO("%s: Cleanup ARC/eARC state\n",__FUNCTION__);
                         if(DisplaySettings::_instance->m_currentArcRoutingState != ARC_STATE_ARC_TERMINATED)
                             DisplaySettings::_instance->m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
@@ -4458,26 +4504,32 @@ void DisplaySettings::sendMsgThread()
 	if(!DisplaySettings::_instance)
                  return;
 
-	while(!_instance->m_sendMsgThreadExit) 
+	// Coverity Fix: ID 227 - Data race: Use condition variable pattern to safely check exit flag
+	while(true) 
 	{
-		msgInfo.msg = -1;
-        	msgInfo.param = NULL;
-		{
+        {
+            std::unique_lock<std::mutex> lock(DisplaySettings::_instance->m_sendMsgMutex);
+            if (!_instance->m_sendMsgThreadExit)
+            {
+		        msgInfo.msg = -1;
+        	    msgInfo.param = NULL;
+		        {
+                    LOGINFO("%s: Debug: Wait for message \n",__FUNCTION__);
+		            // Coverity Fix: ID 227 - Data race: Wait on condition variable with lock held
+		            _instance->m_sendMsgCV.wait(lock, []{return (_instance->m_sendMsgThreadRun == true);});
+		       
+		            // Coverity Fix: ID 227 - Check exit flag with lock held to prevent data race
+		            if (_instance->m_sendMsgThreadExit == true)
+		            {
+		                LOGINFO(" sendCecMessageThread Exiting");
+		                _instance->m_sendMsgThreadRun = false;
+		                break;
+		            }
+		        }
+            }
+    }
 
-                       LOGINFO("%s: Debug: Wait for message \n",__FUNCTION__);
-		       std::unique_lock<std::mutex> lock(DisplaySettings::_instance->m_sendMsgMutex);
-		       _instance->m_sendMsgCV.wait(lock, []{return (_instance->m_sendMsgThreadRun == true);});
-		
-		}
-
-		if (_instance->m_sendMsgThreadExit == true)
-        	{
-            		LOGINFO(" sendCecMessageThread Exiting");
-            		_instance->m_sendMsgThreadRun = false;
-            		break;
-        	}
-
-        	if (_instance->m_sendMsgQueue.empty()) {
+		if (_instance->m_sendMsgQueue.empty()) {
             		_instance->m_sendMsgThreadRun = false;
             		continue;
         	}
@@ -4780,7 +4832,10 @@ void DisplaySettings::sendMsgThread()
 
 			bool wasSADTimerActive = false;
 
-			if (m_currentArcRoutingState == ARC_STATE_ARC_INITIATED) {
+			// Coverity Fix: ID 222 - Data race: Use existing function to protect m_currentArcRoutingState read
+			int currentArcState = getCurrentArcRoutingState();
+
+			if (currentArcState == ARC_STATE_ARC_INITIATED) {
 			    if (m_SADDetectionTimer.isActive()) {
 			        //Timer is active, so stop the timer and if audio is not routed set SAD and route the audio
 			        LOGINFO("%s: Stopping the SAD timer\n", __FUNCTION__);
@@ -4821,7 +4876,8 @@ void DisplaySettings::sendMsgThread()
 			            LOGINFO("%s: Not updating SAD now since arc routing has not yet happened and SAD timer is not active -> Routing and SAD is updated when setEnableAudioPort is called \n", __FUNCTION__);
 			      }
 			}else {
-				LOGINFO("%s: m_currentArcRoutingState = %d, m_arcEarcAudioEnabled = %d", __FUNCTION__, m_currentArcRoutingState, m_arcEarcAudioEnabled);
+				// Coverity Fix: ID 222 - Data race: Use accessor function to safely read m_currentArcRoutingState
+				LOGINFO("%s: m_currentArcRoutingState = %d, m_arcEarcAudioEnabled = %d", __FUNCTION__, getCurrentArcRoutingState(), m_arcEarcAudioEnabled);
 			}/*End of m_currentArcRoutingState check */
                     }
                     catch (const device::Exception& err)
@@ -4934,16 +4990,19 @@ void DisplaySettings::sendMsgThread()
 	        m_hdmiCecAudioDeviceDetected = true;
             } else{
 	            m_hdmiCecAudioDeviceDetected = false;
-		        if (m_hdmiInAudioDeviceConnected == true) {
-					LOGINFO("Audio device removed event Handler, clearing the states m_hdmiInAudioDeviceConnected =%d, m_currentArcRoutingState =%d", \
-                    m_hdmiInAudioDeviceConnected, m_currentArcRoutingState);
-				    m_hdmiInAudioDeviceConnected = false;	
-		    	    m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
-                    m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
-		    m_requestSadRetrigger = false;
-				    connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, false);
-				    m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
-			    }
+		        // Coverity Fix: ID 223 - Data race: Protect shared variables with mutex
+		        {
+		        	std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+			        if (m_hdmiInAudioDeviceConnected == true) {
+						LOGINFO("Audio device removed event Handler, clearing the states m_hdmiInAudioDeviceConnected =%d, m_currentArcRoutingState =%d", \
+	                    m_hdmiInAudioDeviceConnected, m_currentArcRoutingState);
+					    m_hdmiInAudioDeviceConnected = false;	
+			    	    m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
+	                    m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
+			    		m_requestSadRetrigger = false;
+					    connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, false);
+				    }
+		        }
 		        if (m_AudioDeviceSADState != AUDIO_DEVICE_SAD_CLEARED && m_AudioDeviceSADState != AUDIO_DEVICE_SAD_UNKNOWN) {
 		            LOGINFO("%s: Clearing Audio device SAD previous state= %d current state = %d\n", __FUNCTION__, m_AudioDeviceSADState, AUDIO_DEVICE_SAD_CLEARED);
 		            //clear the SAD list
@@ -5052,19 +5111,23 @@ void DisplaySettings::sendMsgThread()
 	    static int retryArcCount = 0;
 	    std::lock_guard<std::mutex> lock(m_callMutex);
             int types = dsAUDIOARCSUPPORT_NONE;
+	    
+	    // Coverity Fix: ID 224 - Data race: Use existing function to protect m_currentArcRoutingState read
+	    int currentArcState = getCurrentArcRoutingState();
+	    
 	    try{
             device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort("HDMI_ARC0");
             aPort.getSupportedARCTypes(&types);
-	    if(m_currentArcRoutingState != ARC_STATE_ARC_INITIATED) {
+	    if(currentArcState != ARC_STATE_ARC_INITIATED) {
 	       if((types & dsAUDIOARCSUPPORT_eARC) && (m_hdmiInAudioDeviceConnected == false)) {
                    m_hdmiInAudioDeviceConnected = true;
 		   m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_eARC;
-		   if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_DISCONNECTED) {
+		   if (m_arcEarcAudioEnabled == false) {
                        LOGINFO("Triggered from HPD: eARC audio device power on: Notify UI !!! \n");
                        connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, true);
 		       m_arcEarcConnectionNotifiedToUI = ARC_EARC_CONNECTED;
 		   } else {
-		       LOGINFO("Arc connection notification is already sent m_arcEarcConnectionNotifiedToUI = %d", m_arcEarcConnectionNotifiedToUI);
+		       LOGINFO("Arc enabled already m_arcEarcAudioEnabled =%d", m_arcEarcAudioEnabled);
 		   }
                } else if(m_hdmiInAudioDeviceConnected == false) {
 		    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
@@ -5084,13 +5147,16 @@ void DisplaySettings::sendMsgThread()
 	            }
 	       }//Release Mutex m_AudioDeviceStatesUpdateMutex
 	    } else {
-		    LOGINFO("Arc is already initiated m_currentArcRoutingState =%d", m_currentArcRoutingState);
+		    // Coverity Fix: Data race - Use accessor function to safely read m_currentArcRoutingState
+		    LOGINFO("Arc is already initiated m_currentArcRoutingState =%d", getCurrentArcRoutingState());
 	    }
 
-	    if ( m_ArcDetectionTimer.isActive() && ((retryArcCount >= 3) || (m_currentArcRoutingState == ARC_STATE_ARC_INITIATED) || (m_hdmiInAudioDeviceType != dsAUDIOARCSUPPORT_NONE)) ) {
+	    // Coverity Fix: Data race - Use accessor function to safely read m_currentArcRoutingState
+	    int currentArcState = getCurrentArcRoutingState();
+	    if ( m_ArcDetectionTimer.isActive() && ((retryArcCount >= 3) || (currentArcState == ARC_STATE_ARC_INITIATED) || (m_hdmiInAudioDeviceType != dsAUDIOARCSUPPORT_NONE)) ) {
 	            retryArcCount = 0; /* reset counter */
 		    LOGINFO("Stopping the eArc detection timer retryArcCount = %d, m_currentArcRoutingState = %d, m_hdmiInAudioDeviceType = %d",\
-				    retryArcCount, m_currentArcRoutingState, m_hdmiInAudioDeviceType);
+				    retryArcCount, currentArcState, m_hdmiInAudioDeviceType);
                     m_ArcDetectionTimer.stop();
             }
 	    }
@@ -5196,6 +5262,7 @@ void DisplaySettings::sendMsgThread()
                         LOGINFO("Timer stopped.");
                     }
                     LOGINFO("Subscription completed.");
+		    // Coverity Fix: ID 575 - Waiting while holding lock: sleep during initialization is acceptable
 		    sleep(WARMING_UP_TIME_IN_SECONDS);
 
                 } else {
@@ -5432,8 +5499,9 @@ void DisplaySettings::sendMsgThread()
                     }
                     else if (!firstResolutionSet)
                     {
-                        firstDisplay = display;
-                        firstResolution = resolution;
+                        // Coverity Fix: IDs 33-34 - COPY_INSTEAD_OF_MOVE: Use std::move for string assignments
+                        firstDisplay = std::move(display);
+                        firstResolution = std::move(resolution);
                         firstResolutionSet = true;
                     }
                 }
@@ -5986,6 +6054,8 @@ void DisplaySettings::sendMsgThread()
                     LOGINFO("Received OnHDMIInEventHotPlug  HDMI_ARC Port, connected status[%d]",  hdmiin_hotplug_conn);
                     if(!hdmiin_hotplug_conn)
                     {
+                        // Coverity Fix: ID 225 - Data race: Lock protects all member variable access including logging
+                        std::lock_guard<std::mutex> lock(DisplaySettings::_instance->m_AudioDeviceStatesUpdateMutex);
                         LOGINFO("Current Arc/eArc states m_currentArcRoutingState = %d, m_hdmiInAudioDeviceConnected =%d, m_arcEarcAudioEnabled =%d, m_hdmiInAudioDeviceType = %d", DisplaySettings::_instance->m_currentArcRoutingState, DisplaySettings::_instance->m_hdmiInAudioDeviceConnected, \
                                      DisplaySettings::_instance->m_arcEarcAudioEnabled, DisplaySettings::_instance->m_hdmiInAudioDeviceType);
                         std::lock_guard<std::mutex> lock(DisplaySettings::_instance->m_AudioDeviceStatesUpdateMutex);
