@@ -4527,7 +4527,7 @@ void DisplaySettings::sendMsgThread()
             }
     }
 
-		if (_instance->m_sendMsgQueue.empty()) {
+			if (_instance->m_sendMsgQueue.empty()) {
             		_instance->m_sendMsgThreadRun = false;
             		continue;
         	}
