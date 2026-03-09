@@ -4525,6 +4525,12 @@ void DisplaySettings::sendMsgThread()
 		            }
 		        }
             }
+            else
+            {
+                LOGINFO(" sendCecMessageThread Exiting");
+                _instance->m_sendMsgThreadRun = false;
+                break;
+            }
     }
 
 			if (_instance->m_sendMsgQueue.empty()) {
