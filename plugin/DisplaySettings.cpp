@@ -1618,7 +1618,6 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION0();
             }
-
             response["EDID"] = edidbase64;
             returnResponse(true);
         }
