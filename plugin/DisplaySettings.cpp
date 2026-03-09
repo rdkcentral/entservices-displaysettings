@@ -182,7 +182,6 @@ namespace WPEFramework {
             class Job : public Core::IDispatch {
 #endif /* USE_THUNDER_R4 */
             public:
-                // Coverity Fix: ID 12 - COPY_INSTEAD_OF_MOVE: Use std::move for work function
                 Job(std::function<void()> work)
                     : _work(std::move(work))
                 {
@@ -821,8 +820,7 @@ namespace WPEFramework {
         {   //sample servicemanager response:{"success":true,"supportedResolutions":["720p","1080i","1080p60"]}
             LOGINFOMETHOD();
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            // Coverity Fix: ID 13 - COPY_INSTEAD_OF_MOVE: Use std::move for string assignment
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? std::move(parameters["videoDisplay"].String()) : std::move(strVideoPort);
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
             vector<string> supportedResolutions;
             try
             {
@@ -868,8 +866,7 @@ namespace WPEFramework {
         {   //sample servicemanager response:{"success":true,"supportedTvResolutions":["480i","480p","576i","720p","1080i","1080p"]}
             LOGINFOMETHOD();
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            // Coverity Fix: ID 14 - COPY_INSTEAD_OF_MOVE: Use std::move for string assignment
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? std::move(parameters["videoDisplay"].String()) : std::move(strVideoPort);
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
             vector<string> supportedTvResolutions;
             try
             {
@@ -1011,7 +1008,6 @@ namespace WPEFramework {
                         surroundMode = false;
                         LOG_DEVICE_EXCEPTION1(audioPort);
                     }
-                    // Coverity Fix: ID 8 - COPY_INSTEAD_OF_MOVE
                     if (isDisplayConnected(std::move(strVideoPort)) && surroundMode)
                     {
                         if(surroundMode & dsSURROUNDMODE_DDPLUS )
@@ -1130,8 +1126,7 @@ namespace WPEFramework {
         {   //sample servicemanager response:{"success":true,"resolution":"720p"}
             LOGINFOMETHOD();
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            // Coverity Fix: ID 16 - COPY_INSTEAD_OF_MOVE: Use std::move for string assignment
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? std::move(parameters["videoDisplay"].String()) : std::move(strVideoPort);
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
             bool success = true;
             try
             {
@@ -1240,8 +1235,7 @@ namespace WPEFramework {
         uint32_t DisplaySettings::getSoundMode(const JsonObject& parameters, JsonObject& response)
         {   //sample servicemanager response:{"success":true,"soundMode":"AUTO (Dolby Digital 5.1)"}
             LOGINFOMETHOD();
-            // Coverity Fix: ID 17 - COPY_INSTEAD_OF_MOVE: Use std::move for parameter string
-            string audioPort = std::move(parameters["audioPort"].String());//empty value will browse all ports
+            string audioPort = parameters["audioPort"].String();//empty value will browse all ports
 
             if (!checkPortName(audioPort))
                 audioPort = "HDMI0";
@@ -1256,7 +1250,6 @@ namespace WPEFramework {
                 if (audioPort.empty())
                 {
                     std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                    // Coverity Fix: ID 22 - COPY_INSTEAD_OF_MOVE: Use std::move for function parameter
                     if (isDisplayConnected(std::move(strVideoPort)))
                     {
                         audioPort = "HDMI0";
@@ -1595,11 +1588,9 @@ namespace WPEFramework {
                 vector<uint8_t> edidVec2;
                 std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
                 device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
-                // Coverity Fix: ID 18 - COPY_INSTEAD_OF_MOVE: Use std::move for function parameter
                 if (isDisplayConnected(std::move(strVideoPort)))
                 {
                     vPort.getDisplay().getEDIDBytes(edidVec2);
-                    // Coverity Fix: ID 19 - COPY_INSTEAD_OF_MOVE
                     edidVec = std::move(edidVec2);//edidVec must be "unknown" unless we successfully get to this line
 
                     //convert to base64
@@ -1654,8 +1645,7 @@ namespace WPEFramework {
             LOGINFOMETHOD();
 
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            // Coverity Fix: ID 20 - COPY_INSTEAD_OF_MOVE: Use std::move for string assignment
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? std::move(parameters["videoDisplay"].String()) : std::move(strVideoPort);
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
             bool active = true;
             try
             {
@@ -1683,7 +1673,6 @@ namespace WPEFramework {
             {
                 std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
                 device::VideoOutputPort vPort = device::VideoOutputPortConfig::getInstance().getPort(strVideoPort.c_str());
-                // Coverity Fix: ID 9 - COPY_INSTEAD_OF_MOVE
                 if (isDisplayConnected(std::move(strVideoPort))) {
                     vPort.getTVHDRCapabilities(&capabilities);
                 }
@@ -1852,7 +1841,6 @@ namespace WPEFramework {
             {
                 std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
                 device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
-                // Coverity Fix: ID 10 - COPY_INSTEAD_OF_MOVE
                 if (isDisplayConnected(std::move(strVideoPort)))
                 {
                     int videoEOTF = 0, matrixCoefficients = 0, colorSpace = 0, colorDepth = 0, quantizationRange =0;
@@ -2160,8 +2148,7 @@ namespace WPEFramework {
             bool success = true;
             bool muted = false;
 
-            // Coverity Fix: ID 23 - COPY_INSTEAD_OF_MOVE: Use std::move for parameter string
-            string audioPort = parameters.HasLabel("audioPort") ? std::move(parameters["audioPort"].String()) : "HDMI0";
+            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2170,7 +2157,6 @@ namespace WPEFramework {
             }
             catch(const device::Exception& err)
             {
-                // Coverity Fix: ID 11 - COPY_INSTEAD_OF_MOVE
                 LOG_DEVICE_EXCEPTION1(std::move(audioPort));
                 success = false;
             }
@@ -2866,8 +2852,7 @@ namespace WPEFramework {
                        bool success = true;
                        int enhancerlevel = 0;
 
-            // Coverity Fix: ID 24 - COPY_INSTEAD_OF_MOVE: Use std::move for parameter string
-            string audioPort = parameters.HasLabel("audioPort") ? std::move(parameters["audioPort"].String()) : "HDMI0";
+            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2877,7 +2862,6 @@ namespace WPEFramework {
             }
             catch(const device::Exception& err)
             {
-                // Coverity Fix: ID 12 - COPY_INSTEAD_OF_MOVE
                 LOG_DEVICE_EXCEPTION1(std::move(audioPort));
                 response["enable"] = false;
                 response["enhancerlevel"] = 0;
@@ -3024,11 +3008,10 @@ namespace WPEFramework {
             bool success = true;
 
             returnIfParamNotFound(parameters, "operation");
-            // Coverity Fix: IDs 25-28 - COPY_INSTEAD_OF_MOVE: Use std::move for parameter strings
-            string audioProfileState = std::move(parameters["operation"].String());
+            string audioProfileState = parameters["operation"].String();
 
             returnIfParamNotFound(parameters, "profileName");
-            string audioProfileName = std::move(parameters["profileName"].String());
+            string audioProfileName = parameters["profileName"].String();
 
             returnIfParamNotFound(parameters, "ms12SettingsName");
             string audioProfileSettingsName = parameters["ms12SettingsName"].String();
@@ -3040,7 +3023,6 @@ namespace WPEFramework {
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
             try
             {
-                // Coverity Fix: IDs 13-16 - COPY_INSTEAD_OF_MOVE
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(std::move(audioPort));
                 aPort.setMS12AudioProfileSetttingsOverride(std::move(audioProfileState), std::move(audioProfileName), std::move(audioProfileSettingsName), std::move(audioProfileSettingValue));
             }
@@ -3361,7 +3343,6 @@ namespace WPEFramework {
                 if (audioPort.empty())
                 {
                     std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                    // Coverity Fix: ID 17 - COPY_INSTEAD_OF_MOVE
                     if (isDisplayConnected(std::move(strVideoPort)))
                     {
                         audioPort = "HDMI0";
@@ -3421,8 +3402,7 @@ namespace WPEFramework {
             }
 
             bool success = true;
-            // Coverity Fix: ID 30 - COPY_INSTEAD_OF_MOVE: Use std::move for parameter string
-            string audioPort = std::move(parameters["audioPort"].String());//empty value will browse all ports
+            string audioPort = parameters["audioPort"].String();//empty value will browse all ports
 
             if (!checkPortName(audioPort))
                 audioPort = "HDMI0";
@@ -3434,7 +3414,6 @@ namespace WPEFramework {
                 if (audioPort.empty())
                 {
                     std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                    // Coverity Fix: ID 18 - COPY_INSTEAD_OF_MOVE
                     if (isDisplayConnected(std::move(strVideoPort))) {
                         audioPort = "HDMI0";
                     }
@@ -3583,8 +3562,7 @@ namespace WPEFramework {
             bool success = false;
             try
             {
-		// Coverity Fix: ID 31 - COPY_INSTEAD_OF_MOVE: Use std::move for return value
-		std::string strVideoPort = std::move(device::Host::getInstance().getDefaultVideoPortName());
+		std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
                 device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
                 if (isDisplayConnected(vPort.getName())) {
                    if(vPort.setForceHDRMode (mode) == true)
@@ -3608,7 +3586,6 @@ namespace WPEFramework {
         {   //sample servicemanager response:{"colorDepth":"10 Bit","success":true}
             LOGINFOMETHOD();
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            // Coverity Fix: ID 31 - COPY_INSTEAD_OF_MOVE: Use std::move for strVideoPort
             string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
             bool persist = parameters.HasLabel("persist") ? parameters["persist"].Boolean() : true;
 
@@ -3688,7 +3665,6 @@ namespace WPEFramework {
         {   //sample servicemanager response:{"success":true,"capabilities":["8 Bit","10 Bit","12 Bit","Auto"]}
             LOGINFOMETHOD();
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            // Coverity Fix: ID 32 - COPY_INSTEAD_OF_MOVE: Use std::move for strVideoPort
             string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
             vector<string> colorDepthCapabilities;
             try
@@ -5503,7 +5479,6 @@ void DisplaySettings::sendMsgThread()
                     }
                     else if (!firstResolutionSet)
                     {
-                        // Coverity Fix: IDs 33-34 - COPY_INSTEAD_OF_MOVE: Use std::move for string assignments
                         firstDisplay = std::move(display);
                         firstResolution = std::move(resolution);
                         firstResolutionSet = true;
