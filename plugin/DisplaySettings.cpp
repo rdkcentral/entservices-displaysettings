@@ -5152,7 +5152,7 @@ void DisplaySettings::sendMsgThread()
 	    }
 
 	    // Coverity Fix: Data race - Use accessor function to safely read m_currentArcRoutingState
-	    int currentArcState = getCurrentArcRoutingState();
+	    currentArcState = getCurrentArcRoutingState();
 	    if ( m_ArcDetectionTimer.isActive() && ((retryArcCount >= 3) || (currentArcState == ARC_STATE_ARC_INITIATED) || (m_hdmiInAudioDeviceType != dsAUDIOARCSUPPORT_NONE)) ) {
 	            retryArcCount = 0; /* reset counter */
 		    LOGINFO("Stopping the eArc detection timer retryArcCount = %d, m_currentArcRoutingState = %d, m_hdmiInAudioDeviceType = %d",\
