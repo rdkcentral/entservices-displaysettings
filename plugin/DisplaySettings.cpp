@@ -3615,8 +3615,7 @@ namespace WPEFramework {
             bool success = true;
             try
             {
-                // Coverity Fix: ID 19 - COPY_INSTEAD_OF_MOVE
-                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(std::move(videoDisplay));
+                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
                 unsigned int colorDepth = vPort.getPreferredColorDepth(persist);
 		switch (colorDepth) {
 			case dsDISPLAY_COLORDEPTH_8BIT:
@@ -3695,8 +3694,7 @@ namespace WPEFramework {
             try
             {
                 unsigned int capabilities = 0;
-                // Coverity Fix: ID 20 - COPY_INSTEAD_OF_MOVE
-                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(std::move(videoDisplay));
+                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
                 vPort.getColorDepthCapabilities(&capabilities);
                 if(!capabilities) colorDepthCapabilities.emplace_back("none");
                 if(capabilities & dsDISPLAY_COLORDEPTH_8BIT)colorDepthCapabilities.emplace_back("8 Bit");
