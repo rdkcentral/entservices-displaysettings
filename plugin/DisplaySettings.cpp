@@ -1185,28 +1185,39 @@ namespace WPEFramework {
         uint32_t DisplaySettings::setCurrentResolution(const JsonObject& parameters, JsonObject& response)
         {   //sample servicemanager response:
             LOGINFOMETHOD();
+			LOGINFO("Aishwarya Entered setCurrentResolution()");
             returnIfParamNotFound(parameters, "videoDisplay");
             returnIfParamNotFound(parameters, "resolution");
 
             string videoDisplay = parameters["videoDisplay"].String();
             string resolution = parameters["resolution"].String();
+			LOGINFO("Aishwarya Requested videoDisplay: %s", videoDisplay.c_str());
+            LOGINFO("Aishwarya Requested resolution: %s", resolution.c_str());
 
             bool hasPersist = parameters.HasLabel("persist");
             bool persist = hasPersist ? parameters["persist"].Boolean() : true;
+			LOGINFO("Aishwarya persist: %d (default=true if not provided)", persist);
             if (!hasPersist) LOGINFO("persist: true");
  
             bool isIgnoreEdidArg = parameters.HasLabel("ignoreEdid");
             bool isIgnoreEdid = isIgnoreEdidArg ? parameters["ignoreEdid"].Boolean() : false;
+			LOGINFO("Aishwarya ignoreEdid: %d", isIgnoreEdid);
             if (!isIgnoreEdidArg) LOGINFO("isIgnoreEdid: false"); else LOGINFO("isIgnoreEdid: %d", isIgnoreEdid);
 
             bool success = true;
             try
             {
+				LOGINFO("Aishwarya Fetching VideoOutputPort for: %s", videoDisplay.c_str());
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
+				LOGINFO("Aishwarya VideoOutputPort fetched successfully");
+				LOGINFO("Aishwarya Calling setResolution(res=%s, persist=%d, ignoreEdid=%d)",resolution.c_str(), persist, isIgnoreEdid);
                 vPort.setResolution(resolution, persist, isIgnoreEdid);
+				LOGINFO("Aishwarya setResolution completed successfully");
+				
             }
             catch (const device::Exception& err)
             {
+				LOGERR("Aishwarya Exception while setting resolution");
                 LOG_DEVICE_EXCEPTION2(videoDisplay, resolution);
                 success = false;
             }
