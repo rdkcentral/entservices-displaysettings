@@ -662,6 +662,7 @@ namespace WPEFramework {
 
             ASSERT(service == m_service);
 
+			m_service = nullptr;
             m_service->Release();
             m_service = nullptr;
         }
