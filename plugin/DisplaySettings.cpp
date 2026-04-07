@@ -556,22 +556,27 @@ namespace WPEFramework {
                 LOGWARN("Current power state %d", m_powerState);
             }
             LOGWARN ("DisplaySettings::Initialize completes line:%d", __LINE__);
+            printf("Ram-Test-Debug-Remove: DisplaySettings trying to get SystemMode interface\n");
              _remotStoreObject = service->QueryInterfaceByCallsign<Exchange::ISystemMode>("org.rdk.SystemMode");
 
 	    ASSERT (nullptr != _remotStoreObject);
 
-
+            printf("Ram-Test-Debug-Remove: DisplaySettings _remotStoreObject = %p\n", (void*)_remotStoreObject);
 	    if(_remotStoreObject)
 	    {
                const string& callsign = "org.rdk.DisplaySettings";
 		    const string& systemMode = "DEVICE_OPTIMIZE";
+               printf("Ram-Test-Debug-Remove: DisplaySettings calling ClientActivated with callsign=%s, systemMode=%s\n", callsign.c_str(), systemMode.c_str());
 	            _remotStoreObject->ClientActivated(callsign,systemMode);
+               printf("Ram-Test-Debug-Remove: DisplaySettings ClientActivated call completed\n");
                     _remotStoreObject->Release();
                     _remotStoreObject = nullptr;		    
 	    }
             else
             {
+                    printf("Ram-Test-Debug-Remove: DisplaySettings _remotStoreObject is NULL, writing to file directly\n");
                     Utils::String::updateSystemModeFile( "DEVICE_OPTIMIZE", "callsign", "org.rdk.DisplaySettings","add") ;
+                    printf("Ram-Test-Debug-Remove: DisplaySettings updateSystemModeFile completed\n");
             }
 
             // On success return empty, to indicate there is no error text.

@@ -229,51 +229,66 @@ namespace String {
     }
 
     inline void updateSystemModeFile(const std::string& systemMode, const std::string& property, const std::string& value, const std::string& action) {
+        printf("Ram-Test-Debug-Remove: updateSystemModeFile ENTRY - systemMode=%s, property=%s, value=%s, action=%s\n", 
+               systemMode.c_str(), property.c_str(), value.c_str(), action.c_str());
 
         if (systemMode.empty() || property.empty()) {
             LOGINFO("Error: systemMode or property is empty. systemMode: %s property: %s", systemMode.c_str(), property.c_str());
+            printf("Ram-Test-Debug-Remove: updateSystemModeFile ERROR - empty systemMode or property\n");
             return;
         }
 
         if (action != "add" && action != "delete" && action != "deleteall" && action != "checkandadd") {
             LOGINFO("Error: Invalid action. Action must be 'add', 'delete', 'deleteall', or 'checkandadd'.");
+            printf("Ram-Test-Debug-Remove: updateSystemModeFile ERROR - invalid action=%s\n", action.c_str());
             return;
         }
+        printf("Ram-Test-Debug-Remove: updateSystemModeFile validation passed\n");
 
         std::ifstream infile(SYSTEM_MODE_FILE);
         if (!infile.good()) {
+            printf("Ram-Test-Debug-Remove: updateSystemModeFile file doesn't exist, creating %s\n", SYSTEM_MODE_FILE);
             // File doesn't exist, so create it
             std::ofstream outfile(SYSTEM_MODE_FILE);
             if (outfile) {
                 LOGINFO("File created successfully: %s\n", SYSTEM_MODE_FILE);
+                printf("Ram-Test-Debug-Remove: updateSystemModeFile file created successfully\n");
                 // Set default value for each SystemMode (example provided)
                 Utils::String::updateSystemModeFile("DEVICE_OPTIMIZE", "currentstate", "VIDEO", "add");
             } else {
                 LOGERR("Error creating file: %s\n", SYSTEM_MODE_FILE);
+                printf("Ram-Test-Debug-Remove: updateSystemModeFile ERROR - failed to create file\n");
                 return;
             }
+        } else {
+            printf("Ram-Test-Debug-Remove: updateSystemModeFile file exists, proceeding to read\n");
         }
 
         std::string line;
         std::stringstream buffer;
         bool propertyFound = false;
         std::string searchKey = systemMode + "_" + property;
+        printf("Ram-Test-Debug-Remove: updateSystemModeFile searchKey=%s\n", searchKey.c_str());
 
         // Read the file content and process it line by line
         if (infile.is_open()) {
             while (std::getline(infile, line)) {
                 // If the line starts with the searchKey
                 if (line.find(searchKey) == 0) {
+                    printf("Ram-Test-Debug-Remove: updateSystemModeFile FOUND property in line: %s\n", line.c_str());
                     propertyFound = true;
                     if (action == "deleteall" && value.empty()) {
+                        printf("Ram-Test-Debug-Remove: updateSystemModeFile action=deleteall, skipping line\n");
                         // Skip adding this line to the buffer, effectively removing it
                         continue;
                     } else if (property == "currentstate") {
                         if (action == "add" || action == "checkandadd") {
                             // Replace or add the value for currentstate
                             line = searchKey + "=" + value;
+                            printf("Ram-Test-Debug-Remove: updateSystemModeFile currentstate updated to: %s\n", line.c_str());
                         } else if (action == "delete") {
                             // To delete a currentstate, we might want to clear or remove the line
+                            printf("Ram-Test-Debug-Remove: updateSystemModeFile deleting currentstate\n");
                             line.clear(); // This effectively removes the line
                         }
                     } else if (property == "callsign") {
@@ -281,12 +296,18 @@ namespace String {
                             // Append the value to the callsign, ensuring no duplicate entries
                             if (line.find(value) == std::string::npos) {
                                 line += value + "|";
+                                printf("Ram-Test-Debug-Remove: updateSystemModeFile callsign ADDED, new line: %s\n", line.c_str());
+                            } else {
+                                printf("Ram-Test-Debug-Remove: updateSystemModeFile callsign ALREADY EXISTS in line\n");
                             }
                         } else if (action == "delete") {
                             // Remove the value from the callsign
                             size_t pos = line.find(value);
                             if (pos != std::string::npos) {
                                 line.erase(pos, value.length() + 1); // +1 to remove the trailing '|'
+                                printf("Ram-Test-Debug-Remove: updateSystemModeFile callsign DELETED, new line: %s\n", line.c_str());
+                            } else {
+                                printf("Ram-Test-Debug-Remove: updateSystemModeFile callsign NOT FOUND for deletion\n");
                             }
                         }
                     }
@@ -300,21 +321,33 @@ namespace String {
 
         // If the property wasn't found and the action is "add" or "checkandadd", add it to the file
         if (!propertyFound && (action == "add" || action == "checkandadd")) {
+            printf("Ram-Test-Debug-Remove: updateSystemModeFile property NOT FOUND, adding new entry\n");
             if (property == "currentstate") {
                 buffer << searchKey + "=" + value << std::endl;
+                printf("Ram-Test-Debug-Remove: updateSystemModeFile added currentstate=%s\n", value.c_str());
             } else if (property == "callsign") {
                 buffer << searchKey + "=" + value + "|" << std::endl;
+                printf("Ram-Test-Debug-Remove: updateSystemModeFile added callsign=%s\n", value.c_str());
             }
+        } else if (propertyFound) {
+            printf("Ram-Test-Debug-Remove: updateSystemModeFile property WAS FOUND and processed\n");
+        } else {
+            printf("Ram-Test-Debug-Remove: updateSystemModeFile property NOT FOUND and action=%s (not adding)\n", action.c_str());
         }
 
         // Write the modified content back to the file
+        printf("Ram-Test-Debug-Remove: updateSystemModeFile writing to file\n");
         std::ofstream outfile(SYSTEM_MODE_FILE);
         if (outfile.is_open()) {
             outfile << buffer.str();
             outfile.close();
             LOGINFO("Updated file %s successfully.", SYSTEM_MODE_FILE);
+            printf("Ram-Test-Debug-Remove: updateSystemModeFile file written successfully\n");
+            printf("Ram-Test-Debug-Remove: updateSystemModeFile EXIT - SUCCESS\n");
         } else {
             LOGINFO("Failed to open file %s for writing.", SYSTEM_MODE_FILE);
+            printf("Ram-Test-Debug-Remove: updateSystemModeFile ERROR - failed to open file for writing\n");
+            printf("Ram-Test-Debug-Remove: updateSystemModeFile EXIT - FAILED\n");
         }
     }
 
