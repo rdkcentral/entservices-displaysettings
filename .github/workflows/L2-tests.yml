@@ -482,6 +482,24 @@ jobs:
           &&
           cmake --install build/entservices-displaysettings
 
+      - name: Validate checked-out revisions and mock symbols
+        shell: bash
+        run: |
+          set -e
+          echo "=== Repo SHAs used by CI ==="
+          git -C "$GITHUB_WORKSPACE/entservices-displaysettings" rev-parse HEAD
+          git -C "$GITHUB_WORKSPACE/entservices-testframework" rev-parse HEAD
+
+          echo "=== Last commits ==="
+          git -C "$GITHUB_WORKSPACE/entservices-testframework" log -1 --oneline
+          git -C "$GITHUB_WORKSPACE/entservices-displaysettings" log -1 --oneline
+
+          echo "=== Required symbols in CI mock header ==="
+          grep -n "dsAudioDuckingAction_t" "$GITHUB_WORKSPACE/entservices-testframework/Tests/mocks/devicesettings.h"
+          grep -n "setAudioDucking" "$GITHUB_WORKSPACE/entservices-testframework/Tests/mocks/devicesettings.h"
+          grep -n "class AspectRatio" "$GITHUB_WORKSPACE/entservices-testframework/Tests/mocks/devicesettings.h"
+          grep -n "getSupportedVideoCodingFormats" "$GITHUB_WORKSPACE/entservices-testframework/Tests/mocks/devicesettings.h"
+
       - name: Build entservices-testframework
         run: >
           cmake
