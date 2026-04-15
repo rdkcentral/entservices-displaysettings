@@ -3814,7 +3814,7 @@ namespace WPEFramework {
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
                 bool enabled = vPort.isEnabled();
                 response["videoDisplay"] = videoDisplay;
-                response["enabled"]      = enabled;
+                response["enable"]      = enabled;
             }
             catch (const device::Exception& err)
             {
@@ -3897,32 +3897,6 @@ namespace WPEFramework {
             }
         }
 
-	static const char* h264ProfileToString(dsVideoCodecH264Profiles_t profile)
-        {
-            switch (profile) {
-                case dsVIDEO_CODEC_H264_PROFILE_BASELINE:
-                    return "BASELINE";
-                case dsVIDEO_CODEC_H264_PROFILE_MAIN:
-                    return "MAIN";
-                case dsVIDEO_CODEC_H264_PROFILE_HIGH:
-                    return "HIGH";
-                default:
-                    return "UNKNOWN";
-            }
-        }
-
-	static const char* mpeg2ProfileToString(dsVideoCodecMpeg2Profiles_t profile)
-        {
-            switch (profile) {
-                case dsVIDEO_CODEC_MPEG2_PROFILE_MAIN:
-                    return "MAIN";
-                case dsVIDEO_CODEC_MPEG2_PROFILE_SIMPLE:
-                    return "SIMPLE";
-                default:
-                    return "UNKNOWN";
-            }
-        }
-
 	uint32_t DisplaySettings::getVideoCodecInfo(const JsonObject& parameters, JsonObject& response)
         {
             LOGINFOMETHOD();
@@ -3959,22 +3933,22 @@ namespace WPEFramework {
                     count = 10;
                 }
 
+		const auto profileToString = [&codecFmt](const decltype(info.entries[0].profile) profile) -> string {
+                    if (codecFmt == dsVIDEO_CODEC_MPEGHPART2) {
+                        return hevcProfileToString(profile);
+                    }
+
+                    // Do not apply HEVC-specific profile mapping to non-HEVC codecs.
+                    // Until dedicated per-codec profile mappers are available, expose the
+                    // raw profile value so callers still receive accurate codec information.
+                    return std::to_string(static_cast<int>(profile));
+                };
+
                 for (unsigned int i = 0; i < count; ++i)
                 {
                     JsonObject item;
-                    item["index"] = i + 1;
-
-                    // Conditional profile mapping based on codec
-                    if (codecFmt == dsVIDEO_CODEC_MPEGHPART2) {
-                        item["profile"] = hevcProfileToString(info.entries[i].profile);
-                    } else if (codecFmt == dsVIDEO_CODEC_MPEG4PART10) {
-                        item["profile"] = h264ProfileToString(info.entries[i].profile);
-                    } else if (codecFmt == dsVIDEO_CODEC_MPEG2) {
-                        item["profile"] = mpeg2ProfileToString(info.entries[i].profile);
-                    } else {
-                        item["profile"] = "UNKNOWN";
-                    }
-
+                    item["index"] = i + 1; // 1-based index to match TR-069 usage
+                    item["profile"] = profileToString(info.entries[i].profile);
                     item["level"] = info.entries[i].level;
                     entries.Add(item);
                 }
