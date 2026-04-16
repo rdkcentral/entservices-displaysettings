@@ -439,6 +439,22 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
                                  dsTV_RESOLUTION_1080i | dsTV_RESOLUTION_2160p60;
             }));
 
+    // Test with no display connected - execute this before any HDMI0 query
+    // so cached HDMI0 connection state does not mask the disconnected path.
+    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
+        .WillByDefault(::testing::Return(false));
+    {
+        JsonObject result, params;
+        status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result["success"].Boolean());
+        // Result should have empty supportedResolutions array
+    }
+
+    // Restore display connected for the remaining getSupportedResolutions tests
+    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
+        .WillByDefault(::testing::Return(true));
+
     {
         JsonObject result, params;
         status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
@@ -454,22 +470,6 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         EXPECT_EQ(Core::ERROR_NONE, status);
         EXPECT_TRUE(result["success"].Boolean());
     }
-
-    // Test with no display connected - should return empty array
-    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
-        .WillByDefault(::testing::Return(false));
-    {
-        JsonObject result, params;
-        status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
-        EXPECT_EQ(Core::ERROR_NONE, status);
-        EXPECT_TRUE(result["success"].Boolean());
-        // Result should have empty supportedResolutions array
-    }
-
-    // Restore display connected for subsequent tests
-    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
-        .WillByDefault(::testing::Return(true));
-
     /****************setForceHDRMode***************/
 
     {
