@@ -52,11 +52,11 @@ The `getSupportedResolutions` method SHALL accept an optional parameters object.
 - **THEN** system defaults to querying resolutions for the HDMI0 port
 
 ### Requirement: Return format
-The method SHALL return a JSON response containing an array of resolution objects.
+The method SHALL return a JSON response containing an array of resolution strings.
 
 #### Scenario: Successful resolution query
 - **WHEN** resolutions are available for the specified port
-- **THEN** system returns a success response with an array of resolution objects
+- **THEN** system returns a success response with an array of resolution strings
 
 #### Scenario: Empty resolution list
 - **WHEN** no resolutions are available (e.g., no display connected)
