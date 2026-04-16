@@ -430,10 +430,45 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
 
     /**************getSupportedResolutions********************/
 
+    // Mock for EDID query - return resolution bitmask
+    ON_CALL(*p_videoOutputPortMock, getSupportedTvResolutions(testing::_))
+        .WillByDefault(testing::Invoke(
+            [&](int* tvResolutions) {
+                // Simulate EDID reporting common resolutions
+                *tvResolutions = dsTV_RESOLUTION_720p | dsTV_RESOLUTION_1080p |
+                                 dsTV_RESOLUTION_1080i | dsTV_RESOLUTION_2160p60;
+            }));
+
     {
         JsonObject result, params;
         status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result["success"].Boolean());
     }
+
+    // Test with specific videoDisplay parameter
+    {
+        JsonObject result, params;
+        params["videoDisplay"] = "HDMI0";
+        status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result["success"].Boolean());
+    }
+
+    // Test with no display connected - should return empty array
+    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
+        .WillByDefault(::testing::Return(false));
+    {
+        JsonObject result, params;
+        status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result["success"].Boolean());
+        // Result should have empty supportedResolutions array
+    }
+
+    // Restore display connected for subsequent tests
+    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
+        .WillByDefault(::testing::Return(true));
 
     /****************setForceHDRMode***************/
 
