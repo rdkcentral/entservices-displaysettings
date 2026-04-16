@@ -808,7 +808,7 @@ namespace WPEFramework {
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
 
                 // Check if display is connected
-                if (isDisplayConnected(videoDisplay))
+                if (vPort.isDisplayConnected())
                 {
                     LOGINFO("Display connected on port %s, querying EDID for supported resolutions", videoDisplay.c_str());
 
