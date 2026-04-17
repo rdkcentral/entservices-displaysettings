@@ -818,7 +818,7 @@ namespace WPEFramework {
 
                     // Convert bitmask to resolution strings
                     if(!tvResolutions) {
-                        LOGWARN("No resolutions reported in EDID for port %s", videoDisplay.c_str());
+                        LOGWARN("No resolutions reported in port %s", videoDisplay.c_str());
                     }
                     if(tvResolutions & dsTV_RESOLUTION_480i) supportedResolutions.emplace_back("480i");
                     if(tvResolutions & dsTV_RESOLUTION_480p) supportedResolutions.emplace_back("480p");
