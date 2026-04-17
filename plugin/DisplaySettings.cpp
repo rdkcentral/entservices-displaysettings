@@ -810,9 +810,9 @@ namespace WPEFramework {
                 // Check if display is connected
                 if (vPort.isDisplayConnected())
                 {
-                    LOGINFO("Display connected on port %s, querying EDID for supported resolutions", videoDisplay.c_str());
+                    LOGINFO("Display connected on port %s, querying for supported resolutions", videoDisplay.c_str());
 
-                    // Query EDID data from connected display
+                    // Query the data from connected display
                     int tvResolutions = 0;
                     vPort.getSupportedTvResolutions(&tvResolutions);
 
