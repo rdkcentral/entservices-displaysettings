@@ -2,7 +2,7 @@
 
 The DisplaySettings plugin is part of the Thunder framework (formerly WPEFramework) for RDK devices. It provides JSON-RPC APIs for display configuration and management. Currently, the plugin lacks a standardized method to query the supported resolutions of connected displays.
 
-The Display Manager (DS) HAL provides low-level access to display hardware and EDID data. The plugin needs to expose this capability through a Thunder JSON-RPC interface while handling multiple video ports (HDMI0, HDMI1, etc.) and different display types (built-in vs. external).
+The Display Manager (DS) HAL provides low-level access to display hardware through device layer abstraction. The plugin needs to expose platform resolution capabilities through a Thunder JSON-RPC interface while handling multiple video ports (HDMI0, HDMI1, etc.) and different display types (built-in vs. external).
 
 **Constraints:**
 - Must follow Thunder plugin architecture and JSON-RPC conventions
@@ -15,7 +15,7 @@ The Display Manager (DS) HAL provides low-level access to display hardware and E
 **Goals:**
 - Expose a JSON-RPC method `getSupportedResolutions` in the DisplaySettings plugin
 - Support querying resolutions for any video display port with HDMI0 as default
-- Return resolution data from EDID for external displays
+- Return platform capabilities (which may be influenced by display capabilities for external displays)
 - Return platform-defined resolutions for built-in displays
 - Return empty array when no display is connected
 - Follow existing DisplaySettings plugin patterns for error handling and response format
@@ -28,13 +28,16 @@ The Display Manager (DS) HAL provides low-level access to display hardware and E
 
 ## Decisions
 
-### Decision 1: Use DS HAL `dsGetSupportedVideoCodingFormats()` or equivalent
-**Rationale:** The DS HAL provides standardized APIs for querying display capabilities including EDID parsing. Using these APIs ensures:
+### Decision 1: Use DS HAL `getSupportedTvResolutions()` via device layer abstraction
+**Rationale:** The DS HAL provides standardized APIs for querying platform capabilities through device layer abstraction. Using these APIs ensures:
 - Consistent behavior across different SoC platforms
-- Proper EDID parsing without reimplementing the logic
+- Platform-validated resolution capabilities (considering both display and platform limitations)
 - Access to both built-in and external display capabilities
+- Proper abstraction of EDID data and platform constraints
 
-**Alternative Considered:** Direct EDID parsing in the plugin layer was rejected because it would duplicate HAL functionality and reduce portability.
+**Alternative Considered:** Direct EDID parsing in the plugin layer was rejected because it would bypass platform validation and reduce portability.
+
+**Note:** The device layer may use EDID data as one input source, but returns platform capabilities that account for hardware limitations, not raw EDID data.
 
 ### Decision 2: Default videoDisplay parameter to "HDMI0"
 **Rationale:** HDMI0 is the primary display port on most RDK devices. Making it the default:
@@ -62,31 +65,31 @@ The Display Manager (DS) HAL provides low-level access to display hardware and E
 **Alternative Considered:** Using Thunder's newer JSON schema validation was deferred to avoid diverging from current plugin patterns.
 
 ### Decision 5: Query DS HAL synchronously in the handler
-**Rationale:** Resolution queries are fast operations (reading cached EDID data):
+**Rationale:** Resolution queries are fast operations (reading cached platform capabilities):
 - No need for asynchronous patterns or worker threads
 - Reduces complexity and potential race conditions
 - Matches performance characteristics of similar DisplaySettings methods
 
-**Alternative Considered:** Caching EDID data in the plugin was rejected because the HAL already caches it, and we'd need to handle invalidation on display changes.
+**Alternative Considered:** Caching resolution data in the plugin was rejected because the HAL/device layer already caches capabilities, and we'd need to handle invalidation on display changes.
 
 ## Risks / Trade-offs
 
 ### Risk: DS HAL API availability varies by platform
 **Mitigation:** Document required DS HAL version in plugin documentation. Add preprocessor checks for DS HAL API availability if needed.
 
-### Risk: EDID parsing failures on malformed data
+### Risk: Platform capability query failures
 **Mitigation:** Rely on DS HAL's error handling. Return empty array if HAL returns error, log warning for debugging.
 
 ### Risk: Resolution list may be large for some displays
-**Mitigation:** JSON-RPC can handle typical EDID resolution lists (usually <50 entries). Monitor performance in testing.
+**Mitigation:** JSON-RPC can handle typical platform resolution lists (usually <50 entries). Monitor performance in testing.
 
 ### Trade-off: No event notification for display changes
 **Impact:** Clients must poll to detect resolution changes after display connection events.
 **Rationale:** Event subscription is out of scope for this change. Can be added as future enhancement.
 
-### Trade-off: Returning raw EDID data without filtering
-**Impact:** Clients receive all EDID-reported resolutions, including potentially unsupported modes.
-**Rationale:** Keeps plugin layer simple. Filtering logic (if needed) belongs in the HAL or client application.
+### Trade-off: Returning platform capabilities without client-side filtering
+**Impact:** Clients receive platform-supported resolutions. The platform/HAL layer handles filtering based on both display and hardware capabilities.
+**Rationale:** Keeps plugin layer simple as a pass-through. Platform validation ensures only achievable resolutions are returned.
 
 ## Migration Plan
 
@@ -102,7 +105,7 @@ The Display Manager (DS) HAL provides low-level access to display hardware and E
 
 **Testing:**
 - Unit tests for parameter handling and response format
-- L2 tests for EDID parsing with various display types
+- L2 tests for platform capability queries with various display types
 - Integration tests with different video ports
 
 ## Open Questions

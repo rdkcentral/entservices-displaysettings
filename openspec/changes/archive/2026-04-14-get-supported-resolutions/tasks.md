@@ -13,15 +13,15 @@
 
 ## 3. DS HAL Integration
 
-- [x] 3.1 Add DS HAL API calls to query supported resolutions from EDID
-- [x] 3.2 Implement resolution data retrieval for external displays
-- [x] 3.3 Implement resolution data retrieval for built-in displays  
+- [x] 3.1 Add DS HAL API calls to query supported resolutions from platform capabilities
+- [x] 3.2 Implement resolution data retrieval via device layer abstraction for external displays
+- [x] 3.3 Implement resolution data retrieval via device layer abstraction for built-in displays  
 - [x] 3.4 Handle DS HAL errors and return empty array on failure
 - [x] 3.5 Add proper error logging for DS HAL failures
 
 ## 4. Response Formatting
 
-- [x] 4.1 Convert DS HAL resolution data to JSON array format
+- [x] 4.1 Convert platform capability resolution data to JSON array format
 - [x] 4.2 Build JSON response object with resolution list
 - [x] 4.3 Handle empty resolution list case (no display connected)
 - [x] 4.4 Ensure response follows Thunder JSON-RPC conventions
@@ -47,7 +47,7 @@
 - [x] 7.2 Add L2 test for querying resolutions for built-in display
 - [x] 7.3 Add L2 test for empty response when no display connected
 - [x] 7.4 Add L2 test for querying different video ports (HDMI0, HDMI1)
-- [x] 7.5 Verify resolution list matches EDID data from test displays
+- [x] 7.5 Verify resolution list matches platform capabilities from test displays
 
 
 ## 8. Code Review & Quality

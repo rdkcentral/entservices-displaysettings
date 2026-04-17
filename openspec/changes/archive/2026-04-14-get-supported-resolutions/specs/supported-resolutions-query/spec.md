@@ -11,19 +11,21 @@ The DisplaySettings plugin SHALL provide a JSON-RPC method `getSupportedResoluti
 - **WHEN** client invokes `getSupportedResolutions` with `videoDisplay` parameter set to a specific port (e.g., "HDMI1")
 - **THEN** system returns the list of supported resolutions for the specified port
 
-### Requirement: Return resolutions from display EDID for external displays
-For external displays connected via HDMI, the system SHALL retrieve the list of supported resolutions from the display's Extended Display Identification Data (EDID).
+### Requirement: Return resolutions from platform capabilities
+The system SHALL retrieve the list of supported resolutions from platform capabilities (device layer abstraction) rather than directly from EDID.
 
 #### Scenario: External display connected
 - **WHEN** an external display is connected to the specified video port
-- **THEN** system parses the EDID data and returns the list of supported resolutions reported by the display
+- **THEN** system queries the device layer and returns the list of supported resolutions based on platform capabilities
 
 #### Scenario: External display changed
 - **WHEN** a different external display is connected to the specified video port
-- **THEN** system updates and returns the new display's supported resolutions from its EDID
+- **THEN** system updates and returns supported resolutions based on platform capabilities
+
+**Note:** The underlying device layer may use EDID data as one input to determine platform capabilities, but the API returns platform-supported resolutions, not raw EDID data.
 
 ### Requirement: Return platform resolutions for built-in displays
-For built-in display panels, the system SHALL return the list of supported resolutions based on platform capabilities rather than EDID.
+For built-in display panels, the system SHALL return the list of supported resolutions based on platform capabilities.
 
 #### Scenario: Query built-in display resolutions
 - **WHEN** client queries resolutions for a built-in display port
