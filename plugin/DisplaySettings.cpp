@@ -3836,7 +3836,9 @@ namespace WPEFramework {
                     LOGINFO("DSMGR_NOT_RUNNING");
                     returnResponse(false);
                 }
-                device::VideoDevice &decoder = device::Host::getInstance().getVideoDevices().at(0);
+
+		device::List<device::VideoDevice> videoDevices = device::Host::getInstance().getVideoDevices();
+		device::VideoDevice &decoder = videoDevices.at(0);
                 unsigned int formats = decoder.getSupportedVideoCodingFormats();
 
                 if (formats & dsVIDEO_CODEC_MPEGHPART2)
@@ -3923,8 +3925,9 @@ namespace WPEFramework {
                     returnResponse(false);
                 }
 
-                device::VideoDevice& decoder = device::Host::getInstance().getVideoDevices().at(0);
-                dsVideoCodecInfo_t info = decoder.getVideoCodecInfo(codecFmt);
+                device::List<device::VideoDevice> videoDevices = device::Host::getInstance().getVideoDevices();
+		device::VideoDevice &decoder = videoDevices.at(0);
+		dsVideoCodecInfo_t info = decoder.getVideoCodecInfo(codecFmt);
 
                 JsonArray entries;
                 unsigned int count = info.num_entries;
@@ -3985,9 +3988,9 @@ namespace WPEFramework {
 
 	static bool getAudioPortNameOrDefault(const JsonObject& parameters, string& audioPort)
         {
-            audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "SPDIF0";
+            audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
             if (audioPort.empty()) {
-                audioPort = "SPDIF0";
+                audioPort = "HDMI0";
             }
 
             try
@@ -4054,9 +4057,9 @@ namespace WPEFramework {
             returnIfParamNotFound(parameters, "encoding");
             string encoding = parameters["encoding"].String();
 
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "SPDIF0";
+            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
             if (audioPort.empty()) {
-                audioPort = "SPDIF0";
+                audioPort = "HDMI0";
             }
 
             bool success = true;
