@@ -3867,11 +3867,11 @@ namespace WPEFramework {
 
 	static bool codecStringToEnum(const string& codec, dsVideoCodingFormat_t& out)
         {
-            if (codec == "MPEGH-Part2") {
+            if (codec == "MPEGH-Part2" || codec == "HEVC") {
                 out = dsVIDEO_CODEC_MPEGHPART2;
                 return true;
             }
-            if (codec == "MPEG4-Part10") {
+            if (codec == "MPEG4-Part10" || codec == "H264") {
                 out = dsVIDEO_CODEC_MPEG4PART10;
                 return true;
             }
@@ -3928,10 +3928,6 @@ namespace WPEFramework {
 
                 JsonArray entries;
                 unsigned int count = info.num_entries;
-                if (count > 10) {
-                    LOGWARN("HAL returned num_entries=%u, clamping to 10", count);
-                    count = 10;
-                }
 
 		const auto profileToString = [&codecFmt](const decltype(info.entries[0].profile) profile) -> string {
                     if (codecFmt == dsVIDEO_CODEC_MPEGHPART2) {
@@ -4075,17 +4071,9 @@ namespace WPEFramework {
 
                 // Get the actual encoding value set for response
                 int encValue = aPort.getEncoding().getId();
-                const char* encStr = "UNKNOWN";
-                switch (encValue)
-                {
-                    case dsAUDIO_ENC_NONE:    encStr = "NONE"; break;
-                    case dsAUDIO_ENC_DISPLAY: encStr = "DISPLAY"; break;
-                    case dsAUDIO_ENC_PCM:     encStr = "PCM"; break;
-                    case dsAUDIO_ENC_AC3:     encStr = "AC3"; break;
-                }
 
                 response["audioPort"] = audioPort;
-                response["encoding"] = encStr;
+		response["encoding"] = encodingToString(encValue);
                 response["encodingId"] = encValue;
             }
             catch (const device::Exception& err)
