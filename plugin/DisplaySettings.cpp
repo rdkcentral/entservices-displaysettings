@@ -3656,7 +3656,7 @@ namespace WPEFramework {
             LOGINFOMETHOD();
             returnIfParamNotFound(parameters, "mode"); // "mute" | "attenuate" | "raw"
 
-            std::string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "SPEAKER0";
+            std::string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
             std::string mode = parameters["mode"].String();
 
             dsAudioDuckingAction_t action = dsAUDIO_DUCKINGACTION_STOP;
