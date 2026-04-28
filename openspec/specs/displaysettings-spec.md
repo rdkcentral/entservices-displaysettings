@@ -1,16 +1,16 @@
 # DisplaySettings Plugin — Specification
 
-**Callsign**: `org.rdk.DisplaySettings`  
-**API Version**: 2.0.5  
-**Framework**: WPEFramework Thunder JSONRPC  
-**Precondition**: `Platform`  
-**Transport**: JSON-RPC over HTTP at `127.0.0.1:9998`
-
----
-
-## 1. Overview
+## Overview
 
 The `DisplaySettings` plugin manages video and audio output configuration for RDK-based set-top boxes and TV devices. It provides a JSON-RPC interface for querying and controlling display resolutions, audio ports, audio processing features (MS12), HDR modes, ARC/eARC routing, and EDID inspection. The plugin bridges the WPEFramework middleware layer with the Device Settings (DS) HAL through the `device::Host` abstraction.
+
+| Property | Value |
+|----------|-------|
+| Callsign | `org.rdk.DisplaySettings` |
+| API Version | 2.0.5 |
+| Framework | WPEFramework Thunder JSONRPC |
+| Precondition | `Platform` |
+| Transport | JSON-RPC over HTTP at `127.0.0.1:9998` |
 
 ```
 ┌──────────────┐    JSON-RPC     ┌───────────────────────┐
@@ -28,667 +28,51 @@ The `DisplaySettings` plugin manages video and audio output configuration for RD
 
 ---
 
-## 2. Plugin Lifecycle
+## Description
 
-### 2.1 Initialization
+The `DisplaySettings` plugin is a WPEFramework Thunder plugin that exposes over 80 JSON-RPC methods covering four functional domains:
 
-On `Initialize()`:
-1. Registers all JSON-RPC methods on handler versions 1 and 2.
-2. Initializes audio ports via `InitAudioPorts()` (runs asynchronously in a worker thread).
-3. Registers DS HAL event listeners:
-   - `device::Host::IDisplayEvents`
-   - `device::Host::IAudioOutputPortEvents`
-   - `device::Host::IDisplayDeviceEvents`
-   - `device::Host::IHdmiInEvents`
-   - `device::Host::IVideoDeviceEvents`
-   - `device::Host::IVideoOutputPortEvents`
-4. Registers with the PowerManager plugin via `IPowerManager::IModeChangedNotification`.
-5. Subscribes to HdmiCecSink events for ARC/eARC management (deferred until plugin activates).
+1. **Video output** — resolution management (get/set current and supported resolutions, TV vs. STB capabilities), zoom/DFC, HDR mode control, EDID inspection, color depth, and active-input detection.
+2. **Audio output** — port enumeration, sound mode selection, port enable/disable, gain, volume, mute, audio delay (lip-sync), Atmos passthrough, and audio format reporting.
+3. **MS12 audio processing** — Dolby MS12 pipeline controls including compression, dialog enhancement, equalizers, volume leveller, bass enhancer, surround virtualizer, DRC mode, MI steering, and audio profiles.
+4. **Associated audio (AD)** — mixing enable, fader control, and primary/secondary language selection for accessibility audio streams.
 
-### 2.2 Deinitialization
+Additionally, the plugin manages an **ARC/eARC routing state machine** that integrates with the `org.rdk.HdmiCecSink` plugin to automatically route audio from a connected AV receiver over the HDMI ARC port, including Short Audio Descriptor (SAD) negotiation and AVR power state management.
 
-On `Deinitialize()`:
-1. Unregisters all DS HAL event listeners.
-2. Releases PowerManager notification interface.
-3. Stops ARC routing thread and associated timers.
-4. Clears all cached state.
-
-### 2.3 Power State Handling
-
-- Receives `OnPowerModeChanged` callbacks from PowerManager plugin.
-- On transition to ON: re-initializes audio ports, restarts ARC detection, sends pending audio device power-on messages.
-- On transition to standby/sleep: suspends ARC routing, clears audio device connection state.
+The plugin also integrates with `org.rdk.PowerManager` to properly handle audio port re-initialization and ARC state recovery across power transitions (ON/standby/sleep cycles).
 
 ---
 
-## 3. Interfaces Implemented
+## Requirements
 
-| Interface | Purpose |
-|-----------|---------|
-| `PluginHost::IPlugin` | Thunder plugin lifecycle |
-| `PluginHost::JSONRPC` | JSON-RPC method registration and dispatch |
-| `Exchange::IDeviceOptimizeStateActivator` | System mode change requests (`Request(newState)`) |
-| `device::Host::IDisplayEvents` | Resolution change, active input events |
-| `device::Host::IAudioOutputPortEvents` | Audio port connect/disconnect, format change |
-| `device::Host::IDisplayDeviceEvents` | Display device connect/disconnect |
-| `device::Host::IHdmiInEvents` | HDMI input events |
-| `device::Host::IVideoDeviceEvents` | HDR capability change events |
-| `device::Host::IVideoOutputPortEvents` | Video output port events |
+### Functional Requirements
+
+- **REQ-DS-001**: The plugin SHALL expose all video and audio output port enumeration methods via JSON-RPC.
+- **REQ-DS-002**: The plugin SHALL allow clients to get and set the current video resolution, with optional EDID validation bypass (`ignoreEdid`).
+- **REQ-DS-003**: Resolution changes SHALL emit a `resolutionPreChange` notification before applying and a `resolutionChanged` notification after completion.
+- **REQ-DS-004**: The plugin SHALL persist zoom settings to `/opt/persistent/rdkservices/zoomSettings.json`.
+- **REQ-DS-005**: The plugin SHALL expose MS12 audio processing controls (compression, dialog, EQ, volume leveller, bass enhancer, surround virtualizer, DRC, MI steering) when the DS HAL supports MS12.
+- **REQ-DS-006**: The plugin SHALL manage ARC/eARC audio routing in coordination with `org.rdk.HdmiCecSink`, including SAD negotiation and AVR power-on sequencing.
+- **REQ-DS-007**: On power state transitions received from `org.rdk.PowerManager`, the plugin SHALL re-initialize audio ports and restart ARC detection as appropriate.
+- **REQ-DS-008**: The plugin SHALL emit events for all state changes (volume, mute, audio format, video format, Atmos capability, port connect/disconnect, language changes).
+- **REQ-DS-009**: The plugin SHALL support API version 2 for `getVolumeLeveller`, `setVolumeLeveller`, `getSurroundVirtualizer`, and `setSurroundVirtualizer` with extended object response formats.
+- **REQ-DS-010**: The plugin SHALL cache the current resolution and display-connected state, invalidating the cache on corresponding hardware events.
+- **REQ-DS-011**: Audio port enable/disable state SHALL be persisted via the DS HAL persistence mechanism.
+- **REQ-DS-012**: The plugin SHALL provide EDID read capability for both the connected display (`readEDID`) and the host STB (`readHostEDID`).
+- **REQ-DS-013**: The plugin SHALL support associated audio (AD) mixing, fader control, and primary/secondary language selection per ISO 639-2.
+- **REQ-DS-014**: The plugin SHALL precondition on `Platform` and SHALL start only after the platform is available.
+
+### Non-Functional Requirements
+
+- **REQ-DS-NF-001**: Audio port initialization SHALL run in a background worker thread to avoid blocking plugin activation.
+- **REQ-DS-NF-002**: All JSON-RPC methods SHALL be registered using locked-API wrappers (`registerMethodLockedApi`) to ensure thread safety.
+- **REQ-DS-NF-003**: ARC routing timer intervals SHALL be: reconnection 5500ms, audio device detection 3000ms, SAD detection 3000ms, ARC detection 1000ms, AVR power transition 1000ms.
 
 ---
 
-## 4. API Methods
+## Architecture / Design
 
-All methods follow the JSON-RPC 2.0 pattern. Every response includes `"success": true|false`.
-
-### 4.1 Video Display Methods
-
-#### `getConnectedVideoDisplays`
-
-Returns a list of currently connected video display port names.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "connectedVideoDisplays": ["HDMI0"], "success": true }
-  ```
-
-#### `getSupportedVideoDisplays`
-
-Returns all video output ports available on the device.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "supportedVideoDisplays": ["HDMI0"], "success": true }
-  ```
-
-#### `getSupportedResolutions`
-
-Returns supported resolutions for a given video output port.
-
-- **Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `videoDisplay` | string | No | Port name; defaults to platform default port |
-- **Response**:
-  ```json
-  { "supportedResolutions": ["720p", "1080i", "1080p60"], "success": true }
-  ```
-
-#### `getSupportedTvResolutions`
-
-Returns TV-reported supported resolutions (from EDID/HDCP negotiation) for a video port.
-
-- **Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `videoDisplay` | string | No | Port name; defaults to platform default port |
-- **Response**:
-  ```json
-  { "supportedTvResolutions": ["480i", "720p", "1080i", "1080p", "2160p60"], "success": true }
-  ```
-- **Notes**: Returns `["none"]` when no resolutions are reported by the TV.
-
-#### `getSupportedSettopResolutions`
-
-Returns resolutions supported by the STB hardware.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "supportedSettopResolutions": ["720p", "1080i", "1080p60"], "success": true }
-  ```
-
-#### `getCurrentResolution`
-
-Returns the currently active resolution for a video port, with pixel dimensions.
-
-- **Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `videoDisplay` | string | No | Port name; defaults to platform default port |
-- **Response**:
-  ```json
-  { "resolution": "1080p60", "w": 1920, "h": 1080, "progressive": true, "success": true }
-  ```
-- **Notes**: Resolution string prefix determines pixel dimensions (480→720×480, 576→720×576, 720→1280×720, 768→1366×768, 1080→1920×1080, 2160→3840×2160, 4096x2160→4096×2160). Result is cached until next `resolutionChanged` event.
-
-#### `setCurrentResolution`
-
-Sets the active resolution for a video port.
-
-- **Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `videoDisplay` | string | Yes | Port name |
-  | `resolution` | string | Yes | Resolution string e.g. `"1080p60"` |
-  | `persist` | boolean | No | Whether to persist across reboots; default `true` |
-  | `ignoreEdid` | boolean | No | Skip EDID validation; default `false` |
-- **Response**: `{ "success": true }`
-- **Events**: `resolutionPreChange`, then `resolutionChanged`
-
-#### `getDefaultResolution`
-
-Returns the default (factory/fallback) resolution for the default video port.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "defaultResolution": "720p", "success": true }
-  ```
-
-#### `getZoomSetting`
-
-Returns the current zoom (DFC) setting.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "zoomSetting": "FULL", "success": true }
-  ```
-- **Notes**: Zoom setting is persisted to `/opt/persistent/rdkservices/zoomSettings.json`.
-
-#### `setZoomSetting`
-
-Sets the zoom (DFC) mode.
-
-- **Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `zoomSetting` | string | Yes | Zoom mode: `"FULL"`, `"NONE"`, etc. |
-- **Response**: `{ "success": true }`
-- **Events**: `zoomSettingUpdated`
-
-#### `getActiveInput`
-
-Returns whether the connected display is reporting the STB as its active (primary) input.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "activeInput": true, "success": true }
-  ```
-
-#### `getCurrentOutputSettings`
-
-Returns the current video output signal parameters.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  {
-    "videoEOTF": 1,
-    "matrixCoefficients": 0,
-    "colorSpace": 3,
-    "colorDepth": 10,
-    "quantizationRange": 4,
-    "success": true
-  }
-  ```
-
-#### `setForceHDRMode`
-
-Forces a specific HDR mode on the video output.
-
-- **Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `hdrMode` | boolean | Yes | Enable/disable forced HDR mode |
-- **Response**: `{ "success": true }`
-
-#### `getTvHDRSupport`
-
-Returns HDR standards supported by the connected TV.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "standards": ["HDR10", "HLG"], "supportsHDR": true, "success": true }
-  ```
-
-#### `getSettopHDRSupport`
-
-Returns HDR standards supported by the STB hardware.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "standards": ["HDR10", "DolbyVision"], "supportsHDR": true, "success": true }
-  ```
-
-#### `getTVHDRCapabilities`
-
-Returns a bitmask of HDR capabilities reported by the TV.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "capabilities": 3, "success": true }
-  ```
-- **Notes**: Bitmask values match `dsHDRStandard_t` enum (e.g. `dsHDRSTANDARD_HDR10=1`, `dsHDRSTANDARD_HLG=2`).
-
-#### `getVideoFormat`
-
-Returns the current incoming video format/HDR standard.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "videoFormat": "HDR10", "success": true }
-  ```
-
-#### `isConnectedDeviceRepeater`
-
-Returns whether the connected downstream HDMI device is an HDMI repeater.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "connected": false, "success": true }
-  ```
-
-#### `readEDID`
-
-Returns the raw EDID data from the connected display.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "EDID": "<base64-encoded-EDID>", "success": true }
-  ```
-
-#### `readHostEDID`
-
-Returns the EDID data advertised by the host (STB).
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "EDID": "<base64-encoded-EDID>", "success": true }
-  ```
-
-#### `setPreferredColorDepth` / `getPreferredColorDepth`
-
-Gets or sets the preferred color depth for the video output.
-
-- **Set Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `videoDisplay` | string | Yes | Port name |
-  | `colorDepth` | string | Yes | e.g. `"8bit"`, `"10bit"`, `"12bit"`, `"auto"` |
-- **Get Response**:
-  ```json
-  { "colorDepth": "10bit", "success": true }
-  ```
-
-#### `getColorDepthCapabilities`
-
-Returns the color depth values supported by the video output port.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "capabilities": ["8bit", "10bit"], "success": true }
-  ```
-
-#### `setScartParameter`
-
-Configures SCART output parameters (applicable to devices with SCART port).
-
-- **Parameters**: Platform-specific SCART parameter object.
-- **Response**: `{ "success": true }`
-
----
-
-### 4.2 Audio Port Methods
-
-#### `getConnectedAudioPorts`
-
-Returns currently connected audio output ports.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "connectedAudioPorts": ["HDMI0"], "success": true }
-  ```
-- **Notes**: `HDMI_ARC0` is included only when an ARC/eARC audio device is detected as connected and active.
-
-#### `getSupportedAudioPorts`
-
-Returns all audio output ports available on the device.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "supportedAudioPorts": ["HDMI0", "SPDIF0", "HDMI_ARC0", "HEADPHONE0"], "success": true }
-  ```
-
-#### `getSupportedAudioModes`
-
-Returns audio modes (stereo, surround, etc.) supported by an audio port.
-
-- **Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `audioPort` | string | Yes | Port name e.g. `"HDMI0"` |
-- **Response**:
-  ```json
-  { "supportedAudioModes": ["STEREO", "SURROUND", "DOLBYDIGITAL"], "success": true }
-  ```
-
-#### `getSoundMode` / `setSoundMode`
-
-Gets or sets the active audio mode for an audio port.
-
-- **Get Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `audioPort` | string | No | Port name; defaults to `HDMI0` or first connected port |
-- **Get Response**:
-  ```json
-  { "soundMode": "AUTO (Dolby Digital 5.1)", "success": true }
-  ```
-- **Set Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `audioPort` | string | Yes | Port name |
-  | `soundMode` | string | Yes | Mode string |
-  | `persist` | boolean | No | Persist setting; default `true` |
-- **Set Response**: `{ "success": true }`
-
-#### `setEnableAudioPort` / `getEnableAudioPort`
-
-Enables or disables an audio output port. Persistence is handled via DS HAL.
-
-- **Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `audioPort` | string | Yes | Port name |
-  | `enable` | boolean | Yes (set only) | Enable or disable |
-- **Supported ports**: `IDLR0`, `HDMI0`, `SPDIF0`, `SPEAKER0`, `HDMI_ARC0`, `HEADPHONE0`
-- **Events**: `audioPortEnableStatusChanged`
-
-#### `getAudioFormat`
-
-Returns the current audio format being decoded/passed through.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "audioFormat": "DOLBY AC-3", "success": true }
-  ```
-- **Notes**: Format values correspond to `dsAudioFormat_t` enum values (e.g. `dsAUDIO_FORMAT_NONE`, `dsAUDIO_FORMAT_AC3`, `dsAUDIO_FORMAT_EAC3`, `dsAUDIO_FORMAT_DOLBY_TRUEHD`, etc.).
-
-#### `getAudioDelay` / `setAudioDelay`
-
-Gets or sets audio output delay in milliseconds (lip-sync adjustment).
-
-- **Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `audioPort` | string | Yes | Port name |
-  | `audioDelay` | integer | Yes (set only) | Delay in ms |
-- **Response**:
-  ```json
-  { "audioDelay": 0, "success": true }
-  ```
-
-#### `getSinkAtmosCapability`
-
-Returns whether the sink (TV/AV receiver) supports Dolby Atmos.
-
-- **Parameters**: none
-- **Response**:
-  ```json
-  { "atmos_capability": 2, "success": true }
-  ```
-- **Notes**: Value maps to `dsATMOSCapability_t` enum.
-
-#### `setAudioAtmosOutputMode`
-
-Enables or disables Atmos output passthrough.
-
-- **Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `enable` | boolean | Yes | Enable Atmos output |
-- **Response**: `{ "success": true }`
-
-#### `setGain` / `getGain`
-
-Gets or sets audio output gain on a port.
-
-- **Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `audioPort` | string | Yes | Port name |
-  | `gain` | number | Yes (set only) | Gain value (dB) |
-- **Response**: `{ "gain": -2.0, "success": true }`
-
-#### `setMuted` / `getMuted`
-
-Gets or sets the mute state of an audio port.
-
-- **Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `audioPort` | string | Yes | Port name |
-  | `muted` | boolean | Yes (set only) | Mute state |
-- **Response**: `{ "muted": false, "success": true }`
-- **Events**: `muteStatusChanged`
-
-#### `setVolumeLevel` / `getVolumeLevel`
-
-Gets or sets the volume level (0–100) of an audio port.
-
-- **Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `audioPort` | string | Yes | Port name |
-  | `volumeLevel` | number | Yes (set only) | Volume level 0–100 |
-- **Response**: `{ "volumeLevel": 50.0, "success": true }`
-- **Events**: `volumeLevelChanged`
-
-#### `getSettopAudioCapabilities`
-
-Returns the audio capability bitmask of the STB for a given port.
-
-- **Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `audioPort` | string | Yes | Port name |
-- **Response**: `{ "AudioCapabilities": 3, "success": true }`
-
-#### `getSettopMS12Capabilities`
-
-Returns the MS12 audio processing capability flags of the STB.
-
-- **Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `audioPort` | string | Yes | Port name |
-- **Response**: `{ "MS12Capabilities": 7, "success": true }`
-
-#### `getSupportedMS12Config`
-
-Returns supported MS12 configuration modes.
-
-- **Parameters**: none
-- **Response**: `{ "ms12config": [...], "success": true }`
-
----
-
-### 4.3 MS12 Audio Processing Methods
-
-> These methods are only effective when the DS HAL supports Dolby MS12 audio processing.
-
-#### `setMS12AudioCompression` / `getMS12AudioCompression`
-
-Controls MS12 dynamic range compression level.
-
-- **Parameters**:
-  | Name | Type | Required | Description |
-  |------|------|----------|-------------|
-  | `audioPort` | string | Yes | Port name |
-  | `compresionLevel` | integer | Yes (set only) | 0–10 |
-- **Response**: `{ "compressionLevel": 5, "success": true }`
-
-#### `setDolbyVolumeMode` / `getDolbyVolumeMode`
-
-Enables or disables Dolby Volume levelling.
-
-- **Parameters**: `audioPort` (string), `dolbyVolumeMode` (boolean, set only)
-- **Response**: `{ "dolbyVolumeMode": true, "success": true }`
-
-#### `setDialogEnhancement` / `getDialogEnhancement` / `resetDialogEnhancement`
-
-Controls dialog enhancement level for speech clarity.
-
-- **Set Parameters**: `audioPort` (string), `enhancementLevel` (integer 0–16)
-- **Get Response**: `{ "enhancementLevel": 0, "success": true }`
-- **Reset**: Restores platform default; no parameters required.
-
-#### `setIntelligentEqualizerMode` / `getIntelligentEqualizerMode`
-
-Controls MS12 intelligent equalizer mode.
-
-- **Parameters**: `audioPort` (string), `intelligentEqualizerMode` (integer, set only)
-- **Response**: `{ "intelligentEqualizerMode": 0, "success": true }`
-
-#### `setGraphicEqualizerMode` / `getGraphicEqualizerMode`
-
-Controls MS12 graphic equalizer mode.
-
-- **Parameters**: `audioPort` (string), `graphicEqualizerMode` (integer, set only)
-- **Response**: `{ "graphicEqualizerMode": 0, "success": true }`
-
-#### `setMS12AudioProfile` / `getMS12AudioProfile` / `getSupportedMS12AudioProfiles`
-
-Manages MS12 audio profiles (e.g. Movie, Music, Sports).
-
-- **Set Parameters**: `audioPort` (string), `ms12AudioProfile` (string)
-- **Get Response**: `{ "ms12AudioProfile": "Movie", "success": true }`
-- **Supported Profiles Response**: `{ "supportedMS12AudioProfiles": ["Movie", "Music", "Sports", "OFF"], "success": true }`
-
-#### `getVolumeLeveller` / `setVolumeLeveller` / `resetVolumeLeveller`
-
-Controls MS12 volume leveller. API version 2 uses an extended object format.
-
-- **v1 Set Parameters**: `audioPort` (string), `mode` (integer 0=off, 1=on, 2=auto)
-- **v2 Set Parameters**: `audioPort` (string), `enable` (boolean), `level` (integer 0–10)
-- **v1 Get Response**: `{ "enable": true, "level": 5, "success": true }`
-- **v2 Get Response**: `{ "volumeLeveller": { "enable": true, "level": 5 }, "success": true }`
-
-#### `getBassEnhancer` / `setBassEnhancer` / `resetBassEnhancer`
-
-Controls bass enhancement boost level.
-
-- **Parameters**: `audioPort` (string), `bassBoost` (integer 0–100, set only)
-- **Response**: `{ "bassBoost": 50, "success": true }`
-
-#### `isSurroundDecoderEnabled` / `enableSurroundDecoder`
-
-Controls surround sound decoder pass-through.
-
-- **Enable Parameters**: `audioPort` (string), `surroundDecoderEnabled` (boolean)
-- **Query Response**: `{ "surroundDecoderEnabled": true, "success": true }`
-
-#### `getDRCMode` / `setDRCMode`
-
-Gets or sets dynamic range control mode.
-
-- **Parameters**: `audioPort` (string), `DRCMode` (integer 0=Line, 1=RF, set only)
-- **Response**: `{ "DRCMode": 0, "success": true }`
-
-#### `getSurroundVirtualizer` / `setSurroundVirtualizer` / `resetSurroundVirtualizer`
-
-Controls surround sound virtualizer (headphone virtualization).
-
-- **v1 Set Parameters**: `audioPort` (string), `enable` (boolean), `boost` (integer 0–96)
-- **v2 Set Parameters**: Same structure, extended object response.
-- **v2 Get Response**: `{ "surroundVirtualizer": { "enable": true, "boost": 50 }, "success": true }`
-
-#### `getMISteering` / `setMISteering`
-
-Controls Media Intelligence (MI) steering for adaptive audio.
-
-- **Parameters**: `audioPort` (string), `MISteering` (boolean, set only)
-- **Response**: `{ "MISteering": false, "success": true }`
-
-#### `setMS12ProfileSettingsOverride`
-
-Overrides specific MS12 profile settings at runtime.
-
-- **Parameters**: Profile key-value overrides (platform-specific).
-- **Response**: `{ "success": true }`
-
----
-
-### 4.4 Associated Audio Methods
-
-#### `setAssociatedAudioMixing` / `getAssociatedAudioMixing`
-
-Controls the mixing of associated audio (AD/secondary audio) with the primary audio stream.
-
-- **Parameters**: `audioPort` (string), `mixing` (boolean, set only)
-- **Response**: `{ "mixing": true, "success": true }`
-- **Events**: `associatedAudioMixingChanged`
-
-#### `setFaderControl` / `getFaderControl`
-
-Sets the balance fader between primary and secondary (AD) audio streams.
-
-- **Parameters**: `audioPort` (string), `mixerBalance` (integer -32 to 32, set only)
-- **Response**: `{ "mixerBalance": 0, "success": true }`
-- **Events**: `faderControlChanged`
-
-#### `setPrimaryLanguage` / `getPrimaryLanguage`
-
-Gets or sets the preferred primary audio language (ISO 639-2).
-
-- **Parameters**: `primaryLanguage` (string, 3-char ISO code, set only)
-- **Response**: `{ "lang": "eng", "success": true }`
-- **Events**: `primaryLanguageChanged`
-
-#### `setSecondaryLanguage` / `getSecondaryLanguage`
-
-Gets or sets the preferred secondary audio language for AD streams (ISO 639-2).
-
-- **Parameters**: `secondaryLanguage` (string, 3-char ISO code, set only)
-- **Response**: `{ "lang": "fra", "success": true }`
-- **Events**: `secondaryLanguageChanged`
-
----
-
-## 5. Events
-
-All events are JSON-RPC notifications sent to subscribed clients.
-
-| Event Name | Payload | Trigger |
-|------------|---------|---------|
-| `resolutionPreChange` | `{}` | Before resolution change begins |
-| `resolutionChanged` | `{ "width": int, "height": int }` | Resolution change completed |
-| `zoomSettingUpdated` | `{ "zoomSetting": string }` | Zoom/DFC mode changed |
-| `activeInputChanged` | `{ "activeInput": bool }` | Display reports STB as active/inactive input |
-| `connectedVideoDisplaysUpdated` | `{ "connectedVideoDisplays": string[] }` | HDMI hot-plug connect/disconnect |
-| `connectedAudioPortUpdated` | `{ "HotpluggedAudioPort": string, "isConnected": bool }` | Audio port connect/disconnect |
-| `audioFormatChanged` | `{ "audioFormat": string }` | Incoming audio format changed |
-| `AtmosCapabilityChanged` | `{ "atmos_capability": int }` | Sink Atmos capability changed |
-| `videoFormatChanged` | `{ "videoFormat": string }` | Incoming HDR/video format changed |
-| `associatedAudioMixingChanged` | `{ "mixing": bool }` | AD mixing state changed |
-| `faderControlChanged` | `{ "mixerBalance": int }` | Fader control changed |
-| `primaryLanguageChanged` | `{ "primaryLanguage": string }` | Primary audio language changed |
-| `secondaryLanguageChanged` | `{ "secondaryLanguage": string }` | Secondary audio language changed |
-| `muteStatusChanged` | `{ "muted": bool, "audioPort": string }` | Mute state changed on a port |
-| `volumeLevelChanged` | `{ "volumeLevel": float, "audioPort": string }` | Volume level changed on a port |
-| `audioPortEnableStatusChanged` | `{ "audioPort": string, "enabled": bool }` | Audio port enable state changed |
-
----
-
-## 6. Architecture & Integration
-
-### 6.1 Component Diagram
+### Component Diagram
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -709,7 +93,26 @@ All events are JSON-RPC notifications sent to subscribed clients.
    └───────────────────┘  └───────────────┘   └────────────────┘
 ```
 
-### 6.2 ARC/eARC Routing State Machine
+### Plugin Lifecycle
+
+**Initialization** (`Initialize()`):
+1. Registers all JSON-RPC methods on handler versions 1 and 2.
+2. Initializes audio ports via `InitAudioPorts()` (runs asynchronously in a worker thread).
+3. Registers DS HAL event listeners: `IDisplayEvents`, `IAudioOutputPortEvents`, `IDisplayDeviceEvents`, `IHdmiInEvents`, `IVideoDeviceEvents`, `IVideoOutputPortEvents`.
+4. Registers with PowerManager plugin via `IPowerManager::IModeChangedNotification`.
+5. Subscribes to HdmiCecSink events for ARC/eARC management (deferred until plugin activates).
+
+**Deinitialization** (`Deinitialize()`):
+1. Unregisters all DS HAL event listeners.
+2. Releases PowerManager notification interface.
+3. Stops ARC routing thread and associated timers.
+4. Clears all cached state.
+
+**Power State Handling**:
+- On transition to ON: re-initializes audio ports, restarts ARC detection, sends pending AVR power-on messages.
+- On transition to standby/sleep: suspends ARC routing, clears audio device connection state.
+
+### ARC/eARC Routing State Machine
 
 ```
         ┌──────────────┐
@@ -742,63 +145,377 @@ All events are JSON-RPC notifications sent to subscribed clients.
     └──────────────────────┘
 ```
 
-### 6.3 Timers
+### Interfaces Implemented
 
-| Timer | Timeout | Purpose |
-|-------|---------|---------|
-| `m_timer` | `RECONNECTION_TIME_IN_MILLISECONDS` (5500ms) | HdmiCecSink reconnection |
-| `m_AudioDeviceDetectTimer` | `AUDIO_DEVICE_CONNECTION_CHECK_TIME_IN_MILLISECONDS` (3000ms) | Verify audio device connectivity |
-| `m_SADDetectionTimer` | `SAD_UPDATE_CHECK_TIME_IN_MILLISECONDS` (3000ms) | Short Audio Descriptor update |
-| `m_ArcDetectionTimer` | `ARC_DETECTION_CHECK_TIME_IN_MILLISECONDS` (1000ms) | ARC device presence polling |
-| `m_AudioDevicePowerOnStatusTimer` | `AUDIO_DEVICE_POWER_TRANSITION_TIME_IN_MILLISECONDS` (1000ms) | AVR power state transition |
+| Interface | Purpose |
+|-----------|---------|
+| `PluginHost::IPlugin` | Thunder plugin lifecycle |
+| `PluginHost::JSONRPC` | JSON-RPC method registration and dispatch |
+| `Exchange::IDeviceOptimizeStateActivator` | System mode change requests (`Request(newState)`) |
+| `device::Host::IDisplayEvents` | Resolution change, active input events |
+| `device::Host::IAudioOutputPortEvents` | Audio port connect/disconnect, format change |
+| `device::Host::IDisplayDeviceEvents` | Display device connect/disconnect |
+| `device::Host::IHdmiInEvents` | HDMI input events |
+| `device::Host::IVideoDeviceEvents` | HDR capability change events |
+| `device::Host::IVideoOutputPortEvents` | Video output port events |
 
-### 6.4 Caching
+### Caching
 
-| Cache Variable | Invalidation |
-|----------------|-------------|
-| `currentResolutionCache` | On `resolutionChanged` event |
-| `isDisplayConnectedCacheUpdated` | On HDMI hot-plug event |
-| `stbHDRcapabilitiesCache` | On HDR capability change |
-| `audioPortEnableStatusMap` | On `setEnableAudioPort` or `audioPortEnableStatusChanged` |
+| Cache Variable | Invalidation Trigger |
+|----------------|---------------------|
+| `currentResolutionCache` | `resolutionChanged` event |
+| `isDisplayConnectedCacheUpdated` | HDMI hot-plug event |
+| `stbHDRcapabilitiesCache` | HDR capability change |
+| `audioPortEnableStatusMap` | `setEnableAudioPort` call or `audioPortEnableStatusChanged` event |
 
-### 6.5 Persistent Storage
+### Persistent Storage
 
 | Data | Location |
 |------|----------|
 | Zoom setting | `/opt/persistent/rdkservices/zoomSettings.json` |
-| Audio port enable state | DS HAL persistence (`getEnablePersist`/`setEnablePersist`) |
+| Audio port enable state | DS HAL (`getEnablePersist` / `setEnablePersist`) |
 | Audio mode / MS12 settings | DS HAL persistence |
 | Color depth | DS HAL persistence |
 
----
+### ARC/eARC Timers
 
-## 7. Dependencies
-
-| Dependency | Purpose |
-|-----------|---------|
-| DS HAL (`libdshal`) | Device settings hardware abstraction — video/audio port control |
-| IARM Bus | System-wide event bus for cross-component signalling |
-| RFC API (`rfcapi.h`, `tr181api.h`) | Runtime feature flag access (e.g. `RFC_PWRMGR2`) |
-| `org.rdk.HdmiCecSink` | ARC/eARC initiation, Short Audio Descriptor exchange, CEC events |
-| `org.rdk.PowerManager` | Power state change notifications |
-| `tptimer` | Lightweight repeating/one-shot timer utility |
+| Timer | Timeout | Purpose |
+|-------|---------|---------|
+| `m_timer` | 5500ms | HdmiCecSink reconnection |
+| `m_AudioDeviceDetectTimer` | 3000ms | Verify audio device connectivity |
+| `m_SADDetectionTimer` | 3000ms | Short Audio Descriptor update check |
+| `m_ArcDetectionTimer` | 1000ms | ARC device presence polling |
+| `m_AudioDevicePowerOnStatusTimer` | 1000ms | AVR power state transition delay |
 
 ---
 
-## 8. Configuration
+## External Interfaces
 
-| Config Key | Default | Description |
-|-----------|---------|-------------|
+### JSON-RPC API — Video Display Methods
+
+All methods follow the JSON-RPC 2.0 pattern. Every response includes `"success": true|false`.
+
+#### `getConnectedVideoDisplays`
+Returns a list of currently connected video display port names.
+- **Parameters**: none
+- **Response**: `{ "connectedVideoDisplays": ["HDMI0"], "success": true }`
+
+#### `getSupportedVideoDisplays`
+Returns all video output ports available on the device.
+- **Parameters**: none
+- **Response**: `{ "supportedVideoDisplays": ["HDMI0"], "success": true }`
+
+#### `getSupportedResolutions`
+Returns supported resolutions for a given video output port.
+- **Parameters**: `videoDisplay` (string, optional — defaults to platform default)
+- **Response**: `{ "supportedResolutions": ["720p", "1080i", "1080p60"], "success": true }`
+
+#### `getSupportedTvResolutions`
+Returns TV-reported supported resolutions from EDID/HDCP negotiation.
+- **Parameters**: `videoDisplay` (string, optional)
+- **Response**: `{ "supportedTvResolutions": ["480i", "720p", "1080p", "2160p60"], "success": true }`
+- **Notes**: Returns `["none"]` when the TV reports no resolutions.
+
+#### `getSupportedSettopResolutions`
+Returns resolutions supported by the STB hardware.
+- **Parameters**: none
+- **Response**: `{ "supportedSettopResolutions": ["720p", "1080i", "1080p60"], "success": true }`
+
+#### `getCurrentResolution`
+Returns the currently active resolution with pixel dimensions.
+- **Parameters**: `videoDisplay` (string, optional)
+- **Response**: `{ "resolution": "1080p60", "w": 1920, "h": 1080, "progressive": true, "success": true }`
+- **Resolution→Pixel mapping**: 480→720×480, 576→720×576, 720→1280×720, 768→1366×768, 1080→1920×1080, 2160→3840×2160, 4096x2160→4096×2160
+- **Notes**: Result is cached; cache invalidated by `resolutionChanged` event.
+
+#### `setCurrentResolution`
+Sets the active resolution for a video port.
+- **Parameters**: `videoDisplay` (string, required), `resolution` (string, required), `persist` (boolean, default `true`), `ignoreEdid` (boolean, default `false`)
+- **Response**: `{ "success": true }`
+- **Events emitted**: `resolutionPreChange`, `resolutionChanged`
+
+#### `getDefaultResolution`
+Returns the factory/fallback resolution for the default video port.
+- **Parameters**: none
+- **Response**: `{ "defaultResolution": "720p", "success": true }`
+
+#### `getZoomSetting` / `setZoomSetting`
+Gets or sets the zoom/DFC mode.
+- **Set Parameters**: `zoomSetting` (string, e.g. `"FULL"`, `"NONE"`)
+- **Get Response**: `{ "zoomSetting": "FULL", "success": true }`
+- **Events emitted (set)**: `zoomSettingUpdated`
+
+#### `getActiveInput`
+Returns whether the connected display reports the STB as its active input.
+- **Parameters**: none
+- **Response**: `{ "activeInput": true, "success": true }`
+
+#### `getCurrentOutputSettings`
+Returns current video signal parameters.
+- **Parameters**: none
+- **Response**: `{ "videoEOTF": 1, "matrixCoefficients": 0, "colorSpace": 3, "colorDepth": 10, "quantizationRange": 4, "success": true }`
+
+#### `setForceHDRMode`
+Forces or releases a specific HDR mode on video output.
+- **Parameters**: `hdrMode` (boolean)
+- **Response**: `{ "success": true }`
+
+#### `getTvHDRSupport`
+Returns HDR standards supported by the connected TV.
+- **Parameters**: none
+- **Response**: `{ "standards": ["HDR10", "HLG"], "supportsHDR": true, "success": true }`
+
+#### `getSettopHDRSupport`
+Returns HDR standards supported by the STB hardware.
+- **Parameters**: none
+- **Response**: `{ "standards": ["HDR10", "DolbyVision"], "supportsHDR": true, "success": true }`
+
+#### `getTVHDRCapabilities`
+Returns a bitmask of HDR capabilities reported by the TV (`dsHDRStandard_t` enum).
+- **Parameters**: none
+- **Response**: `{ "capabilities": 3, "success": true }`
+
+#### `getVideoFormat`
+Returns the current incoming video/HDR format.
+- **Parameters**: none
+- **Response**: `{ "videoFormat": "HDR10", "success": true }`
+
+#### `isConnectedDeviceRepeater`
+Returns whether the downstream HDMI device is an HDMI repeater.
+- **Parameters**: none
+- **Response**: `{ "connected": false, "success": true }`
+
+#### `readEDID` / `readHostEDID`
+Returns EDID data from the connected display or from the host STB.
+- **Parameters**: none
+- **Response**: `{ "EDID": "<encoded-EDID>", "success": true }`
+
+#### `setPreferredColorDepth` / `getPreferredColorDepth`
+Gets or sets preferred color depth for video output.
+- **Set Parameters**: `videoDisplay` (string), `colorDepth` (string: `"8bit"`, `"10bit"`, `"12bit"`, `"auto"`)
+- **Get Response**: `{ "colorDepth": "10bit", "success": true }`
+
+#### `getColorDepthCapabilities`
+Returns color depth values supported by the video output port.
+- **Parameters**: none
+- **Response**: `{ "capabilities": ["8bit", "10bit"], "success": true }`
+
+#### `setScartParameter`
+Configures SCART output parameters on devices with a SCART port.
+- **Parameters**: Platform-specific SCART parameter object (schema not yet defined — see Open Queries).
+- **Response**: `{ "success": true }`
+
+---
+
+### JSON-RPC API — Audio Port Methods
+
+#### `getConnectedAudioPorts`
+Returns currently connected audio output ports. `HDMI_ARC0` is included only when an ARC/eARC device is actively routed.
+- **Parameters**: none
+- **Response**: `{ "connectedAudioPorts": ["HDMI0"], "success": true }`
+
+#### `getSupportedAudioPorts`
+Returns all audio output ports available on the device.
+- **Parameters**: none
+- **Response**: `{ "supportedAudioPorts": ["HDMI0", "SPDIF0", "HDMI_ARC0", "HEADPHONE0"], "success": true }`
+
+#### `getSupportedAudioModes`
+Returns audio modes supported by an audio port.
+- **Parameters**: `audioPort` (string, required)
+- **Response**: `{ "supportedAudioModes": ["STEREO", "SURROUND", "DOLBYDIGITAL"], "success": true }`
+
+#### `getSoundMode` / `setSoundMode`
+Gets or sets the active audio mode for a port.
+- **Get Parameters**: `audioPort` (string, optional — defaults to first connected port)
+- **Get Response**: `{ "soundMode": "AUTO (Dolby Digital 5.1)", "success": true }`
+- **Set Parameters**: `audioPort` (string), `soundMode` (string), `persist` (boolean, default `true`)
+
+#### `setEnableAudioPort` / `getEnableAudioPort`
+Enables or disables an audio output port. Supported ports: `IDLR0`, `HDMI0`, `SPDIF0`, `SPEAKER0`, `HDMI_ARC0`, `HEADPHONE0`.
+- **Set Parameters**: `audioPort` (string), `enable` (boolean)
+- **Get Parameters**: `audioPort` (string)
+- **Events emitted**: `audioPortEnableStatusChanged`
+
+#### `getAudioFormat`
+Returns the current audio format being decoded/passed through (`dsAudioFormat_t` enum values).
+- **Parameters**: none
+- **Response**: `{ "audioFormat": "DOLBY AC-3", "success": true }`
+
+#### `getAudioDelay` / `setAudioDelay`
+Gets or sets audio output delay in milliseconds for lip-sync adjustment.
+- **Parameters**: `audioPort` (string), `audioDelay` (integer ms, set only)
+- **Response**: `{ "audioDelay": 0, "success": true }`
+
+#### `getSinkAtmosCapability`
+Returns Atmos capability of the sink device (`dsATMOSCapability_t` enum).
+- **Parameters**: none
+- **Response**: `{ "atmos_capability": 2, "success": true }`
+
+#### `setAudioAtmosOutputMode`
+Enables or disables Dolby Atmos output passthrough.
+- **Parameters**: `enable` (boolean)
+- **Response**: `{ "success": true }`
+
+#### `setGain` / `getGain`
+Gets or sets audio output gain (dB) on a port.
+- **Parameters**: `audioPort` (string), `gain` (number dB, set only)
+- **Response**: `{ "gain": -2.0, "success": true }`
+
+#### `setMuted` / `getMuted`
+Gets or sets the mute state of an audio port.
+- **Parameters**: `audioPort` (string), `muted` (boolean, set only)
+- **Response**: `{ "muted": false, "success": true }`
+- **Events emitted (set)**: `muteStatusChanged`
+
+#### `setVolumeLevel` / `getVolumeLevel`
+Gets or sets the volume level (0–100) of an audio port.
+- **Parameters**: `audioPort` (string), `volumeLevel` (number 0–100, set only)
+- **Response**: `{ "volumeLevel": 50.0, "success": true }`
+- **Events emitted (set)**: `volumeLevelChanged`
+
+#### `getSettopAudioCapabilities`
+Returns audio capability bitmask of the STB for a given port.
+- **Parameters**: `audioPort` (string)
+- **Response**: `{ "AudioCapabilities": 3, "success": true }`
+
+#### `getSettopMS12Capabilities`
+Returns MS12 audio processing capability flags of the STB.
+- **Parameters**: `audioPort` (string)
+- **Response**: `{ "MS12Capabilities": 7, "success": true }`
+
+#### `getSupportedMS12Config`
+Returns supported MS12 configuration modes.
+- **Parameters**: none
+- **Response**: `{ "ms12config": [...], "success": true }`
+
+---
+
+### JSON-RPC API — MS12 Audio Processing Methods
+
+> Only effective when the DS HAL supports Dolby MS12 audio processing.
+
+#### `setMS12AudioCompression` / `getMS12AudioCompression`
+- **Parameters**: `audioPort` (string), `compresionLevel` (integer 0–10, set only)
+- **Response**: `{ "compressionLevel": 5, "success": true }`
+
+#### `setDolbyVolumeMode` / `getDolbyVolumeMode`
+- **Parameters**: `audioPort` (string), `dolbyVolumeMode` (boolean, set only)
+- **Response**: `{ "dolbyVolumeMode": true, "success": true }`
+
+#### `setDialogEnhancement` / `getDialogEnhancement` / `resetDialogEnhancement`
+- **Set Parameters**: `audioPort` (string), `enhancementLevel` (integer 0–16)
+- **Get Response**: `{ "enhancementLevel": 0, "success": true }`
+
+#### `setIntelligentEqualizerMode` / `getIntelligentEqualizerMode`
+- **Parameters**: `audioPort` (string), `intelligentEqualizerMode` (integer, set only)
+- **Response**: `{ "intelligentEqualizerMode": 0, "success": true }`
+
+#### `setGraphicEqualizerMode` / `getGraphicEqualizerMode`
+- **Parameters**: `audioPort` (string), `graphicEqualizerMode` (integer, set only)
+- **Response**: `{ "graphicEqualizerMode": 0, "success": true }`
+
+#### `setMS12AudioProfile` / `getMS12AudioProfile` / `getSupportedMS12AudioProfiles`
+Manages MS12 audio profiles (e.g. Movie, Music, Sports).
+- **Set Parameters**: `audioPort` (string), `ms12AudioProfile` (string)
+- **Get Response**: `{ "ms12AudioProfile": "Movie", "success": true }`
+- **Supported Profiles Response**: `{ "supportedMS12AudioProfiles": ["Movie", "Music", "Sports", "OFF"], "success": true }`
+
+#### `getVolumeLeveller` / `setVolumeLeveller` / `resetVolumeLeveller`
+Controls MS12 volume leveller. v1 and v2 differ in response format.
+- **v1 Set Parameters**: `audioPort` (string), `mode` (integer 0=off, 1=on, 2=auto)
+- **v2 Set Parameters**: `audioPort` (string), `enable` (boolean), `level` (integer 0–10)
+- **v1 Get Response**: `{ "enable": true, "level": 5, "success": true }`
+- **v2 Get Response**: `{ "volumeLeveller": { "enable": true, "level": 5 }, "success": true }`
+
+#### `getBassEnhancer` / `setBassEnhancer` / `resetBassEnhancer`
+- **Parameters**: `audioPort` (string), `bassBoost` (integer 0–100, set only)
+- **Response**: `{ "bassBoost": 50, "success": true }`
+
+#### `isSurroundDecoderEnabled` / `enableSurroundDecoder`
+- **Enable Parameters**: `audioPort` (string), `surroundDecoderEnabled` (boolean)
+- **Query Response**: `{ "surroundDecoderEnabled": true, "success": true }`
+
+#### `getDRCMode` / `setDRCMode`
+- **Parameters**: `audioPort` (string), `DRCMode` (integer 0=Line, 1=RF, set only)
+- **Response**: `{ "DRCMode": 0, "success": true }`
+
+#### `getSurroundVirtualizer` / `setSurroundVirtualizer` / `resetSurroundVirtualizer`
+Controls surround sound virtualizer. v1 and v2 differ in response format.
+- **v1 Set Parameters**: `audioPort` (string), `enable` (boolean), `boost` (integer 0–96)
+- **v2 Get Response**: `{ "surroundVirtualizer": { "enable": true, "boost": 50 }, "success": true }`
+
+#### `getMISteering` / `setMISteering`
+- **Parameters**: `audioPort` (string), `MISteering` (boolean, set only)
+- **Response**: `{ "MISteering": false, "success": true }`
+
+#### `setMS12ProfileSettingsOverride`
+Overrides MS12 profile settings at runtime.
+- **Parameters**: Profile key-value overrides (platform-specific — see Open Queries).
+- **Response**: `{ "success": true }`
+
+---
+
+### JSON-RPC API — Associated Audio (AD) Methods
+
+#### `setAssociatedAudioMixing` / `getAssociatedAudioMixing`
+Controls mixing of secondary (AD) audio with primary audio.
+- **Parameters**: `audioPort` (string), `mixing` (boolean, set only)
+- **Response**: `{ "mixing": true, "success": true }`
+- **Events emitted (set)**: `associatedAudioMixingChanged`
+
+#### `setFaderControl` / `getFaderControl`
+Sets the fader balance between primary and secondary audio (-32 to 32).
+- **Parameters**: `audioPort` (string), `mixerBalance` (integer, set only)
+- **Response**: `{ "mixerBalance": 0, "success": true }`
+- **Events emitted (set)**: `faderControlChanged`
+
+#### `setPrimaryLanguage` / `getPrimaryLanguage`
+Gets or sets preferred primary audio language (ISO 639-2 three-character code).
+- **Parameters**: `primaryLanguage` (string, set only)
+- **Response**: `{ "lang": "eng", "success": true }`
+- **Events emitted (set)**: `primaryLanguageChanged`
+
+#### `setSecondaryLanguage` / `getSecondaryLanguage`
+Gets or sets preferred secondary audio language for AD streams (ISO 639-2).
+- **Parameters**: `secondaryLanguage` (string, set only)
+- **Response**: `{ "lang": "fra", "success": true }`
+- **Events emitted (set)**: `secondaryLanguageChanged`
+
+---
+
+### Events (JSON-RPC Notifications)
+
+| Event | Payload | Trigger |
+|-------|---------|---------|
+| `resolutionPreChange` | `{}` | Before resolution change begins |
+| `resolutionChanged` | `{ "width": int, "height": int }` | Resolution change completed |
+| `zoomSettingUpdated` | `{ "zoomSetting": string }` | Zoom/DFC mode changed |
+| `activeInputChanged` | `{ "activeInput": bool }` | Display active-input state changed |
+| `connectedVideoDisplaysUpdated` | `{ "connectedVideoDisplays": string[] }` | HDMI hot-plug event |
+| `connectedAudioPortUpdated` | `{ "HotpluggedAudioPort": string, "isConnected": bool }` | Audio port connect/disconnect |
+| `audioFormatChanged` | `{ "audioFormat": string }` | Incoming audio format changed |
+| `AtmosCapabilityChanged` | `{ "atmos_capability": int }` | Sink Atmos capability changed |
+| `videoFormatChanged` | `{ "videoFormat": string }` | Incoming HDR/video format changed |
+| `associatedAudioMixingChanged` | `{ "mixing": bool }` | AD mixing state changed |
+| `faderControlChanged` | `{ "mixerBalance": int }` | Fader control changed |
+| `primaryLanguageChanged` | `{ "primaryLanguage": string }` | Primary audio language changed |
+| `secondaryLanguageChanged` | `{ "secondaryLanguage": string }` | Secondary audio language changed |
+| `muteStatusChanged` | `{ "muted": bool, "audioPort": string }` | Port mute state changed |
+| `volumeLevelChanged` | `{ "volumeLevel": float, "audioPort": string }` | Port volume level changed |
+| `audioPortEnableStatusChanged` | `{ "audioPort": string, "enabled": bool }` | Audio port enable state changed |
+
+### Configuration
+
+| Key | Default | Description |
+|-----|---------|-------------|
 | `callsign` | `org.rdk.DisplaySettings` | Plugin registration name |
-| `autostart` | Build-time (`PLUGIN_DISPLAYSETTINGS_AUTOSTART`) | Auto-activate on framework start |
-| `startuporder` | Build-time (`PLUGIN_DISPLAYSETTINGS_STARTUPORDER`) | Startup ordering relative to other plugins |
-| `preconditions` | `Platform` | Required precondition before plugin starts |
+| `autostart` | `PLUGIN_DISPLAYSETTINGS_AUTOSTART` (build-time) | Auto-activate on framework start |
+| `startuporder` | `PLUGIN_DISPLAYSETTINGS_STARTUPORDER` (build-time) | Startup ordering |
+| `preconditions` | `Platform` | Required precondition |
 
----
+### API Version Compatibility
 
-## 9. API Version Compatibility
-
-The plugin registers handlers for **version 1** (default) and **version 2** (`CreateHandler({2})`). Version 2 overrides the following methods with extended object formats:
+The plugin registers handlers for version 1 (default) and version 2 (`CreateHandler({2})`). Version 2 overrides the following methods:
 
 | Method | v1 Format | v2 Format |
 |--------|-----------|-----------|
@@ -807,19 +524,262 @@ The plugin registers handlers for **version 1** (default) and **version 2** (`Cr
 | `getSurroundVirtualizer` | flat `enable`/`boost` fields | `surroundVirtualizer: { enable, boost }` object |
 | `setSurroundVirtualizer` | flat fields | object parameter |
 
-Clients should use `org.rdk.DisplaySettings.2` callsign for v2 methods.
+Clients should use callsign `org.rdk.DisplaySettings.2` for v2 methods.
 
 ---
 
-## 10. Open Questions
+## Performance
 
-> These are items that need clarification before full specification can be considered complete.
+- Audio port initialization runs in a dedicated background thread (`initAudioPortsWorker`) to avoid blocking plugin activation.
+- Display-connected status and resolution are cached to avoid repeated DS HAL calls on frequent reads; caches are invalidated by hardware events.
+- All JSON-RPC methods use locked-API wrappers to serialize concurrent calls without busy-waiting.
 
-1. **Zoom setting values**: What is the complete enumeration of valid `zoomSetting` strings beyond `"FULL"` and `"NONE"`? Are these platform-dependent?
-2. **`setScartParameter` signature**: The parameter schema for SCART configuration is not documented. What fields are required/optional?
-3. **`setMS12ProfileSettingsOverride` schema**: What key-value pairs are valid? Is this platform-specific?
-4. **ARC/eARC Volume Control**: When `m_arcEarcAudioEnabled` is true, volume/mute commands appear to be forwarded to the ARC device via CEC. Is this behaviour fully specified?
-5. **`getSupportedMS12Config` response schema**: Exact format of the `ms12config` array elements needs confirmation.
-6. **`IDeviceOptimizeStateActivator::Request`**: What state values are accepted and what is the expected effect on audio/video output?
-7. **`audioPortEnableStatusMap` initialization**: Ports `IDLR0`, `HDMI0`, `SPDIF0`, `SPEAKER0`, `HDMI_ARC0`, `HEADPHONE0` are hardcoded. How are platforms with different port configurations handled?
-8. **EDID encoding**: Is the EDID returned by `readEDID` raw binary (base64), hex-encoded, or another format?
+---
+
+## Security
+
+- The plugin does not expose any authentication mechanism; access control is expected to be enforced at the WPEFramework layer (token-based access or firewall rules on port 9998).
+- No user-provided data is passed to shell commands or file-system paths without sanitization; the zoom-settings file path is a hardcoded constant.
+- RFC/TR181 feature flags are read-only from this plugin's perspective; no sensitive data is written via RFC API.
+
+---
+
+## Versioning & Compatibility
+
+- Plugin API version is `2.0.5` (Major=2, Minor=0, Patch=5).
+- The `SERVICE_REGISTRATION` macro registers the plugin with the Thunder framework under this version.
+- v1 clients using callsign `org.rdk.DisplaySettings.1` receive the v1 response format for all methods.
+- v2 clients using callsign `org.rdk.DisplaySettings.2` receive the extended object format for the four overridden methods.
+- The plugin is backward-compatible: v1 clients are unaffected by the v2 handler registration.
+
+---
+
+## Conformance Testing & Validation
+
+L2 integration tests exist under `Tests/L2Tests/tests/DisplaySettings_L2Test.cpp`. The test fixture (`DisplaySettings_L2test`):
+- Activates `org.rdk.PowerManager` and `org.rdk.DisplaySettings` via WPEFramework plugin activation.
+- Registers mock DS HAL delegates for all `device::Host` event listener interfaces.
+- Invokes JSON-RPC methods via `InvokeServiceMethod` and validates responses.
+- Verifies event notifications are received with the expected payloads.
+
+Covered test scenarios (partial — see L2 test file for full list):
+- `getCurrentResolution` — verifies cached and uncached paths.
+- `getAudioFormat` — verifies `dsAudioFormat_t` format string mapping.
+- `getVideoFormat` — verifies `dsHDRStandard_t` format string mapping.
+- `setCurrentResolution` — verifies DS HAL `setResolution` is called with correct parameters.
+- `getColorDepthCapabilities`, `setForceHDRMode`, `getCurrentOutputSettings`, `getTVHDRCapabilities`.
+
+L1 unit test stubs exist under `Tests/L1Tests/`.
+
+---
+
+## Covered Code
+
+- plugin/DisplaySettings.cpp:
+    - `DisplaySettings::DisplaySettings`
+    - `DisplaySettings::~DisplaySettings`
+    - `DisplaySettings::Initialize`
+    - `DisplaySettings::Deinitialize`
+    - `DisplaySettings::InitAudioPorts`
+    - `DisplaySettings::AudioPortsReInitialize`
+    - `DisplaySettings::initAudioPortsWorker`
+    - `DisplaySettings::InitializePowerManager`
+    - `DisplaySettings::registerEventHandlers`
+    - `DisplaySettings::registerDsEventHandlers`
+    - `DisplaySettings::onPowerModeChanged`
+    - `DisplaySettings::Request`
+    - `DisplaySettings::getConnectedVideoDisplays`
+    - `DisplaySettings::getConnectedVideoDisplaysHelper`
+    - `DisplaySettings::getConnectedAudioPorts`
+    - `DisplaySettings::getSupportedResolutions`
+    - `DisplaySettings::getSupportedVideoDisplays`
+    - `DisplaySettings::getSupportedTvResolutions`
+    - `DisplaySettings::getSupportedSettopResolutions`
+    - `DisplaySettings::getSupportedAudioPorts`
+    - `DisplaySettings::getSupportedAudioModes`
+    - `DisplaySettings::getZoomSetting`
+    - `DisplaySettings::setZoomSetting`
+    - `DisplaySettings::getCurrentResolution`
+    - `DisplaySettings::setCurrentResolution`
+    - `DisplaySettings::getDefaultResolution`
+    - `DisplaySettings::getSoundMode`
+    - `DisplaySettings::setSoundMode`
+    - `DisplaySettings::readEDID`
+    - `DisplaySettings::readHostEDID`
+    - `DisplaySettings::getActiveInput`
+    - `DisplaySettings::getTvHDRSupport`
+    - `DisplaySettings::getSettopHDRSupport`
+    - `DisplaySettings::getCurrentOutputSettings`
+    - `DisplaySettings::setForceHDRMode`
+    - `DisplaySettings::setMS12AudioCompression`
+    - `DisplaySettings::getMS12AudioCompression`
+    - `DisplaySettings::setDolbyVolumeMode`
+    - `DisplaySettings::getDolbyVolumeMode`
+    - `DisplaySettings::setDialogEnhancement`
+    - `DisplaySettings::getDialogEnhancement`
+    - `DisplaySettings::resetDialogEnhancement`
+    - `DisplaySettings::setIntelligentEqualizerMode`
+    - `DisplaySettings::getIntelligentEqualizerMode`
+    - `DisplaySettings::setGraphicEqualizerMode`
+    - `DisplaySettings::getGraphicEqualizerMode`
+    - `DisplaySettings::setMS12AudioProfile`
+    - `DisplaySettings::getMS12AudioProfile`
+    - `DisplaySettings::getSupportedMS12AudioProfiles`
+    - `DisplaySettings::getVolumeLeveller`
+    - `DisplaySettings::getVolumeLeveller2`
+    - `DisplaySettings::setVolumeLeveller`
+    - `DisplaySettings::setVolumeLeveller2`
+    - `DisplaySettings::resetVolumeLeveller`
+    - `DisplaySettings::getBassEnhancer`
+    - `DisplaySettings::setBassEnhancer`
+    - `DisplaySettings::resetBassEnhancer`
+    - `DisplaySettings::isSurroundDecoderEnabled`
+    - `DisplaySettings::enableSurroundDecoder`
+    - `DisplaySettings::getSurroundVirtualizer`
+    - `DisplaySettings::getSurroundVirtualizer2`
+    - `DisplaySettings::setSurroundVirtualizer`
+    - `DisplaySettings::setSurroundVirtualizer2`
+    - `DisplaySettings::resetSurroundVirtualizer`
+    - `DisplaySettings::getMISteering`
+    - `DisplaySettings::setMISteering`
+    - `DisplaySettings::getDRCMode`
+    - `DisplaySettings::setDRCMode`
+    - `DisplaySettings::getAudioDelay`
+    - `DisplaySettings::setAudioDelay`
+    - `DisplaySettings::getSinkAtmosCapability`
+    - `DisplaySettings::setAudioAtmosOutputMode`
+    - `DisplaySettings::getTVHDRCapabilities`
+    - `DisplaySettings::isConnectedDeviceRepeater`
+    - `DisplaySettings::setScartParameter`
+    - `DisplaySettings::getGain`
+    - `DisplaySettings::setGain`
+    - `DisplaySettings::getMuted`
+    - `DisplaySettings::setMuted`
+    - `DisplaySettings::getVolumeLevel`
+    - `DisplaySettings::setVolumeLevel`
+    - `DisplaySettings::getSettopMS12Capabilities`
+    - `DisplaySettings::getSettopAudioCapabilities`
+    - `DisplaySettings::setEnableAudioPort`
+    - `DisplaySettings::getEnableAudioPort`
+    - `DisplaySettings::setAssociatedAudioMixing`
+    - `DisplaySettings::getAssociatedAudioMixing`
+    - `DisplaySettings::setFaderControl`
+    - `DisplaySettings::getFaderControl`
+    - `DisplaySettings::setPrimaryLanguage`
+    - `DisplaySettings::getPrimaryLanguage`
+    - `DisplaySettings::setSecondaryLanguage`
+    - `DisplaySettings::getSecondaryLanguage`
+    - `DisplaySettings::getAudioFormat`
+    - `DisplaySettings::getVideoFormat`
+    - `DisplaySettings::setMS12ProfileSettingsOverride`
+    - `DisplaySettings::setPreferredColorDepth`
+    - `DisplaySettings::getPreferredColorDepth`
+    - `DisplaySettings::getColorDepthCapabilities`
+    - `DisplaySettings::getSupportedMS12Config`
+    - `DisplaySettings::audioFormatToString`
+    - `DisplaySettings::getVideoFormatTypeToString`
+    - `DisplaySettings::getVideoFormatTypeFromString`
+    - `DisplaySettings::getSupportedVideoFormats`
+    - `DisplaySettings::checkPortName`
+    - `DisplaySettings::getSystemPowerState`
+    - `DisplaySettings::isDisplayConnected`
+    - `DisplaySettings::resolutionPreChange`
+    - `DisplaySettings::resolutionChanged`
+    - `DisplaySettings::zoomSettingUpdated`
+    - `DisplaySettings::activeInputChanged`
+    - `DisplaySettings::connectedVideoDisplaysUpdated`
+    - `DisplaySettings::connectedAudioPortUpdated`
+    - `DisplaySettings::notifyAudioFormatChange`
+    - `DisplaySettings::notifyAtmosCapabilityChange`
+    - `DisplaySettings::notifyAssociatedAudioMixingChange`
+    - `DisplaySettings::notifyFaderControlChange`
+    - `DisplaySettings::notifyPrimaryLanguageChange`
+    - `DisplaySettings::notifySecondaryLanguageChange`
+    - `DisplaySettings::notifyVideoFormatChange`
+    - `DisplaySettings::onARCInitiationEventHandler`
+    - `DisplaySettings::onARCTerminationEventHandler`
+    - `DisplaySettings::onShortAudioDescriptorEventHandler`
+    - `DisplaySettings::onSystemAudioModeEventHandler`
+    - `DisplaySettings::onArcAudioStatusEventHandler`
+    - `DisplaySettings::onAudioDeviceConnectedStatusEventHandler`
+    - `DisplaySettings::onCecEnabledEventHandler`
+    - `DisplaySettings::onAudioDevicePowerStatusEventHandler`
+    - `DisplaySettings::OnResolutionPreChange`
+    - `DisplaySettings::OnResolutionPostChange`
+    - `DisplaySettings::OnDisplayHDMIHotPlug`
+    - `DisplaySettings::OnDisplayRxSense`
+    - `DisplaySettings::OnDolbyAtmosCapabilitiesChanged`
+    - `DisplaySettings::OnAudioFaderControlChanged`
+    - `DisplaySettings::OnAudioFormatUpdate`
+    - `DisplaySettings::OnAudioOutHotPlug`
+    - `DisplaySettings::OnAudioPortStateChanged`
+    - `DisplaySettings::OnAudioPrimaryLanguageChanged`
+    - `DisplaySettings::OnAudioSecondaryLanguageChanged`
+    - `DisplaySettings::OnAssociatedAudioMixingChanged`
+    - `DisplaySettings::OnHdmiInEventHotPlug`
+    - `DisplaySettings::OnVideoFormatUpdate`
+    - `DisplaySettings::OnZoomSettingsChanged`
+    - `DisplaySettings::getHdmiCecSinkPlugin`
+    - `DisplaySettings::subscribeForHdmiCecSinkEvent`
+    - `DisplaySettings::setUpHdmiCecSinkArcRouting`
+    - `DisplaySettings::requestShortAudioDescriptor`
+    - `DisplaySettings::requestAudioDevicePowerStatus`
+    - `DisplaySettings::requestDeviceAudioStatus`
+    - `DisplaySettings::sendUserControlPressCommand`
+    - `DisplaySettings::sendHdmiCecSinkAudioDevicePowerOn`
+    - `DisplaySettings::getHdmiCecSinkCecEnableStatus`
+    - `DisplaySettings::getHdmiCecSinkAudioDeviceConnectedStatus`
+    - `DisplaySettings::getAudioDeviceSADState`
+    - `DisplaySettings::setAudioDeviceSADState`
+    - `DisplaySettings::getCurrentArcRoutingState`
+    - `DisplaySettings::onTimer`
+    - `DisplaySettings::stopCecTimeAndUnsubscribeEvent`
+    - `DisplaySettings::checkAudioDeviceDetectionTimer`
+    - `DisplaySettings::checkArcDeviceConnected`
+    - `DisplaySettings::checkSADUpdate`
+    - `DisplaySettings::checkAudioDevicePowerStatusTimer`
+    - `DisplaySettings::sendMsgToQueue`
+    - `DisplaySettings::sendMsgThread`
+- plugin/DisplaySettings.h:
+    - `class DisplaySettings`
+    - `class DisplaySettings::PowerManagerNotification`
+- plugin/Module.cpp:
+    - Module registration
+- plugin/Module.h:
+    - Module declaration
+- Tests/L2Tests/tests/DisplaySettings_L2Test.cpp:
+    - `DisplaySettings_L2test` (test fixture)
+    - `DisplaySettings_L2test::DisplaySettings_L2test`
+    - `DisplaySettings_L2test::~DisplaySettings_L2test`
+    - `TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)`
+
+---
+
+## Open Queries
+
+- **Zoom setting enumeration**: What is the complete list of valid `zoomSetting` string values beyond `"FULL"` and `"NONE"`? Are these defined by the DS HAL `dsVideoZoom_t` enum and are they platform-dependent?
+- **`setScartParameter` schema**: The parameter schema for SCART configuration is not documented in the code. What fields are required/optional, and which platforms is this applicable to?
+- **`setMS12ProfileSettingsOverride` schema**: What key-value pairs are valid overrides? Is this entirely platform-specific or is there a common set?
+- **ARC/eARC volume forwarding**: When `m_arcEarcAudioEnabled` is true, `setMuted`/`setVolumeLevel` appear to forward commands to the AV receiver via CEC. Is this behaviour fully specified and intentional? Is there a fallback if CEC is unavailable?
+- **`getSupportedMS12Config` response format**: The exact structure of the `ms12config` array elements is not documented in the code. Needs confirmation from DS HAL spec.
+- **`IDeviceOptimizeStateActivator::Request` state values**: What state strings are valid inputs and what is the observable effect on audio/video output?
+- **`audioPortEnableStatusMap` hardcoded ports**: Ports `IDLR0`, `HDMI0`, `SPDIF0`, `SPEAKER0`, `HDMI_ARC0`, `HEADPHONE0` are hardcoded in the constructor. How are platforms with subsets or supersets of these ports handled?
+- **EDID encoding format**: Is the EDID data returned by `readEDID` / `readHostEDID` raw binary encoded as base64, as a hex string, or in another format?
+
+---
+
+## References
+
+- [RDK Central — entservices-displaysettings repository](https://github.com/rdkcentral/entservices-displaysettings)
+- [WPEFramework Thunder Plugin documentation](https://rdkcentral.github.io/Thunder/)
+- [Dolby MS12 Audio Processing documentation](https://professional.dolby.com/product/dolby-ms12/)
+- [HDMI ARC/eARC specification — HDMI Forum](https://www.hdmi.org/spec/earc)
+- [ISO 639-2 Language Codes](https://www.loc.gov/standards/iso639-2/php/code_list.php)
+- DS HAL API — `dsTypes.h`, `dsError.h`, `dsDisplay.h`
+- [plugin/CHANGELOG.md](plugin/CHANGELOG.md) — DisplaySettings plugin version history
+
+---
+
+## Change History
+
+- [2026-04-28] - openspec-templater - Restructured to match spec template.
