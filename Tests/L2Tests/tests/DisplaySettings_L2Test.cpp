@@ -430,11 +430,67 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
 
     /**************getSupportedResolutions********************/
 
+    // Mock for EDID query - return resolution bitmask
+    ON_CALL(*p_videoOutputPortMock, getSupportedTvResolutions(testing::_))
+        .WillByDefault(testing::Invoke(
+            [&](int* tvResolutions) {
+                // Simulate EDID reporting common resolutions
+                *tvResolutions = dsTV_RESOLUTION_720p | dsTV_RESOLUTION_1080p |
+                                 dsTV_RESOLUTION_1080i | dsTV_RESOLUTION_2160p60;
+            }));
+
+    // Test with no display connected - execute this before any HDMI0 query
+    // so cached HDMI0 connection state does not mask the disconnected path.
+    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
+        .WillByDefault(::testing::Return(false));
     {
         JsonObject result, params;
         status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result["success"].Boolean());
+        ASSERT_TRUE(result.HasLabel("supportedResolutions"));
+        auto arr = result["supportedResolutions"].Array();
+        EXPECT_EQ(arr.Length(), 0u);
     }
 
+    // Restore display connected for the remaining getSupportedResolutions tests
+    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
+        .WillByDefault(::testing::Return(true));
+
+    // Test: default port, display connected, check payload
+    {
+        JsonObject result, params;
+        status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result["success"].Boolean());
+        ASSERT_TRUE(result.HasLabel("supportedResolutions"));
+        auto arr = result["supportedResolutions"].Array();
+        std::vector<std::string> resolutions;
+        for (size_t i = 0; i < arr.Length(); ++i) {
+            resolutions.push_back(arr[i].String());
+        }
+        EXPECT_THAT(resolutions, ::testing::UnorderedElementsAre(
+            "720p", "1080p", "1080i", "2160p60"
+        ));
+    }
+
+    // Test with specific videoDisplay parameter, check payload
+    {
+        JsonObject result, params;
+        params["videoDisplay"] = "HDMI0";
+        status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result["success"].Boolean());
+        ASSERT_TRUE(result.HasLabel("supportedResolutions"));
+        auto arr = result["supportedResolutions"].Array();
+        std::vector<std::string> resolutions;
+        for (size_t i = 0; i < arr.Length(); ++i) {
+            resolutions.push_back(arr[i].String());
+        }
+        EXPECT_THAT(resolutions, ::testing::UnorderedElementsAre(
+            "720p", "1080p", "1080i", "2160p60"
+        ));
+    }
     /****************setForceHDRMode***************/
 
     {
@@ -505,192 +561,4 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
     vope_listener->OnResolutionPostChange(1,1);
     vope_listener->OnVideoFormatUpdate(dsHDRStandard_t::dsHDRSTANDARD_HDR10);
 
-}
-
-/**
- * @brief Verifies getSupportedResolutions returns a non-empty list when an external display is connected.
- *
- * Scenario: External display connected returns EDID resolutions
- */
-TEST_F(DisplaySettings_L2test, getSupportedResolutions_ExternalDisplayConnected)
-{
-    JSONRPC::LinkType<Core::JSON::IElement> jsonrpc(DISPLAYSETTINGS_CALLSIGN, DISPLAYSETTINGSL2TEST_CALLSIGN);
-
-    device::VideoOutputPort videoOutputPort;
-    device::VideoOutputPortType videoOutputPortType;
-    device::VideoResolution videoResolution;
-    string videoPort(_T("HDMI0"));
-    string supportedRes(_T("1080p"));
-
-    ON_CALL(*p_hostImplMock, getVideoOutputPort(::testing::_))
-        .WillByDefault(::testing::ReturnRef(videoOutputPort));
-    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
-        .WillByDefault(::testing::Return(true));
-    ON_CALL(*p_videoOutputPortMock, getType())
-        .WillByDefault(::testing::ReturnRef(videoOutputPortType));
-    ON_CALL(*p_videoOutputPortTypeMock, getId())
-        .WillByDefault(::testing::Return(0));
-    ON_CALL(*p_videoOutputPortConfigImplMock, getPortType(::testing::_))
-        .WillByDefault(::testing::ReturnRef(videoOutputPortType));
-    ON_CALL(*p_videoOutputPortTypeMock, getSupportedResolutions())
-        .WillByDefault(::testing::Return(device::List<device::VideoResolution>({ videoResolution })));
-    ON_CALL(*p_videoResolutionMock, getName())
-        .WillByDefault(::testing::ReturnRef(supportedRes));
-
-    JsonObject result, params;
-    uint32_t status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
-    EXPECT_EQ(Core::ERROR_NONE, status);
-    EXPECT_TRUE(result["success"].Boolean());
-    EXPECT_FALSE(result["supportedResolutions"].Array().IsNull());
-    EXPECT_GT(result["supportedResolutions"].Array().Length(), 0u);
-}
-
-/**
- * @brief Verifies getSupportedResolutions returns an empty list when no external display is connected.
- *
- * Scenario: No display connected on external port
- */
-TEST_F(DisplaySettings_L2test, getSupportedResolutions_NoDisplayConnected)
-{
-    JSONRPC::LinkType<Core::JSON::IElement> jsonrpc(DISPLAYSETTINGS_CALLSIGN, DISPLAYSETTINGSL2TEST_CALLSIGN);
-
-    device::VideoOutputPort videoOutputPort;
-
-    ON_CALL(*p_hostImplMock, getVideoOutputPort(::testing::_))
-        .WillByDefault(::testing::ReturnRef(videoOutputPort));
-    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
-        .WillByDefault(::testing::Return(false));
-
-    JsonObject result, params;
-    uint32_t status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
-    EXPECT_EQ(Core::ERROR_NONE, status);
-    EXPECT_TRUE(result["success"].Boolean());
-    EXPECT_EQ(result["supportedResolutions"].Array().Length(), 0u);
-}
-
-/**
- * @brief Verifies getSupportedResolutions defaults to HDMI0 when videoDisplay parameter is omitted.
- *
- * Scenario: No videoDisplay parameter supplied
- */
-TEST_F(DisplaySettings_L2test, getSupportedResolutions_DefaultsToHDMI0)
-{
-    JSONRPC::LinkType<Core::JSON::IElement> jsonrpc(DISPLAYSETTINGS_CALLSIGN, DISPLAYSETTINGSL2TEST_CALLSIGN);
-
-    device::VideoOutputPort videoOutputPort;
-    device::VideoOutputPortType videoOutputPortType;
-    device::VideoResolution videoResolution;
-    string supportedRes(_T("720p"));
-
-    EXPECT_CALL(*p_hostImplMock, getVideoOutputPort(::testing::Eq(std::string("HDMI0"))))
-        .WillOnce(::testing::ReturnRef(videoOutputPort));
-    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
-        .WillByDefault(::testing::Return(true));
-    ON_CALL(*p_videoOutputPortMock, getType())
-        .WillByDefault(::testing::ReturnRef(videoOutputPortType));
-    ON_CALL(*p_videoOutputPortTypeMock, getId())
-        .WillByDefault(::testing::Return(0));
-    ON_CALL(*p_videoOutputPortConfigImplMock, getPortType(::testing::_))
-        .WillByDefault(::testing::ReturnRef(videoOutputPortType));
-    ON_CALL(*p_videoOutputPortTypeMock, getSupportedResolutions())
-        .WillByDefault(::testing::Return(device::List<device::VideoResolution>({ videoResolution })));
-    ON_CALL(*p_videoResolutionMock, getName())
-        .WillByDefault(::testing::ReturnRef(supportedRes));
-
-    /* Call without videoDisplay param to verify default is HDMI0 */
-    JsonObject result, params;
-    uint32_t status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
-    EXPECT_EQ(Core::ERROR_NONE, status);
-    EXPECT_TRUE(result["success"].Boolean());
-}
-
-/**
- * @brief Verifies getSupportedResolutions returns the platform capability list for a built-in display port.
- *
- * Scenario: Built-in display port returns platform capability list
- */
-TEST_F(DisplaySettings_L2test, getSupportedResolutions_BuiltInDisplay)
-{
-    JSONRPC::LinkType<Core::JSON::IElement> jsonrpc(DISPLAYSETTINGS_CALLSIGN, DISPLAYSETTINGSL2TEST_CALLSIGN);
-
-    device::VideoOutputPort videoOutputPort;
-    device::VideoOutputPortType videoOutputPortType;
-    device::VideoResolution videoResolution;
-    string builtInPort(_T("COMPONENT0"));
-    string supportedRes(_T("1080i"));
-
-    ON_CALL(*p_hostImplMock, getVideoOutputPort(::testing::_))
-        .WillByDefault(::testing::ReturnRef(videoOutputPort));
-    /* Built-in display: isDisplayConnected() returns true regardless of physical state */
-    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
-        .WillByDefault(::testing::Return(true));
-    ON_CALL(*p_videoOutputPortMock, getType())
-        .WillByDefault(::testing::ReturnRef(videoOutputPortType));
-    ON_CALL(*p_videoOutputPortTypeMock, getId())
-        .WillByDefault(::testing::Return(1));
-    ON_CALL(*p_videoOutputPortConfigImplMock, getPortType(::testing::_))
-        .WillByDefault(::testing::ReturnRef(videoOutputPortType));
-    ON_CALL(*p_videoOutputPortTypeMock, getSupportedResolutions())
-        .WillByDefault(::testing::Return(device::List<device::VideoResolution>({ videoResolution })));
-    ON_CALL(*p_videoResolutionMock, getName())
-        .WillByDefault(::testing::ReturnRef(supportedRes));
-
-    JsonObject result, params;
-    params["videoDisplay"] = builtInPort;
-    uint32_t status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
-    EXPECT_EQ(Core::ERROR_NONE, status);
-    EXPECT_TRUE(result["success"].Boolean());
-    EXPECT_GT(result["supportedResolutions"].Array().Length(), 0u);
-}
-
-/**
- * @brief Verifies getSupportedResolutions reflects updated capabilities after a display reconnect event.
- *
- * Scenario: Different display connected after initial query
- */
-TEST_F(DisplaySettings_L2test, getSupportedResolutions_CacheRefreshOnReconnect)
-{
-    JSONRPC::LinkType<Core::JSON::IElement> jsonrpc(DISPLAYSETTINGS_CALLSIGN, DISPLAYSETTINGSL2TEST_CALLSIGN);
-
-    device::VideoOutputPort videoOutputPort;
-    device::VideoOutputPortType videoOutputPortType;
-    device::VideoResolution videoResolution;
-    string firstRes(_T("720p"));
-    string secondRes(_T("1080p60"));
-
-    ON_CALL(*p_hostImplMock, getVideoOutputPort(::testing::_))
-        .WillByDefault(::testing::ReturnRef(videoOutputPort));
-    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
-        .WillByDefault(::testing::Return(true));
-    ON_CALL(*p_videoOutputPortMock, getType())
-        .WillByDefault(::testing::ReturnRef(videoOutputPortType));
-    ON_CALL(*p_videoOutputPortTypeMock, getId())
-        .WillByDefault(::testing::Return(0));
-    ON_CALL(*p_videoOutputPortConfigImplMock, getPortType(::testing::_))
-        .WillByDefault(::testing::ReturnRef(videoOutputPortType));
-
-    /* First call: mock returns "720p" */
-    ON_CALL(*p_videoOutputPortTypeMock, getSupportedResolutions())
-        .WillByDefault(::testing::Return(device::List<device::VideoResolution>({ videoResolution })));
-    ON_CALL(*p_videoResolutionMock, getName())
-        .WillByDefault(::testing::ReturnRef(firstRes));
-
-    JsonObject result1, params1;
-    uint32_t status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params1, result1);
-    EXPECT_EQ(Core::ERROR_NONE, status);
-    EXPECT_TRUE(result1["success"].Boolean());
-    EXPECT_GT(result1["supportedResolutions"].Array().Length(), 0u);
-
-    /* Simulate display reconnect hotplug event */
-    dde_listener->OnDisplayHDMIHotPlug(dsDisplayEvent_t::dsDISPLAY_EVENT_CONNECTED);
-
-    /* Second call: mock now returns "1080p60" to simulate new display EDID */
-    ON_CALL(*p_videoResolutionMock, getName())
-        .WillByDefault(::testing::ReturnRef(secondRes));
-
-    JsonObject result2, params2;
-    status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params2, result2);
-    EXPECT_EQ(Core::ERROR_NONE, status);
-    EXPECT_TRUE(result2["success"].Boolean());
-    EXPECT_GT(result2["supportedResolutions"].Array().Length(), 0u);
 }

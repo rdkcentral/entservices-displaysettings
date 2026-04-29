@@ -800,23 +800,57 @@ namespace WPEFramework {
         uint32_t DisplaySettings::getSupportedResolutions(const JsonObject& parameters, JsonObject& response)
         {   //sample servicemanager response:{"success":true,"supportedResolutions":["720p","1080i","1080p60"]}
             LOGINFOMETHOD();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : "HDMI0";
+            std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
             vector<string> supportedResolutions;
             try
             {
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
-                if (vPort.isDisplayConnected()) {
-                    const device::List<device::VideoResolution> resolutions = device::VideoOutputPortConfig::getInstance().getPortType(vPort.getType().getId()).getSupportedResolutions();
-                    for (size_t i = 0; i < resolutions.size(); i++) {
-                        const device::VideoResolution &resolution = resolutions.at(i);
-                        string supportedResolution = resolution.getName();
-                        vectorSet(supportedResolutions, supportedResolution);
+
+                // Check if display is connected
+                if (vPort.isDisplayConnected())
+                {
+                    LOGINFO("Display connected on port %s, querying for supported resolutions", videoDisplay.c_str());
+
+                    // Query the data from connected display
+                    int tvResolutions = 0;
+                    vPort.getSupportedTvResolutions(&tvResolutions);
+
+                    // Convert bitmask to resolution strings
+                    if(!tvResolutions) {
+                        LOGWARN("No resolutions reported in port %s", videoDisplay.c_str());
                     }
+                    if(tvResolutions & dsTV_RESOLUTION_480i) supportedResolutions.emplace_back("480i");
+                    if(tvResolutions & dsTV_RESOLUTION_480p) supportedResolutions.emplace_back("480p");
+                    if(tvResolutions & dsTV_RESOLUTION_576i) supportedResolutions.emplace_back("576i");
+                    if(tvResolutions & dsTV_RESOLUTION_576p) supportedResolutions.emplace_back("576p");
+                    if(tvResolutions & dsTV_RESOLUTION_576p50) supportedResolutions.emplace_back("576p50");
+                    if(tvResolutions & dsTV_RESOLUTION_720p) supportedResolutions.emplace_back("720p");
+                    if(tvResolutions & dsTV_RESOLUTION_720p50) supportedResolutions.emplace_back("720p50");
+                    if(tvResolutions & dsTV_RESOLUTION_1080i) supportedResolutions.emplace_back("1080i");
+                    if(tvResolutions & dsTV_RESOLUTION_1080p) supportedResolutions.emplace_back("1080p");
+                    if(tvResolutions & dsTV_RESOLUTION_1080p24) supportedResolutions.emplace_back("1080p24");
+                    if(tvResolutions & dsTV_RESOLUTION_1080i25) supportedResolutions.emplace_back("1080i25");
+                    if(tvResolutions & dsTV_RESOLUTION_1080p25) supportedResolutions.emplace_back("1080p25");
+                    if(tvResolutions & dsTV_RESOLUTION_1080p30) supportedResolutions.emplace_back("1080p30");
+                    if(tvResolutions & dsTV_RESOLUTION_1080i50) supportedResolutions.emplace_back("1080i50");
+                    if(tvResolutions & dsTV_RESOLUTION_1080p50) supportedResolutions.emplace_back("1080p50");
+                    if(tvResolutions & dsTV_RESOLUTION_1080p60) supportedResolutions.emplace_back("1080p60");
+                    if(tvResolutions & dsTV_RESOLUTION_2160p24) supportedResolutions.emplace_back("2160p24");
+                    if(tvResolutions & dsTV_RESOLUTION_2160p25) supportedResolutions.emplace_back("2160p25");
+                    if(tvResolutions & dsTV_RESOLUTION_2160p30) supportedResolutions.emplace_back("2160p30");
+                    if(tvResolutions & dsTV_RESOLUTION_2160p50) supportedResolutions.emplace_back("2160p50");
+                    if(tvResolutions & dsTV_RESOLUTION_2160p60) supportedResolutions.emplace_back("2160p60");
+                }
+                else
+                {
+                    LOGINFO("No display connected on port %s, returning empty resolution list", videoDisplay.c_str());
                 }
             }
             catch(const device::Exception& err)
             {
                 LOG_DEVICE_EXCEPTION1(videoDisplay);
+                LOGWARN("Failed to query supported resolutions for port %s, returning empty list", videoDisplay.c_str());
             }
             setResponseArray(response, "supportedResolutions", supportedResolutions);
             returnResponse(true);
@@ -3979,6 +4013,7 @@ namespace WPEFramework {
             returnIfParamNotFound(parameters, "audioPort");
 
             bool success = true;
+	    bool isAudioPortMuted = false;
             string audioPort = parameters["audioPort"].String();
 
             returnIfParamNotFound(parameters, "enable");
@@ -4010,13 +4045,17 @@ namespace WPEFramework {
                         LOGWARN("DisplaySettings::setEnableAudioPort aPort.setEnablePort retuned %04x \n", eRet);
                         success = false;
                     } else if (aPort.isMuted()) {
-                        LOGWARN("DisplaySettings::setEnableAudioPort aPort.isMuted() \n");
+                        LOGWARN("DisplaySettings::setEnableAudioPort aPort.isMuted() and update isAudioPortMuted to true\n");
                         aPort.setMuted(true);
+			isAudioPortMuted = true;
                     }
                 }
                 else /* for HDMI_ARC0 audio port */ 
 		{
-			LOGINFO(" %s: m_hdmiInAudioDeviceConnected: %d , pEnable: %d \n",__FUNCTION__,m_hdmiInAudioDeviceConnected, pEnable);
+			if (aPort.isMuted()) {
+                            isAudioPortMuted = true;
+			}
+			LOGINFO(" %s: m_hdmiInAudioDeviceConnected: %d , pEnable: %d isAudioPortMuted :%d \n",__FUNCTION__,m_hdmiInAudioDeviceConnected, pEnable,isAudioPortMuted );
 
 			device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
 			device::AudioStereoMode mode = device::AudioStereoMode::kStereo;  //default to stereo
@@ -4105,6 +4144,13 @@ namespace WPEFramework {
                                             m_arcEarcAudioEnabled = true;
 					    LOGINFO("%s: Enable ARC... \n",__FUNCTION__);
                                         }
+					LOGINFO("isAudioPortMuted :%d  hdmiArcMuteStatus: %d: if not same call SEND_MUTE_KEY_EVENT  \n", isAudioPortMuted, hdmiArcMuteStatus);
+					// Send mute if not already
+					if(isAudioPortMuted != hdmiArcMuteStatus)
+					{
+                                            sendMsgToQueue(SEND_MUTE_KEY_EVENT, NULL);
+					}
+
                                    }
                                    else /* m_arcEarcAudioEnabled == true */
 				   {
