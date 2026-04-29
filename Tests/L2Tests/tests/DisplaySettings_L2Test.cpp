@@ -446,11 +446,67 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
 
     /**************getSupportedResolutions********************/
 
+    // Mock for EDID query - return resolution bitmask
+    ON_CALL(*p_videoOutputPortMock, getSupportedTvResolutions(testing::_))
+        .WillByDefault(testing::Invoke(
+            [&](int* tvResolutions) {
+                // Simulate EDID reporting common resolutions
+                *tvResolutions = dsTV_RESOLUTION_720p | dsTV_RESOLUTION_1080p |
+                                 dsTV_RESOLUTION_1080i | dsTV_RESOLUTION_2160p60;
+            }));
+
+    // Test with no display connected - execute this before any HDMI0 query
+    // so cached HDMI0 connection state does not mask the disconnected path.
+    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
+        .WillByDefault(::testing::Return(false));
     {
         JsonObject result, params;
         status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result["success"].Boolean());
+        ASSERT_TRUE(result.HasLabel("supportedResolutions"));
+        auto arr = result["supportedResolutions"].Array();
+        EXPECT_EQ(arr.Length(), 0u);
     }
 
+    // Restore display connected for the remaining getSupportedResolutions tests
+    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
+        .WillByDefault(::testing::Return(true));
+
+    // Test: default port, display connected, check payload
+    {
+        JsonObject result, params;
+        status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result["success"].Boolean());
+        ASSERT_TRUE(result.HasLabel("supportedResolutions"));
+        auto arr = result["supportedResolutions"].Array();
+        std::vector<std::string> resolutions;
+        for (size_t i = 0; i < arr.Length(); ++i) {
+            resolutions.push_back(arr[i].String());
+        }
+        EXPECT_THAT(resolutions, ::testing::UnorderedElementsAre(
+            "720p", "1080p", "1080i", "2160p60"
+        ));
+    }
+
+    // Test with specific videoDisplay parameter, check payload
+    {
+        JsonObject result, params;
+        params["videoDisplay"] = "HDMI0";
+        status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result["success"].Boolean());
+        ASSERT_TRUE(result.HasLabel("supportedResolutions"));
+        auto arr = result["supportedResolutions"].Array();
+        std::vector<std::string> resolutions;
+        for (size_t i = 0; i < arr.Length(); ++i) {
+            resolutions.push_back(arr[i].String());
+        }
+        EXPECT_THAT(resolutions, ::testing::UnorderedElementsAre(
+            "720p", "1080p", "1080i", "2160p60"
+        ));
+    }
     /****************setForceHDRMode***************/
 
     {
