@@ -61,6 +61,10 @@ The plugin also integrates with `org.rdk.PowerManager` to properly handle audio 
 - **REQ-DS-012**: The plugin SHALL provide EDID read capability for both the connected display (`readEDID`) and the host STB (`readHostEDID`).
 - **REQ-DS-013**: The plugin SHALL support associated audio (AD) mixing, fader control, and primary/secondary language selection per ISO 639-2.
 - **REQ-DS-014**: The plugin SHALL precondition on `Platform` and SHALL start only after the platform is available.
+- **REQ-DS-015**: `getSupportedResolutions` SHALL return the list of resolutions sourced from the connected display's EDID data, obtained via the `getSupportedTvResolutions` HAL API.
+- **REQ-DS-016**: `getSupportedResolutions` SHALL default to the platform's default video output port (as returned by `getDefaultVideoPortName()`) when the `videoDisplay` parameter is omitted.
+- **REQ-DS-017**: `getSupportedResolutions` SHALL return an empty `supportedResolutions` array when no display is connected on the requested port.
+- **REQ-DS-018**: `getSupportedResolutions` SHALL reflect the newly connected display's EDID capabilities after a display hot-plug event; stale data from the previous display SHALL NOT be returned.
 
 ### Non-Functional Requirements
 
