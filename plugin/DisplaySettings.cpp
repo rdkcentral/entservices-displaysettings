@@ -800,17 +800,18 @@ namespace WPEFramework {
         uint32_t DisplaySettings::getSupportedResolutions(const JsonObject& parameters, JsonObject& response)
         {   //sample servicemanager response:{"success":true,"supportedResolutions":["720p","1080i","1080p60"]}
             LOGINFOMETHOD();
-            std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : "HDMI0";
             vector<string> supportedResolutions;
             try
             {
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
-                const device::List<device::VideoResolution> resolutions = device::VideoOutputPortConfig::getInstance().getPortType(vPort.getType().getId()).getSupportedResolutions();
-                for (size_t i = 0; i < resolutions.size(); i++) {
-                    const device::VideoResolution &resolution = resolutions.at(i);
-                    string supportedResolution = resolution.getName();
-                    vectorSet(supportedResolutions,supportedResolution);
+                if (vPort.isDisplayConnected()) {
+                    const device::List<device::VideoResolution> resolutions = device::VideoOutputPortConfig::getInstance().getPortType(vPort.getType().getId()).getSupportedResolutions();
+                    for (size_t i = 0; i < resolutions.size(); i++) {
+                        const device::VideoResolution &resolution = resolutions.at(i);
+                        string supportedResolution = resolution.getName();
+                        vectorSet(supportedResolutions, supportedResolution);
+                    }
                 }
             }
             catch(const device::Exception& err)

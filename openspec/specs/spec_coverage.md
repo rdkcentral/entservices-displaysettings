@@ -1,13 +1,13 @@
 # OpenSpec Coverage Report — entservices-displaysettings
 
-**Generated**: 2026-04-28  
+**Generated**: 2026-04-29  
 **Repository**: `entservices-displaysettings`  
 **Specs scanned**: `openspec/specs/`  
 **Code scanned**: `plugin/`, `helpers/`, `Tests/`
 
 ---
 
-## Total Score: 79 / 100
+## Total Score: 80 / 100
 
 | Category | Weight | Score | Max |
 |----------|--------|-------|-----|
@@ -16,9 +16,9 @@
 | External Interface Specification | 10% | 8 | 10 |
 | Security Specification | 10% | 5 | 10 |
 | Versioning & Compatibility | 10% | 7 | 10 |
-| Conformance Testing & Validation | 10% | 7 | 10 |
+| Conformance Testing & Validation | 10% | 8 | 10 |
 | Performance Specification | 10% | 10 | 10 |
-| **TOTAL** | **100%** | **78.8 ≈ 79** | **100** |
+| **TOTAL** | **100%** | **79.8 ≈ 80** | **100** |
 
 ---
 
@@ -52,7 +52,7 @@
 | `plugin/DisplaySettings.h` | 0 (declarations only) | 0 | 0 |
 | `plugin/Module.cpp` | 1 | 1 | 0 |
 | `plugin/Module.h` | 1 | 1 | 0 |
-| `Tests/L2Tests/tests/DisplaySettings_L2Test.cpp` | 3 | 3 | 0 |
+| `Tests/L2Tests/tests/DisplaySettings_L2Test.cpp` | 8 | 8 | 0 |
 | `helpers/PluginInterfaceBuilder.h` | 1 | 0 | 1 |
 | `helpers/UtilsString.h` | 1 | 0 | 1 |
 | `helpers/WebSockets/Encryption/NoEncryption.h` | 1 | 0 | 1 |
@@ -60,7 +60,7 @@
 | `helpers/WebSockets/JsonRpc/Notification.cpp` | 2 | 0 | 2 |
 | `helpers/WebSockets/JsonRpc/Request.cpp` | 5 | 0 | 5 |
 | `helpers/WebSockets/JsonRpc/Response.cpp` | 6 | 0 | 6 |
-| **Total** | **186** | **167** | **19** |
+| **Total** | **191** | **172** | **19** |
 
 **Reference coverage score**: 89.8% → **18/20** (≈ 89.8% of 20 points)
 
@@ -179,11 +179,11 @@ No inline traceability comments are used. All traceability is via the `## Covere
 | Sub-criterion | Score | Max | Notes |
 |--------------|-------|-----|-------|
 | Presence of Conformance Tests | 3 | 3 | L2 tests present at `Tests/L2Tests/tests/DisplaySettings_L2Test.cpp` ✅ |
-| Test Coverage | 2 | 3 | ~10 methods tested in `DisplaySettings_L2_MethodTest`; L1 stubs exist but no L1 test bodies found ⚠️ |
+| Test Coverage | 3 | 3 | ~15 methods tested across 6 `TEST_F` cases (added 5 dedicated `getSupportedResolutions` tests); L1 stubs exist but no L1 test bodies found ⚠️ |
 | Test Documentation | 1 | 2 | `## Conformance Testing & Validation` section references test fixture and scenarios; no documented steps to build/run tests ⚠️ |
 | Validation Results | 1 | 2 | No tracked test results, CI badge, or pass/fail evidence in spec ⚠️ |
 
-**Score: 7 / 10**
+**Score: 8 / 10**
 
 **Gaps**:
 - L1Tests CMakeLists.txt exists but no L1 test source files found — these stubs need implementation.
