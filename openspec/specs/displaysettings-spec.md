@@ -207,12 +207,10 @@ Returns all video output ports available on the device.
 
 #### `getSupportedResolutions`
 Returns supported resolutions for a given video output port.
-- **Parameters**: `videoDisplay` (string, optional — defaults to `"HDMI0"` if not specified)
+- **Parameters**: `videoDisplay` (string, optional — defaults to the platform default port, typically `"HDMI0"`)
 - **Response**: `{ "supportedResolutions": ["720p", "1080i", "1080p60"], "success": true }`
-- **Data source**:
-  - *External display port (e.g., HDMI0)*: resolutions are sourced from the connected display's EDID data as reported by the DS HAL.
-  - *Built-in display port*: resolutions are sourced from the platform capability list and are independent of the physical connection state.
-- **No-display behavior**: When called for an external display port with no display connected, returns `{ "supportedResolutions": [], "success": true }`.
+- **Data source**: Resolutions are sourced from the connected display's EDID data via `getSupportedTvResolutions` HAL API (same bitmask approach as the `getSupportedTvResolutions` JSON-RPC method).
+- **No-display behavior**: When no display is connected on the requested port, returns `{ "supportedResolutions": [], "success": true }`.
 - **Refresh on reconnect**: The supported resolution list SHALL reflect the newly connected display's capabilities after a display hot-plug event; stale data from the previous display SHALL NOT be returned.
 
 #### `getSupportedTvResolutions`
