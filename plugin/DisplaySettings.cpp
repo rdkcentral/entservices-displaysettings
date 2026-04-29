@@ -4484,7 +4484,6 @@ namespace WPEFramework {
             returnIfParamNotFound(parameters, "audioPort");
 
             bool success = true;
-	    bool isAudioPortMuted = false;
             string audioPort = parameters["audioPort"].String();
 
             returnIfParamNotFound(parameters, "enable");
@@ -4516,17 +4515,13 @@ namespace WPEFramework {
                         LOGWARN("DisplaySettings::setEnableAudioPort aPort.setEnablePort retuned %04x \n", eRet);
                         success = false;
                     } else if (aPort.isMuted()) {
-                        LOGWARN("DisplaySettings::setEnableAudioPort aPort.isMuted() and update isAudioPortMuted to true\n");
+                        LOGWARN("DisplaySettings::setEnableAudioPort aPort.isMuted() \n");
                         aPort.setMuted(true);
-			isAudioPortMuted = true;
                     }
                 }
                 else /* for HDMI_ARC0 audio port */ 
 		{
-			if (aPort.isMuted()) {
-                            isAudioPortMuted = true;
-			}
-			LOGINFO(" %s: m_hdmiInAudioDeviceConnected: %d , pEnable: %d isAudioPortMuted :%d \n",__FUNCTION__,m_hdmiInAudioDeviceConnected, pEnable,isAudioPortMuted );
+			LOGINFO(" %s: m_hdmiInAudioDeviceConnected: %d , pEnable: %d \n",__FUNCTION__,m_hdmiInAudioDeviceConnected, pEnable);
 
 			device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
 			device::AudioStereoMode mode = device::AudioStereoMode::kStereo;  //default to stereo
@@ -4615,13 +4610,6 @@ namespace WPEFramework {
                                             m_arcEarcAudioEnabled = true;
 					    LOGINFO("%s: Enable ARC... \n",__FUNCTION__);
                                         }
-					LOGINFO("isAudioPortMuted :%d  hdmiArcMuteStatus: %d: if not same call SEND_MUTE_KEY_EVENT  \n", isAudioPortMuted, hdmiArcMuteStatus);
-					// Send mute if not already
-					if(isAudioPortMuted != hdmiArcMuteStatus)
-					{
-                                            sendMsgToQueue(SEND_MUTE_KEY_EVENT, NULL);
-					}
-
                                    }
                                    else /* m_arcEarcAudioEnabled == true */
 				   {
