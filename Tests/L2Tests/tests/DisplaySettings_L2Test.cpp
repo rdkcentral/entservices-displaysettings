@@ -688,7 +688,7 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         params["audioPort"] = "SPDIF0";
         params["encoding"] = "AC3";
 
-        EXPECT_CALL(*p_audioOutputPortMock, setEncoding(::testing::_))
+        EXPECT_CALL(*p_audioOutputPortMock, setEncoding(::testing::A<const std::string&>()))
             .Times(1);
 
         device::AudioEncoding encAC3(dsAUDIO_ENC_AC3);
