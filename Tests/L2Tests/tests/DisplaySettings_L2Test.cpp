@@ -430,7 +430,7 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
 
     /**************getSupportedResolutions********************/
 
-    // Test the disconnected-display path by mocking HDMI0 as not connected.
+    // Test the disconnected-display 
     ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
         .WillByDefault(::testing::Return(false));
     {
@@ -447,7 +447,7 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
     ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
         .WillByDefault(::testing::Return(true));
 
-    // Test: default port, display connected, check payload
+    // Test: default port, display connected
     {
         JsonObject result, params;
         status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
@@ -456,7 +456,7 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         ASSERT_TRUE(result.HasLabel("supportedResolutions"));
     }
 
-    // Test with specific videoDisplay parameter, check payload
+    // Test with specific videoDisplay parameter
     {
         JsonObject result, params;
         params["videoDisplay"] = "HDMI0";
