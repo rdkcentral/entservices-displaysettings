@@ -811,7 +811,7 @@ namespace WPEFramework {
                 if (vPort.isDisplayConnected())
                 {
                     LOGINFO("Display connected on port %s, querying for supported resolutions", videoDisplay.c_str());
-					const device::List<device::VideoResolution> resolutions = device::VideoOutputPortConfig::getInstance().getPortType(vPort.getType().getId()).getSupportedResolutions();
+                    const device::List<device::VideoResolution> resolutions = device::VideoOutputPortConfig::getInstance().getPortType(vPort.getType().getId()).getSupportedResolutions();
                     for (size_t i = 0; i < resolutions.size(); i++) {
                         const device::VideoResolution &resolution = resolutions.at(i);
                         string supportedResolution = resolution.getName();
