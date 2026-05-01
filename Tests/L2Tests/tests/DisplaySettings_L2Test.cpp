@@ -430,8 +430,7 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
 
     /**************getSupportedResolutions********************/
 
-    // Test with no display connected - execute this before any HDMI0 query
-    // so cached HDMI0 connection state does not mask the disconnected path.
+    // Test the disconnected-display path by mocking HDMI0 as not connected.
     ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
         .WillByDefault(::testing::Return(false));
     {
