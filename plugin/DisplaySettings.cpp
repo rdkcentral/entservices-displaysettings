@@ -810,7 +810,6 @@ namespace WPEFramework {
                 // Check if display is connected
                 if (vPort.isDisplayConnected())
                 {
-                    LOGINFO("Display connected on port %s, querying for supported resolutions", videoDisplay.c_str());
                     const device::List<device::VideoResolution> resolutions = device::VideoOutputPortConfig::getInstance().getPortType(vPort.getType().getId()).getSupportedResolutions();
                     for (size_t i = 0; i < resolutions.size(); i++) {
                         const device::VideoResolution &resolution = resolutions.at(i);
@@ -818,15 +817,10 @@ namespace WPEFramework {
                         vectorSet(supportedResolutions,supportedResolution);
                     }
                 }
-                else
-                {
-                    LOGINFO("No display connected on port %s, returning empty resolution list", videoDisplay.c_str());
-                }
             }
             catch(const device::Exception& err)
             {
                 LOG_DEVICE_EXCEPTION1(videoDisplay);
-                LOGWARN("Failed to query supported resolutions for port %s, returning empty list", videoDisplay.c_str());
             }
             setResponseArray(response, "supportedResolutions", supportedResolutions);
             returnResponse(true);
