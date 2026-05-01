@@ -811,36 +811,12 @@ namespace WPEFramework {
                 if (vPort.isDisplayConnected())
                 {
                     LOGINFO("Display connected on port %s, querying for supported resolutions", videoDisplay.c_str());
-
-                    // Query the data from connected display
-                    int tvResolutions = 0;
-                    vPort.getSupportedTvResolutions(&tvResolutions);
-
-                    // Convert bitmask to resolution strings
-                    if(!tvResolutions) {
-                        LOGWARN("No resolutions reported in port %s", videoDisplay.c_str());
+					const device::List<device::VideoResolution> resolutions = device::VideoOutputPortConfig::getInstance().getPortType(vPort.getType().getId()).getSupportedResolutions();
+                    for (size_t i = 0; i < resolutions.size(); i++) {
+                        const device::VideoResolution &resolution = resolutions.at(i);
+                        string supportedResolution = resolution.getName();
+                        vectorSet(supportedResolutions,supportedResolution);
                     }
-                    if(tvResolutions & dsTV_RESOLUTION_480i) supportedResolutions.emplace_back("480i");
-                    if(tvResolutions & dsTV_RESOLUTION_480p) supportedResolutions.emplace_back("480p");
-                    if(tvResolutions & dsTV_RESOLUTION_576i) supportedResolutions.emplace_back("576i");
-                    if(tvResolutions & dsTV_RESOLUTION_576p) supportedResolutions.emplace_back("576p");
-                    if(tvResolutions & dsTV_RESOLUTION_576p50) supportedResolutions.emplace_back("576p50");
-                    if(tvResolutions & dsTV_RESOLUTION_720p) supportedResolutions.emplace_back("720p");
-                    if(tvResolutions & dsTV_RESOLUTION_720p50) supportedResolutions.emplace_back("720p50");
-                    if(tvResolutions & dsTV_RESOLUTION_1080i) supportedResolutions.emplace_back("1080i");
-                    if(tvResolutions & dsTV_RESOLUTION_1080p) supportedResolutions.emplace_back("1080p");
-                    if(tvResolutions & dsTV_RESOLUTION_1080p24) supportedResolutions.emplace_back("1080p24");
-                    if(tvResolutions & dsTV_RESOLUTION_1080i25) supportedResolutions.emplace_back("1080i25");
-                    if(tvResolutions & dsTV_RESOLUTION_1080p25) supportedResolutions.emplace_back("1080p25");
-                    if(tvResolutions & dsTV_RESOLUTION_1080p30) supportedResolutions.emplace_back("1080p30");
-                    if(tvResolutions & dsTV_RESOLUTION_1080i50) supportedResolutions.emplace_back("1080i50");
-                    if(tvResolutions & dsTV_RESOLUTION_1080p50) supportedResolutions.emplace_back("1080p50");
-                    if(tvResolutions & dsTV_RESOLUTION_1080p60) supportedResolutions.emplace_back("1080p60");
-                    if(tvResolutions & dsTV_RESOLUTION_2160p24) supportedResolutions.emplace_back("2160p24");
-                    if(tvResolutions & dsTV_RESOLUTION_2160p25) supportedResolutions.emplace_back("2160p25");
-                    if(tvResolutions & dsTV_RESOLUTION_2160p30) supportedResolutions.emplace_back("2160p30");
-                    if(tvResolutions & dsTV_RESOLUTION_2160p50) supportedResolutions.emplace_back("2160p50");
-                    if(tvResolutions & dsTV_RESOLUTION_2160p60) supportedResolutions.emplace_back("2160p60");
                 }
                 else
                 {
