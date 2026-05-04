@@ -430,9 +430,40 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
 
     /**************getSupportedResolutions********************/
 
+    // Test the disconnected-display 
+    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
+        .WillByDefault(::testing::Return(false));
     {
         JsonObject result, params;
         status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result["success"].Boolean());
+        ASSERT_TRUE(result.HasLabel("supportedResolutions"));
+        auto arr = result["supportedResolutions"].Array();
+        EXPECT_EQ(arr.Length(), 0u);
+    }
+
+    // Restore display connected for the remaining getSupportedResolutions tests
+    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
+        .WillByDefault(::testing::Return(true));
+
+    // Test: default port, display connected
+    {
+        JsonObject result, params;
+        status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result["success"].Boolean());
+        ASSERT_TRUE(result.HasLabel("supportedResolutions"));
+    }
+
+    // Test with specific videoDisplay parameter
+    {
+        JsonObject result, params;
+        params["videoDisplay"] = "HDMI0";
+        status = InvokeServiceMethod("org.rdk.DisplaySettings.1", "getSupportedResolutions", params, result);
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result["success"].Boolean());
+        ASSERT_TRUE(result.HasLabel("supportedResolutions"));
     }
 
     /****************setForceHDRMode***************/

@@ -806,11 +806,15 @@ namespace WPEFramework {
             try
             {
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
-                const device::List<device::VideoResolution> resolutions = device::VideoOutputPortConfig::getInstance().getPortType(vPort.getType().getId()).getSupportedResolutions();
-                for (size_t i = 0; i < resolutions.size(); i++) {
-                    const device::VideoResolution &resolution = resolutions.at(i);
-                    string supportedResolution = resolution.getName();
-                    vectorSet(supportedResolutions,supportedResolution);
+                // Check if display is connected
+                if (vPort.isDisplayConnected())
+                {
+                    const device::List<device::VideoResolution> resolutions = device::VideoOutputPortConfig::getInstance().getPortType(vPort.getType().getId()).getSupportedResolutions();
+                    for (size_t i = 0; i < resolutions.size(); i++) {
+                        const device::VideoResolution &resolution = resolutions.at(i);
+                        string supportedResolution = resolution.getName();
+                        vectorSet(supportedResolutions,supportedResolution);
+                    }
                 }
             }
             catch(const device::Exception& err)
