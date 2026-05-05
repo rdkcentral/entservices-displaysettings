@@ -321,6 +321,15 @@ namespace WPEFramework {
             registerMethodLockedApi("getPreferredColorDepth", &DisplaySettings::getPreferredColorDepth, this);
             registerMethodLockedApi("getColorDepthCapabilities", &DisplaySettings::getColorDepthCapabilities, this);
 	    registerMethodLockedApi("getSupportedMS12Config", &DisplaySettings::getSupportedMS12Config, this);
+	    
+	    registerMethodLockedApi("setAudioDucking", &DisplaySettings::setAudioDucking, this);
+	    registerMethodLockedApi("setEnableVideoPort", &DisplaySettings::setEnableVideoPort, this);
+      	    registerMethodLockedApi("getEnableVideoPort", &DisplaySettings::getEnableVideoPort, this);
+	    registerMethodLockedApi("getSupportedVideoCodingFormats", &DisplaySettings::getSupportedVideoCodingFormats, this);
+	    registerMethodLockedApi("getVideoCodecInfo", &DisplaySettings::getVideoCodecInfo, this);
+	    registerMethodLockedApi("getAudioEncoding", &DisplaySettings::getAudioEncoding, this);
+	    registerMethodLockedApi("setAudioEncoding", &DisplaySettings::setAudioEncoding, this);
+	    registerMethodLockedApi("getDisplayAspectRatio", &DisplaySettings::getDisplayAspectRatio, this);
            
 
 	    m_subscribed = false; //HdmiCecSink event subscription
@@ -3688,6 +3697,484 @@ namespace WPEFramework {
             }
            returnResponse(success);
        }
+
+	uint32_t DisplaySettings::setAudioDucking(const JsonObject& parameters, JsonObject& response)
+        {
+            LOGINFOMETHOD();
+            returnIfParamNotFound(parameters, "mode"); // "mute" | "attenuate" | "raw"
+
+            std::string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "SPEAKER0";
+            std::string mode = parameters["mode"].String();
+
+            dsAudioDuckingAction_t action = dsAUDIO_DUCKINGACTION_STOP;
+            dsAudioDuckingType_t type = dsAUDIO_DUCKINGTYPE_ABSOLUTE;
+            uint8_t level = 100;
+
+            if (mode == "mute")
+            {
+                returnIfParamNotFound(parameters, "mute");
+                bool mute = parameters["mute"].Boolean();
+
+                action = mute ? dsAUDIO_DUCKINGACTION_START : dsAUDIO_DUCKINGACTION_STOP;
+                type = dsAUDIO_DUCKINGTYPE_ABSOLUTE;
+                level = mute ? 0 : 100;
+
+                response["mute"] = mute;
+            }
+            else if (mode == "attenuate")
+            {
+                returnIfParamNotFound(parameters, "enable");
+                returnIfParamNotFound(parameters, "relative");
+                returnIfParamNotFound(parameters, "volume"); // 0.0..1.0
+
+                bool enable = parameters["enable"].Boolean();
+                bool relative = parameters["relative"].Boolean();
+                double volume = parameters["volume"].Number();
+
+                if (volume < 0.0 || volume > 1.0)
+                {
+                    LOGERR("Invalid volume %f", volume);
+                    returnResponse(false);
+                }
+
+                action = enable ? dsAUDIO_DUCKINGACTION_START : dsAUDIO_DUCKINGACTION_STOP;
+                type = relative ? dsAUDIO_DUCKINGTYPE_RELATIVE : dsAUDIO_DUCKINGTYPE_ABSOLUTE;
+                level = static_cast<uint8_t>((volume * 100.0) + 0.5);
+
+                response["enable"] = enable;
+                response["relative"] = relative;
+                response["volume"] = volume;
+            }
+            else if (mode == "raw")
+            {
+                returnIfParamNotFound(parameters, "action");      // "start" | "stop"
+                returnIfParamNotFound(parameters, "duckingType"); // "absolute" | "relative"
+                returnIfParamNotFound(parameters, "level");       // 0..100
+
+                std::string actionStr = parameters["action"].String();
+                std::string typeStr = parameters["duckingType"].String();
+                int reqLevel = parameters["level"].Number();
+
+                if (reqLevel < 0 || reqLevel > 100)
+                {
+                    LOGERR("Invalid level %d", reqLevel);
+                    returnResponse(false);
+                }
+
+                if (actionStr == "start") {
+                    action = dsAUDIO_DUCKINGACTION_START;
+                } else if (actionStr == "stop") {
+                    action = dsAUDIO_DUCKINGACTION_STOP;
+                } else {
+                    LOGERR("Invalid action %s", actionStr.c_str());
+                    returnResponse(false);
+                }
+
+                if (typeStr == "absolute") {
+                    type = dsAUDIO_DUCKINGTYPE_ABSOLUTE;
+                } else if (typeStr == "relative") {
+                    type = dsAUDIO_DUCKINGTYPE_RELATIVE;
+                } else {
+                    LOGERR("Invalid duckingType %s", typeStr.c_str());
+                    returnResponse(false);
+                }
+
+                level = static_cast<uint8_t>(reqLevel);
+
+                response["action"] = actionStr;
+                response["duckingType"] = typeStr;
+                response["level"] = reqLevel;
+            }
+            else
+            {
+                LOGERR("Invalid mode %s", mode.c_str());
+                returnResponse(false);
+            }
+
+            bool success = true;
+            try
+            {
+                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+                aPort.setAudioDucking(action, type, level);
+            }
+            catch (const device::Exception& err)
+            {
+                LOGERR("setAudioDucking failed for audioPort %s", audioPort.c_str());
+                success = false;
+            }
+
+            response["mode"] = mode;
+            response["audioPort"] = audioPort;
+            returnResponse(success);
+        }
+
+        uint32_t DisplaySettings::setEnableVideoPort(const JsonObject& parameters, JsonObject& response)
+        {
+            LOGINFOMETHOD();
+            returnIfParamNotFound(parameters, "videoDisplay"); // e.g. "HDMI0"
+            returnIfParamNotFound(parameters, "enable");       // true | false
+
+            string videoDisplay = parameters["videoDisplay"].String();
+            bool enable = false;
+            try {
+                enable = parameters["enable"].Boolean();
+            } catch (const device::Exception& err) {
+                LOG_DEVICE_EXCEPTION1(videoDisplay);
+                returnResponse(false);
+            }
+
+            bool success = true;
+            try
+            {
+                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
+                if (!vPort.isDisplayConnected())
+                {
+                    LOGERR("setEnableVideoPort: display NOT connected on port %s", videoDisplay.c_str());
+                    returnResponse(false);
+                }
+
+                if (enable)
+                    vPort.enable();
+                else
+                    vPort.disable();
+
+                response["videoDisplay"] = videoDisplay;
+                response["enable"]       = enable;
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION1(videoDisplay);
+                success = false;
+            }
+            returnResponse(success);
+        }
+
+        uint32_t DisplaySettings::getEnableVideoPort(const JsonObject& parameters, JsonObject& response)
+        {
+            LOGINFOMETHOD();
+            returnIfParamNotFound(parameters, "videoDisplay");
+
+            string videoDisplay = parameters["videoDisplay"].String();
+            bool success = true;
+            try
+            {
+                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
+                bool enabled = vPort.isEnabled();
+                response["videoDisplay"] = videoDisplay;
+                response["enabled"]      = enabled;
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION1(videoDisplay);
+                success = false;
+            }
+            returnResponse(success);
+        }
+
+        uint32_t DisplaySettings::getSupportedVideoCodingFormats(const JsonObject& parameters, JsonObject& response)
+        {   //sample response: {"supportedFormats":["HEVC","H264","MPEG2"],"success":true}
+            LOGINFOMETHOD();
+            JsonArray supportedFormats;
+            bool success = true;
+            try
+            {
+                if (device::Host::getInstance().getVideoDevices().size() < 1)
+                {
+                    LOGINFO("DSMGR_NOT_RUNNING");
+                    returnResponse(false);
+                }
+                device::VideoDevice &decoder = device::Host::getInstance().getVideoDevices().at(0);
+                unsigned int formats = decoder.getSupportedVideoCodingFormats();
+
+                if (formats & dsVIDEO_CODEC_MPEGHPART2)
+                    supportedFormats.Add("HEVC");
+                if (formats & dsVIDEO_CODEC_MPEG4PART10)
+                    supportedFormats.Add("H264");
+                if (formats & dsVIDEO_CODEC_MPEG2)
+                    supportedFormats.Add("MPEG2");
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION0();
+                success = false;
+            }
+            catch (const std::exception& err)
+            {
+                LOGERR("exception: %s", err.what());
+                success = false;
+            }
+            catch (...)
+            {
+                LOGWARN("Unknown exception occurred");
+                success = false;
+            }
+            response["supportedFormats"] = supportedFormats;
+            returnResponse(success);
+        }
+
+        static bool codecStringToEnum(const string& codec, dsVideoCodingFormat_t& out)
+        {
+            if (codec == "MPEGH-Part2") {
+                out = dsVIDEO_CODEC_MPEGHPART2;
+                return true;
+            }
+            if (codec == "MPEG4-Part10") {
+                out = dsVIDEO_CODEC_MPEG4PART10;
+                return true;
+            }
+            if (codec == "MPEG2") {
+                out = dsVIDEO_CODEC_MPEG2;
+                return true;
+            }
+            return false;
+        }
+
+        static const char* hevcProfileToString(dsVideoCodecHevcProfiles_t profile)
+        {
+            switch (profile)
+            {
+                case dsVIDEO_CODEC_HEVC_PROFILE_MAIN:
+                    return "MAIN";
+                case dsVIDEO_CODEC_HEVC_PROFILE_MAIN10:
+                    return "MAIN 10";
+                case dsVIDEO_CODEC_HEVC_PROFILE_MAINSTILLPICTURE:
+                    return "MAIN STILL PICTURE";
+                default:
+                    return "UNKNOWN";
+            }
+        }
+
+        uint32_t DisplaySettings::getVideoCodecInfo(const JsonObject& parameters, JsonObject& response)
+        {
+            LOGINFOMETHOD();
+
+            string codec = "MPEGH-Part2";
+            if (parameters.HasLabel("codec")) {
+                codec = parameters["codec"].String();
+            }
+
+            response["codec"] = codec;
+
+            dsVideoCodingFormat_t codecFmt = dsVIDEO_CODEC_MPEGHPART2;
+            if (!codecStringToEnum(codec, codecFmt)) {
+                LOGERR("Unsupported codec: %s. Allowed: MPEGH-Part2, MPEG4-Part10, MPEG2", codec.c_str());
+                returnResponse(false);
+            }
+
+            bool success = true;
+            try
+            {
+                if (device::Host::getInstance().getVideoDevices().size() < 1)
+                {
+                    LOGINFO("DSMGR_NOT_RUNNING");
+                    returnResponse(false);
+                }
+
+                device::VideoDevice& decoder = device::Host::getInstance().getVideoDevices().at(0);
+                dsVideoCodecInfo_t info = decoder.getVideoCodecInfo(codecFmt);
+
+                JsonArray entries;
+                unsigned int count = info.num_entries;
+                if (count > 10) {
+                    LOGWARN("HAL returned num_entries=%u, clamping to 10", count);
+                    count = 10;
+                }
+
+                for (unsigned int i = 0; i < count; ++i)
+                {
+                    JsonObject item;
+                    item["index"] = i + 1; // 1-based index to match TR-069 usage
+                    item["profile"] = hevcProfileToString(info.entries[i].profile);
+                    item["level"] = info.entries[i].level;
+                    entries.Add(item);
+                }
+
+                response["numberOfEntries"] = count;
+                response["entries"] = entries;
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION0();
+                success = false;
+            }
+            catch (const std::exception& err)
+            {
+                LOGERR("exception: %s", err.what());
+                success = false;
+            }
+            catch (...)
+            {
+                LOGWARN("Unknown exception occurred");
+                success = false;
+            }
+
+            returnResponse(success);
+        }
+
+	static const char* encodingToString(int enc)
+        {
+            switch (enc)
+            {
+                case dsAUDIO_ENC_NONE:    return "NONE";
+                case dsAUDIO_ENC_DISPLAY: return "DISPLAY";
+                case dsAUDIO_ENC_PCM:     return "PCM";
+                case dsAUDIO_ENC_AC3:     return "AC3";
+                default:                  return "UNKNOWN";
+            }
+        }
+
+        static bool getAudioPortNameOrDefault(const JsonObject& parameters, string& audioPort)
+        {
+            audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "SPDIF0";
+            if (audioPort.empty()) {
+                audioPort = "SPDIF0";
+            }
+
+            try
+            {
+                device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
+                for (size_t i = 0; i < aPorts.size(); ++i)
+                {
+                    if (aPorts.at(i).getName() == audioPort) {
+                        return true;
+                    }
+                }
+            }
+            catch (const device::Exception&)
+            {
+                return false;
+            }
+
+            return false;
+        }
+
+        uint32_t DisplaySettings::getAudioEncoding(const JsonObject& parameters, JsonObject& response)
+        {
+            LOGINFOMETHOD();
+
+            string audioPort;
+            if (!getAudioPortNameOrDefault(parameters, audioPort)) {
+                LOGERR("Invalid audioPort");
+                returnResponse(false);
+            }
+
+            bool success = true;
+            try
+            {
+                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+                int enc = aPort.getEncoding().getId();
+
+                response["audioPort"] = audioPort;
+                response["encoding"] = encodingToString(enc);
+                response["encodingId"] = enc;
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION1(audioPort);
+                success = false;
+            }
+            catch (const std::exception& err)
+            {
+                LOGERR("exception: %s", err.what());
+                success = false;
+            }
+            catch (...)
+            {
+                LOGWARN("Unknown exception occurred");
+                success = false;
+            }
+
+            returnResponse(success);
+        }
+
+        uint32_t DisplaySettings::setAudioEncoding(const JsonObject& parameters, JsonObject& response)
+        {
+            LOGINFOMETHOD();
+
+            returnIfParamNotFound(parameters, "encoding");
+            string encoding = parameters["encoding"].String();
+
+            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "SPDIF0";
+            if (audioPort.empty()) {
+                audioPort = "SPDIF0";
+            }
+
+            bool success = true;
+            try
+            {
+                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+
+                LOGINFO("Setting audio encoding '%s' on port '%s'", encoding.c_str(), audioPort.c_str());
+
+                // Call the libds string version of setEncoding
+                aPort.setEncoding(encoding);
+
+                // Get the actual encoding value set for response
+                int encValue = aPort.getEncoding().getId();
+                const char* encStr = "UNKNOWN";
+                switch (encValue)
+                {
+                    case dsAUDIO_ENC_NONE:    encStr = "NONE"; break;
+                    case dsAUDIO_ENC_DISPLAY: encStr = "DISPLAY"; break;
+                    case dsAUDIO_ENC_PCM:     encStr = "PCM"; break;
+                    case dsAUDIO_ENC_AC3:     encStr = "AC3"; break;
+                }
+
+                response["audioPort"] = audioPort;
+                response["encoding"] = encStr;
+                response["encodingId"] = encValue;
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION2(audioPort, encoding);
+                success = false;
+            }
+            catch (const std::exception& err)
+            {
+                LOGERR("Mani >> exception: %s", err.what());
+                success = false;
+            }
+            catch (...)
+            {
+                LOGWARN("Unknown exception occurred");
+                success = false;
+            }
+
+            returnResponse(success);
+        }
+
+        uint32_t DisplaySettings::getDisplayAspectRatio(const JsonObject& parameters, JsonObject& response)
+        {
+            LOGINFOMETHOD();
+
+            bool success = true;
+            std::string defaultVideoPort = device::Host::getInstance().getDefaultVideoPortName();
+            std::string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : defaultVideoPort;
+
+            try
+            {
+                device::VideoOutputPort vPort = device::VideoOutputPortConfig::getInstance().getPort(videoDisplay.c_str());
+
+                if (!isDisplayConnected(videoDisplay))
+                {
+                    LOGWARN("Display not connected on port: %s", videoDisplay.c_str());
+                    success = false;
+                }
+                else
+                {
+                    const device::AspectRatio aspectRatio = vPort.getDisplay().getAspectRatio();
+                    response["aspectRatio"] = aspectRatio.getName();   // e.g. "16x9", "4x3"
+                    response["aspectRatioValue"] = aspectRatio.getId(); // numeric enum value
+                }
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION1(videoDisplay);
+                success = false;
+            }
+
+            returnResponse(success);
+        }
 
         bool DisplaySettings::setUpHdmiCecSinkArcRouting (bool arcEnable)
         {
