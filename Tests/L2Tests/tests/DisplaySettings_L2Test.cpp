@@ -258,7 +258,6 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
 
     string videoPort(_T("HDMI0"));
     string audioPort(_T("HDMI0"));
-    string altAudioPort(_T("HDMI0"));
 
     device::VideoOutputPort videoOutputPort;
     device::VideoDevice videoDevice;
@@ -655,7 +654,7 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
     {
         TEST_LOG("Testing getAudioEncoding success\n");
         JsonObject result, params;
-        params["audioPort"] = "SPDIF0";
+        params["audioPort"] = "HDMI0";
 
         device::AudioEncoding encPCM(dsAUDIO_ENC_PCM);
         ON_CALL(*p_audioOutputPortMock, getEncoding())
@@ -685,7 +684,7 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
     {
         TEST_LOG("Testing setAudioEncoding success\n");
         JsonObject result, params;
-        params["audioPort"] = "SPDIF0";
+        params["audioPort"] = "HDMI0";
         params["encoding"] = "AC3";
 
         EXPECT_CALL(*p_audioOutputPortMock, setEncoding(::testing::A<const std::string&>()))
