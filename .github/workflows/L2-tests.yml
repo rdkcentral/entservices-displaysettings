@@ -93,6 +93,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           path: entservices-displaysettings
+          ref : feature/RDKEMW-18278
 
       - name: Checkout entservices-displaysettings-testframework
         if: ${{ inputs.caller_source == 'testframework' }}
@@ -107,7 +108,7 @@ jobs:
         with:
           repository: rdkcentral/entservices-powermanager
           path: entservices-powermanager
-          ref: mentkon
+          ref: develop
 
       - name: Checkout entservices-testframework
         uses: actions/checkout@v3
