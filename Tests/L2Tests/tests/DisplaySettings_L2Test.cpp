@@ -731,12 +731,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
 
     /******************getDisplayAspectRatio - failure ******************/
     {
-        TEST_LOG("Testing getDisplayAspectRatio disconnected display\n");
+	TEST_LOG("Testing getDisplayAspectRatio missing videoDisplay parameter\n");
         JsonObject result, params;
-        params["videoDisplay"] = "HDMI0";
-
-        ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
-            .WillByDefault(::testing::Return(false));
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getDisplayAspectRatio", params, result);
         EXPECT_NE(Core::ERROR_NONE, status);
