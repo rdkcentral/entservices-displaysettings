@@ -515,9 +515,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         params["mode"] = "invalid_mode";
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
-        EXPECT_EQ(Core::ERROR_NONE, status);
-        EXPECT_TRUE(result.HasLabel("success"));
-        EXPECT_FALSE(result["success"].Boolean());
+	EXPECT_NE(Core::ERROR_NONE, status);
+	EXPECT_FALSE(result.HasLabel("success"));
     }
 
     /******************setEnableVideoPort - success ******************/
@@ -551,9 +550,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
             .WillByDefault(::testing::Return(false));
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setEnableVideoPort", params, result);
-        EXPECT_EQ(Core::ERROR_NONE, status);
-        EXPECT_TRUE(result.HasLabel("success"));
-        EXPECT_FALSE(result["success"].Boolean());
+	EXPECT_NE(Core::ERROR_NONE, status);
+	EXPECT_FALSE(result.HasLabel("success"));
     }
 
     /******************getEnableVideoPort - success ******************/
@@ -579,9 +577,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         JsonObject result, params; // no videoDisplay
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getEnableVideoPort", params, result);
-        EXPECT_EQ(Core::ERROR_NONE, status);
-        EXPECT_TRUE(result.HasLabel("success"));
-        EXPECT_FALSE(result["success"].Boolean());
+	EXPECT_NE(Core::ERROR_NONE, status);
+	EXPECT_FALSE(result.HasLabel("success"));
     }
 
     /******************getSupportedVideoCodingFormats - success ******************/
@@ -609,9 +606,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
             .WillByDefault(::testing::Return(device::List<device::VideoDevice>()));
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getSupportedVideoCodingFormats", params, result);
-        EXPECT_EQ(Core::ERROR_NONE, status);
-        EXPECT_TRUE(result.HasLabel("success"));
-        EXPECT_FALSE(result["success"].Boolean());
+	EXPECT_NE(Core::ERROR_NONE, status);
+	EXPECT_FALSE(result.HasLabel("success"));
 
         ON_CALL(*p_hostImplMock, getVideoDevices())
             .WillByDefault(::testing::Return(device::List<device::VideoDevice>({ videoDevice })));
@@ -645,9 +641,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         params["codec"] = "VP9";
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getVideoCodecInfo", params, result);
-        EXPECT_EQ(Core::ERROR_NONE, status);
-        EXPECT_TRUE(result.HasLabel("success"));
-        EXPECT_FALSE(result["success"].Boolean());
+	EXPECT_NE(Core::ERROR_NONE, status);
+	EXPECT_FALSE(result.HasLabel("success"));
     }
 
     /******************getAudioEncoding - success ******************/
@@ -675,9 +670,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         params["audioPort"] = "INVALID_PORT";
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getAudioEncoding", params, result);
-        EXPECT_EQ(Core::ERROR_NONE, status);
-        EXPECT_TRUE(result.HasLabel("success"));
-        EXPECT_FALSE(result["success"].Boolean());
+	EXPECT_NE(Core::ERROR_NONE, status);
+	EXPECT_FALSE(result.HasLabel("success"));
     }
 
     /******************setAudioEncoding - success ******************/
@@ -708,9 +702,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         params["audioPort"] = "SPDIF0"; // encoding omitted
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioEncoding", params, result);
-        EXPECT_EQ(Core::ERROR_NONE, status);
-        EXPECT_TRUE(result.HasLabel("success"));
-        EXPECT_FALSE(result["success"].Boolean());
+	EXPECT_NE(Core::ERROR_NONE, status);
+	EXPECT_FALSE(result.HasLabel("success"));
     }
 
     /******************getDisplayAspectRatio - success ******************/

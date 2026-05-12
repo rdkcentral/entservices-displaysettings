@@ -3671,8 +3671,6 @@ namespace WPEFramework {
                 action = mute ? dsAUDIO_DUCKINGACTION_START : dsAUDIO_DUCKINGACTION_STOP;
                 type = dsAUDIO_DUCKINGTYPE_ABSOLUTE;
                 level = mute ? 0 : 100;
-
-                response["mute"] = mute;
             }
             else if (mode == "attenuate")
             {
@@ -3693,10 +3691,6 @@ namespace WPEFramework {
                 action = enable ? dsAUDIO_DUCKINGACTION_START : dsAUDIO_DUCKINGACTION_STOP;
                 type = relative ? dsAUDIO_DUCKINGTYPE_RELATIVE : dsAUDIO_DUCKINGTYPE_ABSOLUTE;
                 level = static_cast<uint8_t>((volume * 100.0) + 0.5);
-
-                response["enable"] = enable;
-                response["relative"] = relative;
-                response["volume"] = volume;
             }
             else if (mode == "raw")
             {
@@ -3733,10 +3727,6 @@ namespace WPEFramework {
                 }
 
                 level = static_cast<uint8_t>(reqLevel);
-
-                response["action"] = actionStr;
-                response["duckingType"] = typeStr;
-                response["level"] = reqLevel;
             }
             else
             {
@@ -3755,9 +3745,6 @@ namespace WPEFramework {
                 LOGERR("setAudioDucking failed for audioPort %s", audioPort.c_str());
                 success = false;
             }
-
-            response["mode"] = mode;
-            response["audioPort"] = audioPort;
             returnResponse(success);
         }
 
@@ -3790,9 +3777,6 @@ namespace WPEFramework {
                     vPort.enable();
                 else
                     vPort.disable();
-
-                response["videoDisplay"] = videoDisplay;
-                response["enable"]       = enable;
             }
             catch (const device::Exception& err)
             {
@@ -3813,7 +3797,6 @@ namespace WPEFramework {
             {
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
                 bool enabled = vPort.isEnabled();
-                response["videoDisplay"] = videoDisplay;
                 response["enable"]      = enabled;
             }
             catch (const device::Exception& err)
@@ -3828,7 +3811,7 @@ namespace WPEFramework {
         {   //sample response: {"supportedFormats":["HEVC","H264","MPEG2"],"success":true}
             LOGINFOMETHOD();
             JsonArray supportedFormats;
-            bool success = true;
+            bool success = false;
             try
             {
                 if (device::Host::getInstance().getVideoDevices().size() < 1)
@@ -3847,21 +3830,19 @@ namespace WPEFramework {
                     supportedFormats.Add("H264");
                 if (formats & dsVIDEO_CODEC_MPEG2)
                     supportedFormats.Add("MPEG2");
+		success = true;
             }
             catch (const device::Exception& err)
             {
                 LOG_DEVICE_EXCEPTION0();
-                success = false;
             }
             catch (const std::exception& err)
             {
                 LOGERR("exception: %s", err.what());
-                success = false;
             }
             catch (...)
             {
                 LOGWARN("Unknown exception occurred");
-                success = false;
             }
             response["supportedFormats"] = supportedFormats;
             returnResponse(success);
@@ -3871,17 +3852,18 @@ namespace WPEFramework {
         {
             if (codec == "MPEGH-Part2" || codec == "HEVC") {
                 out = dsVIDEO_CODEC_MPEGHPART2;
-                return true;
             }
-            if (codec == "MPEG4-Part10" || codec == "H264") {
+	    else if (codec == "MPEG4-Part10" || codec == "H264") {
                 out = dsVIDEO_CODEC_MPEG4PART10;
-                return true;
             }
-            if (codec == "MPEG2") {
+	    else if (codec == "MPEG2") {
                 out = dsVIDEO_CODEC_MPEG2;
-                return true;
             }
-            return false;
+	    else {
+		LOGERR("Unsupported codec string: %s", codec.c_str());
+                return false;
+	    }
+            return true;
         }
 
 	static const char* hevcProfileToString(dsVideoCodecHevcProfiles_t profile)
@@ -3908,21 +3890,19 @@ namespace WPEFramework {
                 codec = parameters["codec"].String();
             }
 
-            response["codec"] = codec;
-
+	    bool success = false;
             dsVideoCodingFormat_t codecFmt = dsVIDEO_CODEC_MPEGHPART2;
             if (!codecStringToEnum(codec, codecFmt)) {
                 LOGERR("Unsupported codec: %s. Allowed: MPEGH-Part2, MPEG4-Part10, MPEG2", codec.c_str());
-                returnResponse(false);
+                returnResponse(success);
             }
 
-            bool success = true;
             try
             {
                 if (device::Host::getInstance().getVideoDevices().size() < 1)
                 {
                     LOGINFO("DSMGR_NOT_RUNNING");
-                    returnResponse(false);
+                    returnResponse(success);
                 }
 
                 device::List<device::VideoDevice> videoDevices = device::Host::getInstance().getVideoDevices();
@@ -3954,23 +3934,20 @@ namespace WPEFramework {
 
                 response["numberOfEntries"] = count;
                 response["entries"] = entries;
+		success = true;
             }
             catch (const device::Exception& err)
             {
                 LOG_DEVICE_EXCEPTION0();
-                success = false;
             }
             catch (const std::exception& err)
             {
                 LOGERR("exception: %s", err.what());
-                success = false;
             }
             catch (...)
             {
                 LOGWARN("Unknown exception occurred");
-                success = false;
             }
-
             returnResponse(success);
         }
 
@@ -3990,7 +3967,7 @@ namespace WPEFramework {
         {
             audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
             if (audioPort.empty()) {
-                audioPort = "HDMI0";
+		return false;
             }
 
             try
@@ -4021,7 +3998,7 @@ namespace WPEFramework {
                 returnResponse(false);
             }
 
-            bool success = true;
+            bool success = false;
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -4030,21 +4007,19 @@ namespace WPEFramework {
                 response["audioPort"] = audioPort;
                 response["encoding"] = encodingToString(enc);
                 response["encodingId"] = enc;
+		success = true;
             }
             catch (const device::Exception& err)
             {
                 LOG_DEVICE_EXCEPTION1(audioPort);
-                success = false;
             }
             catch (const std::exception& err)
             {
                 LOGERR("exception: %s", err.what());
-                success = false;
             }
             catch (...)
             {
                 LOGWARN("Unknown exception occurred");
-                success = false;
             }
 
             returnResponse(success);
@@ -4057,12 +4032,13 @@ namespace WPEFramework {
             returnIfParamNotFound(parameters, "encoding");
             string encoding = parameters["encoding"].String();
 
+	    bool success = false;
+
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
             if (audioPort.empty()) {
-                audioPort = "HDMI0";
+    		returnResponse(success);		    
             }
 
-            bool success = true;
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -4078,21 +4054,19 @@ namespace WPEFramework {
                 response["audioPort"] = audioPort;
 		response["encoding"] = encodingToString(encValue);
                 response["encodingId"] = encValue;
+		success = true;
             }
             catch (const device::Exception& err)
             {
                 LOG_DEVICE_EXCEPTION2(audioPort, encoding);
-                success = false;
             }
             catch (const std::exception& err)
             {
                 LOGERR("Mani >> exception: %s", err.what());
-                success = false;
             }
             catch (...)
             {
                 LOGWARN("Unknown exception occurred");
-                success = false;
             }
 
             returnResponse(success);
@@ -4102,7 +4076,7 @@ namespace WPEFramework {
         {
             LOGINFOMETHOD();
 
-            bool success = true;
+            bool success = false;
             std::string defaultVideoPort = device::Host::getInstance().getDefaultVideoPortName();
             std::string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : defaultVideoPort;
 
@@ -4113,20 +4087,27 @@ namespace WPEFramework {
                 if (!isDisplayConnected(videoDisplay))
                 {
                     LOGWARN("Display not connected on port: %s", videoDisplay.c_str());
-                    success = false;
                 }
                 else
                 {
                     const device::AspectRatio aspectRatio = vPort.getDisplay().getAspectRatio();
                     response["aspectRatio"] = aspectRatio.getName();   // e.g. "16x9", "4x3"
                     response["aspectRatioValue"] = aspectRatio.getId(); // numeric enum value
+		    success = true;
                 }
             }
             catch (const device::Exception& err)
             {
                 LOG_DEVICE_EXCEPTION1(videoDisplay);
-                success = false;
             }
+	    catch (const std::exception& err)
+	    {
+    		LOGERR("std::exception: %s", err.what());
+	    }
+	    catch (...)
+	    {
+    		LOGWARN("Unknown exception occurred");
+	    }
 
             returnResponse(success);
         }
