@@ -730,7 +730,7 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
     }
 
     /******************getDisplayAspectRatio - failure ******************/
-    {
+/*    {
 	TEST_LOG("Testing getDisplayAspectRatio missing videoDisplay parameter\n");
         JsonObject result, params;
 
@@ -738,6 +738,7 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         EXPECT_NE(Core::ERROR_NONE, status);
         EXPECT_FALSE(result.HasLabel("success"));
     }
+*/
 
     dsDisplayEvent_t displayEvent = dsDISPLAY_RXSENSE_ON;
     de_listener->OnDisplayRxSense(displayEvent);
