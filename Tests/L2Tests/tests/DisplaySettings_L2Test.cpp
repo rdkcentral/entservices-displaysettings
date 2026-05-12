@@ -267,6 +267,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
     device::AudioOutputPort audioOutputPort;
     string videoDFCName(_T("FULL"));
     string videoPortSupportedResolution(_T("1080p"));
+    device::AspectRatio aspectRatio;
+    string aspectRatioName(_T("16x9"));
 
     ON_CALL(*p_hostImplMock, getDefaultVideoPortName())
         .WillByDefault(::testing::Return(videoPort));
@@ -391,6 +393,17 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         .WillByDefault(::testing::ReturnRef(audioPort));
     ON_CALL(*p_hostImplMock, getAudioOutputPorts())
         .WillByDefault(::testing::Return(device::List<device::AudioOutputPort>({ audioOutputPort })));
+    ON_CALL(*p_videoOutputPortMock, getDisplay())
+    	.WillByDefault(::testing::ReturnRef(*p_displayMock));
+
+    ON_CALL(*p_displayMock, getAspectRatio())
+    	.WillByDefault(::testing::ReturnRef(aspectRatio));
+
+    ON_CALL(*p_aspectRatioMock, getName())
+    	.WillByDefault(::testing::ReturnRef(aspectRatioName));
+
+    ON_CALL(*p_aspectRatioMock, getId())
+    	.WillByDefault(::testing::Return(1));
     /*********************DisplaySettings Calls - End*********************************************/
     /**************getCurrentResolution********************/
 
@@ -714,8 +727,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
             .WillByDefault(::testing::Return(true));
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getDisplayAspectRatio", params, result);
-        EXPECT_NE(Core::ERROR_NONE, status);
-        EXPECT_FALSE(result.HasLabel("success"));
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE	(result.HasLabel("success"));
         EXPECT_TRUE(result["success"].Boolean());
         EXPECT_TRUE(result.HasLabel("aspectRatio"));
         EXPECT_TRUE(result.HasLabel("aspectRatioValue"));
@@ -733,7 +746,6 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getDisplayAspectRatio", params, result);
         EXPECT_NE(Core::ERROR_NONE, status);
         EXPECT_FALSE(result.HasLabel("success"));
-        EXPECT_FALSE(result["success"].Boolean());
     }
 
     dsDisplayEvent_t displayEvent = dsDISPLAY_RXSENSE_ON;
