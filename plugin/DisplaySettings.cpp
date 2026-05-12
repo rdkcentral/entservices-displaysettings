@@ -3814,14 +3814,14 @@ namespace WPEFramework {
             bool success = false;
             try
             {
-                if (device::Host::getInstance().getVideoDevices().size() < 1)
-                {
-                    LOGINFO("DSMGR_NOT_RUNNING");
-                    returnResponse(false);
-                }
+		auto videoDevices = device::Host::getInstance().getVideoDevices();
+        	if (videoDevices.size() < 1)
+        	{
+            	    LOGINFO("DSMGR_NOT_RUNNING");
+            	    returnResponse(false);
+        	}
 
-		device::List<device::VideoDevice> videoDevices = device::Host::getInstance().getVideoDevices();
-		device::VideoDevice &decoder = videoDevices.at(0);
+		device::VideoDevice decoder = videoDevices.at(0);
                 unsigned int formats = decoder.getSupportedVideoCodingFormats();
 
                 if (formats & dsVIDEO_CODEC_MPEGHPART2)

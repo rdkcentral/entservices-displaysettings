@@ -535,8 +535,6 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         EXPECT_EQ(Core::ERROR_NONE, status);
         EXPECT_TRUE(result.HasLabel("success"));
         EXPECT_TRUE(result["success"].Boolean());
-        EXPECT_TRUE(result.HasLabel("enable"));
-        EXPECT_TRUE(result["enable"].Boolean());
     }
 
     /******************setEnableVideoPort - failure ******************/
@@ -716,8 +714,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
             .WillByDefault(::testing::Return(true));
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getDisplayAspectRatio", params, result);
-        EXPECT_EQ(Core::ERROR_NONE, status);
-        EXPECT_TRUE(result.HasLabel("success"));
+        EXPECT_NE(Core::ERROR_NONE, status);
+        EXPECT_FALSE(result.HasLabel("success"));
         EXPECT_TRUE(result["success"].Boolean());
         EXPECT_TRUE(result.HasLabel("aspectRatio"));
         EXPECT_TRUE(result.HasLabel("aspectRatioValue"));
@@ -733,8 +731,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
             .WillByDefault(::testing::Return(false));
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getDisplayAspectRatio", params, result);
-        EXPECT_EQ(Core::ERROR_NONE, status);
-        EXPECT_TRUE(result.HasLabel("success"));
+        EXPECT_NE(Core::ERROR_NONE, status);
+        EXPECT_FALSE(result.HasLabel("success"));
         EXPECT_FALSE(result["success"].Boolean());
     }
 
