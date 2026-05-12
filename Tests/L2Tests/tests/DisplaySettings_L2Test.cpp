@@ -267,6 +267,7 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
     device::AudioOutputPort audioOutputPort;
     string videoDFCName(_T("FULL"));
     string videoPortSupportedResolution(_T("1080p"));
+    device::Display display;
     device::AspectRatio aspectRatio;
     string aspectRatioName(_T("16x9"));
 
@@ -398,12 +399,6 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
 
     ON_CALL(*p_displayMock, getAspectRatio())
     	.WillByDefault(::testing::ReturnRef(aspectRatio));
-
-    ON_CALL(*p_aspectRatioMock, getName())
-    	.WillByDefault(::testing::ReturnRef(aspectRatioName));
-
-    ON_CALL(*p_aspectRatioMock, getId())
-    	.WillByDefault(::testing::Return(1));
     /*********************DisplaySettings Calls - End*********************************************/
     /**************getCurrentResolution********************/
 
