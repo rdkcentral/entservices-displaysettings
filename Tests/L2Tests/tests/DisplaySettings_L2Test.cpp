@@ -395,7 +395,7 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
     ON_CALL(*p_hostImplMock, getAudioOutputPorts())
         .WillByDefault(::testing::Return(device::List<device::AudioOutputPort>({ audioOutputPort })));
     ON_CALL(*p_videoOutputPortMock, getDisplay())
-    	.WillByDefault(::testing::ReturnRef(*p_displayMock));
+    	.WillByDefault(::testing::ReturnRef(display));
 
     ON_CALL(*p_displayMock, getAspectRatio())
     	.WillByDefault(::testing::ReturnRef(aspectRatio));
