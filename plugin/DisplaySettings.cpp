@@ -3758,8 +3758,8 @@ namespace WPEFramework {
             bool enable = false;
             try {
                 enable = parameters["enable"].Boolean();
-            } catch (const device::Exception& err) {
-                LOG_DEVICE_EXCEPTION1(videoDisplay);
+	    } catch (const std::exception& err) {
+                LOGERR("setEnableVideoPort: invalid 'enable' parameter for port %s: %s", videoDisplay.c_str(), err.what());
                 returnResponse(false);
             }
 
@@ -3893,7 +3893,7 @@ namespace WPEFramework {
 	    bool success = false;
             dsVideoCodingFormat_t codecFmt = dsVIDEO_CODEC_MPEGHPART2;
             if (!codecStringToEnum(codec, codecFmt)) {
-                LOGERR("Unsupported codec: %s. Allowed: MPEGH-Part2, MPEG4-Part10, MPEG2", codec.c_str());
+                LOGERR("Unsupported codec: %s. Allowed: MPEGH-Part2, MHEVC, PEG4-Part10, HEVC, MPEG2", codec.c_str());
                 returnResponse(success);
             }
 
