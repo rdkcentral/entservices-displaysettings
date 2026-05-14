@@ -269,7 +269,6 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
     string videoPortSupportedResolution(_T("1080p"));
     device::Display display;
     device::AspectRatio aspectRatio;
-    string aspectRatioName(_T("16x9"));
 
     ON_CALL(*p_hostImplMock, getDefaultVideoPortName())
         .WillByDefault(::testing::Return(videoPort));
@@ -390,8 +389,6 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
     ON_CALL(*p_hostImplMock, getAudioOutputPort(::testing::_))
         .WillByDefault(::testing::ReturnRef(audioOutputPort));
 
-    ON_CALL(*p_audioOutputPortMock, getName())
-        .WillByDefault(::testing::ReturnRef(audioPort));
     ON_CALL(*p_hostImplMock, getAudioOutputPorts())
         .WillByDefault(::testing::Return(device::List<device::AudioOutputPort>({ audioOutputPort })));
     ON_CALL(*p_videoOutputPortMock, getDisplay())
@@ -728,17 +725,6 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         EXPECT_TRUE(result.HasLabel("aspectRatio"));
         EXPECT_TRUE(result.HasLabel("aspectRatioValue"));
     }
-
-    /******************getDisplayAspectRatio - failure ******************/
-/*    {
-	TEST_LOG("Testing getDisplayAspectRatio missing videoDisplay parameter\n");
-        JsonObject result, params;
-
-        uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getDisplayAspectRatio", params, result);
-        EXPECT_NE(Core::ERROR_NONE, status);
-        EXPECT_FALSE(result.HasLabel("success"));
-    }
-*/
 
     dsDisplayEvent_t displayEvent = dsDISPLAY_RXSENSE_ON;
     de_listener->OnDisplayRxSense(displayEvent);
