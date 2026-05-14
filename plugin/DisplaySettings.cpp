@@ -22,6 +22,7 @@
 
 #include "DisplaySettings.h"
 #include <algorithm>
+#include <cmath>
 #include "exception.hpp"
 #include "videoOutputPort.hpp"
 #include "videoOutputPortType.hpp"
