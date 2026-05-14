@@ -3700,7 +3700,7 @@ namespace WPEFramework {
 
                 std::string actionStr = parameters["action"].String();
                 std::string typeStr = parameters["duckingType"].String();
-                int reqLevel = parameters["level"].Number();
+                int reqLevel = static_cast<int>(std::round(parameters["level"].Number()));  // ← explicit rounding
 
                 if (reqLevel < 0 || reqLevel > 100)
                 {
