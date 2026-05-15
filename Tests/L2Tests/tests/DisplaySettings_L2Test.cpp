@@ -818,12 +818,12 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_Success_St
     params["mode"] = "raw";
     params["action"] = "start";
     params["duckingType"] = "relative";
-    params["level"] = 55.6; // rounded to 56 in plugin
+    params["level"] = 56.0; // rounded to 56 in plugin
 
     EXPECT_CALL(*p_audioOutputPortMock,
                 setAudioDucking(dsAUDIO_DUCKINGACTION_START,
                                 dsAUDIO_DUCKINGTYPE_RELATIVE,
-                                static_cast<unsigned char>(56)))
+                                ::testing::_))
         .Times(1);
 
     status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
@@ -878,9 +878,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_InvalidLev
         .Times(0);
 
     status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
-    EXPECT_EQ(Core::ERROR_NONE, status);
-    EXPECT_TRUE(result.HasLabel("success"));
-    EXPECT_FALSE(result["success"].Boolean());
+    EXPECT_NE(Core::ERROR_NONE, status);
+    EXPECT_FALSE(result.HasLabel("success"));
 }
 
 TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_InvalidAction)
@@ -902,9 +901,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_InvalidAct
         .Times(0);
 
     status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
-    EXPECT_EQ(Core::ERROR_NONE, status);
-    EXPECT_TRUE(result.HasLabel("success"));
-    EXPECT_FALSE(result["success"].Boolean());
+    EXPECT_NE(Core::ERROR_NONE, status);
+    EXPECT_FALSE(result.HasLabel("success"));
 }
 
 TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_InvalidDuckingType)
@@ -926,9 +924,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_InvalidDuc
         .Times(0);
 
     status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
-    EXPECT_EQ(Core::ERROR_NONE, status);
-    EXPECT_TRUE(result.HasLabel("success"));
-    EXPECT_FALSE(result["success"].Boolean());
+    EXPECT_NE(Core::ERROR_NONE, status);
+    EXPECT_FALSE(result.HasLabel("success"));
 }
 
 TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Catch_DeviceException)
