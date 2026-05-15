@@ -753,3 +753,295 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
     vope_listener->OnVideoFormatUpdate(dsHDRStandard_t::dsHDRSTANDARD_HDR10);
 
 }
+
+TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Attenuate_Success)
+{
+    JsonObject result, params;
+    uint32_t status = Core::ERROR_NONE;
+
+    device::AudioOutputPort audioOutputPort;
+    ON_CALL(*p_hostImplMock, getAudioOutputPort(::testing::_))
+        .WillByDefault(::testing::ReturnRef(audioOutputPort));
+
+    params["audioPort"] = "HDMI0";
+    params["mode"] = "attenuate";
+    params["enable"] = true;
+    params["relative"] = true;
+    params["volume"] = 0.37; // expected level = 37
+
+    EXPECT_CALL(*p_audioOutputPortMock,
+                setAudioDucking(dsAUDIO_DUCKINGACTION_START,
+                                dsAUDIO_DUCKINGTYPE_RELATIVE,
+                                static_cast<unsigned char>(37)))
+        .Times(1);
+
+    status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_TRUE(result["success"].Boolean());
+}
+
+TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Attenuate_InvalidVolume)
+{
+    JsonObject result, params;
+    uint32_t status = Core::ERROR_NONE;
+
+    params["audioPort"] = "HDMI0";
+    params["mode"] = "attenuate";
+    params["enable"] = true;
+    params["relative"] = false;
+    params["volume"] = 1.5; // invalid (>1.0)
+
+    EXPECT_CALL(*p_audioOutputPortMock, setAudioDucking(::testing::_, ::testing::_, ::testing::_))
+        .Times(0);
+
+    status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_FALSE(result["success"].Boolean());
+}
+
+TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_Success_StartRelative)
+{
+    JsonObject result, params;
+    uint32_t status = Core::ERROR_NONE;
+
+    device::AudioOutputPort audioOutputPort;
+    ON_CALL(*p_hostImplMock, getAudioOutputPort(::testing::_))
+        .WillByDefault(::testing::ReturnRef(audioOutputPort));
+
+    params["audioPort"] = "HDMI0";
+    params["mode"] = "raw";
+    params["action"] = "start";
+    params["duckingType"] = "relative";
+    params["level"] = 55.6; // rounded to 56 in plugin
+
+    EXPECT_CALL(*p_audioOutputPortMock,
+                setAudioDucking(dsAUDIO_DUCKINGACTION_START,
+                                dsAUDIO_DUCKINGTYPE_RELATIVE,
+                                static_cast<unsigned char>(56)))
+        .Times(1);
+
+    status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_TRUE(result["success"].Boolean());
+}
+
+TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_Success_StopAbsolute)
+{
+    JsonObject result, params;
+    uint32_t status = Core::ERROR_NONE;
+
+    device::AudioOutputPort audioOutputPort;
+    ON_CALL(*p_hostImplMock, getAudioOutputPort(::testing::_))
+        .WillByDefault(::testing::ReturnRef(audioOutputPort));
+
+    params["audioPort"] = "HDMI0";
+    params["mode"] = "raw";
+    params["action"] = "stop";
+    params["duckingType"] = "absolute";
+    params["level"] = 100.0;
+
+    EXPECT_CALL(*p_audioOutputPortMock,
+                setAudioDucking(dsAUDIO_DUCKINGACTION_STOP,
+                                dsAUDIO_DUCKINGTYPE_ABSOLUTE,
+                                static_cast<unsigned char>(100)))
+        .Times(1);
+
+    status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_TRUE(result["success"].Boolean());
+}
+
+TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_InvalidLevel)
+{
+    JsonObject result, params;
+    uint32_t status = Core::ERROR_NONE;
+
+    params["audioPort"] = "HDMI0";
+    params["mode"] = "raw";
+    params["action"] = "start";
+    params["duckingType"] = "absolute";
+    params["level"] = 101; // invalid
+
+    EXPECT_CALL(*p_audioOutputPortMock, setAudioDucking(::testing::_, ::testing::_, ::testing::_))
+        .Times(0);
+
+    status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_FALSE(result["success"].Boolean());
+}
+
+TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_InvalidAction)
+{
+    JsonObject result, params;
+    uint32_t status = Core::ERROR_NONE;
+
+    params["audioPort"] = "HDMI0";
+    params["mode"] = "raw";
+    params["action"] = "pause"; // invalid
+    params["duckingType"] = "relative";
+    params["level"] = 40;
+
+    EXPECT_CALL(*p_audioOutputPortMock, setAudioDucking(::testing::_, ::testing::_, ::testing::_))
+        .Times(0);
+
+    status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_FALSE(result["success"].Boolean());
+}
+
+TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_InvalidDuckingType)
+{
+    JsonObject result, params;
+    uint32_t status = Core::ERROR_NONE;
+
+    params["audioPort"] = "HDMI0";
+    params["mode"] = "raw";
+    params["action"] = "start";
+    params["duckingType"] = "bad_type"; // invalid
+    params["level"] = 40;
+
+    EXPECT_CALL(*p_audioOutputPortMock, setAudioDucking(::testing::_, ::testing::_, ::testing::_))
+        .Times(0);
+
+    status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_FALSE(result["success"].Boolean());
+}
+
+TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Catch_DeviceException)
+{
+    JsonObject result, params;
+    uint32_t status = Core::ERROR_NONE;
+
+    device::AudioOutputPort audioOutputPort;
+    ON_CALL(*p_hostImplMock, getAudioOutputPort(::testing::_))
+        .WillByDefault(::testing::ReturnRef(audioOutputPort));
+
+    params["audioPort"] = "HDMI0";
+    params["mode"] = "mute";
+    params["mute"] = true;
+
+    EXPECT_CALL(*p_audioOutputPortMock, setAudioDucking(::testing::_, ::testing::_, ::testing::_))
+        .WillOnce(::testing::Invoke(
+            [](dsAudioDuckingAction_t, dsAudioDuckingType_t, const unsigned char) {
+                throw device::Exception("mock setAudioDucking failure");
+            }));
+
+    status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_FALSE(result["success"].Boolean());
+}
+
+TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setEnableVideoPort_Disable_Success)
+{
+    TEST_LOG("Testing setEnableVideoPort disable success\n");
+
+    JsonObject result, params;
+    uint32_t status = Core::ERROR_NONE;
+
+    device::VideoOutputPort videoOutputPort;
+    ON_CALL(*p_hostImplMock, getVideoOutputPort(::testing::_))
+        .WillByDefault(::testing::ReturnRef(videoOutputPort));
+
+    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
+        .WillByDefault(::testing::Return(true));
+
+    params["videoDisplay"] = "HDMI0";
+    params["enable"] = false;
+
+    EXPECT_CALL(*p_videoOutputPortMock, disable())
+        .Times(1);
+
+    status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setEnableVideoPort", params, result);
+
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_TRUE(result["success"].Boolean());
+}
+
+TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setEnableVideoPort_Disable_DeviceException)
+{
+    TEST_LOG("Testing setEnableVideoPort disable throws device::Exception\n");
+
+    JsonObject result, params;
+    uint32_t status = Core::ERROR_NONE;
+
+    device::VideoOutputPort videoOutputPort;
+    ON_CALL(*p_hostImplMock, getVideoOutputPort(::testing::_))
+        .WillByDefault(::testing::ReturnRef(videoOutputPort));
+
+    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
+        .WillByDefault(::testing::Return(true));
+
+    params["videoDisplay"] = "HDMI0";
+    params["enable"] = false;
+
+    EXPECT_CALL(*p_videoOutputPortMock, disable())
+        .WillOnce(::testing::Invoke([]() {
+            throw device::Exception("mock disable exception");
+        }));
+
+    status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setEnableVideoPort", params, result);
+
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_FALSE(result["success"].Boolean());
+}
+
+TEST_F(DisplaySettings_L2test, DisplaySettings_L2_getVideoCodecInfo_H264_MapsToMPEG4Part10)
+{
+    JsonObject result, params;
+    uint32_t status = Core::ERROR_NONE;
+    device::VideoDevice videoDevice;
+    ON_CALL(*p_hostImplMock, getVideoDevices())
+        .WillByDefault(::testing::Return(device::List<device::VideoDevice>({ videoDevice })));
+
+    dsVideoCodecInfo_t codecInfo {};
+    codecInfo.num_entries = 1;
+    codecInfo.entries[0].profile = static_cast<decltype(codecInfo.entries[0].profile)>(1);
+    codecInfo.entries[0].level = 42;
+
+    EXPECT_CALL(*p_videoDeviceMock, getVideoCodecInfo(dsVIDEO_CODEC_MPEG4PART10))
+        .WillOnce(::testing::Return(codecInfo));
+
+    params["codec"] = "H264";
+
+    status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getVideoCodecInfo", params, result);
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_TRUE(result["success"].Boolean());
+    EXPECT_TRUE(result.HasLabel("entries"));
+}
+
+TEST_F(DisplaySettings_L2test, DisplaySettings_L2_getVideoCodecInfo_MPEG2_MapsToMPEG2Enum)
+{
+    JsonObject result, params;
+    uint32_t status = Core::ERROR_NONE;
+    device::VideoDevice videoDevice;
+    ON_CALL(*p_hostImplMock, getVideoDevices())
+        .WillByDefault(::testing::Return(device::List<device::VideoDevice>({ videoDevice })));
+
+    dsVideoCodecInfo_t codecInfo {};
+    codecInfo.num_entries = 1;
+    codecInfo.entries[0].profile = static_cast<decltype(codecInfo.entries[0].profile)>(2);
+    codecInfo.entries[0].level = 30;
+
+    EXPECT_CALL(*p_videoDeviceMock, getVideoCodecInfo(dsVIDEO_CODEC_MPEG2))
+        .WillOnce(::testing::Return(codecInfo));
+
+    params["codec"] = "MPEG2";
+
+    status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getVideoCodecInfo", params, result);
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_TRUE(result["success"].Boolean());
+    EXPECT_TRUE(result.HasLabel("entries"));
+}
