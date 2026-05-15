@@ -973,8 +973,10 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setEnableVideoPort_Disable_Suc
 
     status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setEnableVideoPort", params, result);
 
-    EXPECT_NE(Core::ERROR_NONE, status);
-    EXPECT_FALSE(result.HasLabel("success"));
+    // Plugin returns ERROR_NONE and success:true for disable success
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_TRUE(result["success"].Boolean());
 }
 
 TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setEnableVideoPort_Disable_DeviceException)
@@ -1001,9 +1003,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setEnableVideoPort_Disable_Dev
 
     status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setEnableVideoPort", params, result);
 
-    EXPECT_EQ(Core::ERROR_NONE, status);
-    EXPECT_TRUE(result.HasLabel("success"));
-    EXPECT_FALSE(result["success"].Boolean());
+    EXPECT_NE(Core::ERROR_NONE, status);
+    EXPECT_FALSE(result.HasLabel("success"));
 }
 
 TEST_F(DisplaySettings_L2test, DisplaySettings_L2_getVideoCodecInfo_H264_MapsToMPEG4Part10)
