@@ -786,6 +786,10 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Attenuate_Inva
     JsonObject result, params;
     uint32_t status = Core::ERROR_NONE;
 
+    device::AudioOutputPort audioOutputPort;
+    ON_CALL(*p_hostImplMock, getAudioOutputPort(::testing::_))
+        .WillByDefault(::testing::ReturnRef(audioOutputPort));
+
     params["audioPort"] = "HDMI0";
     params["mode"] = "attenuate";
     params["enable"] = true;
@@ -860,6 +864,10 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_InvalidLev
     JsonObject result, params;
     uint32_t status = Core::ERROR_NONE;
 
+    device::AudioOutputPort audioOutputPort;
+    ON_CALL(*p_hostImplMock, getAudioOutputPort(::testing::_))
+        .WillByDefault(::testing::ReturnRef(audioOutputPort));
+
     params["audioPort"] = "HDMI0";
     params["mode"] = "raw";
     params["action"] = "start";
@@ -880,6 +888,10 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_InvalidAct
     JsonObject result, params;
     uint32_t status = Core::ERROR_NONE;
 
+    device::AudioOutputPort audioOutputPort;
+    ON_CALL(*p_hostImplMock, getAudioOutputPort(::testing::_))
+        .WillByDefault(::testing::ReturnRef(audioOutputPort));
+
     params["audioPort"] = "HDMI0";
     params["mode"] = "raw";
     params["action"] = "pause"; // invalid
@@ -899,6 +911,10 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_InvalidDuc
 {
     JsonObject result, params;
     uint32_t status = Core::ERROR_NONE;
+
+    device::AudioOutputPort audioOutputPort;
+    ON_CALL(*p_hostImplMock, getAudioOutputPort(::testing::_))
+        .WillByDefault(::testing::ReturnRef(audioOutputPort));
 
     params["audioPort"] = "HDMI0";
     params["mode"] = "raw";
