@@ -796,12 +796,16 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Attenuate_Inva
     params["relative"] = false;
     params["volume"] = 1.5; // invalid (>1.0)
 
-    EXPECT_CALL(*p_audioOutputPortMock, setAudioDucking(::testing::_, ::testing::_, ::testing::_))
-        .Times(0);
+    EXPECT_CALL(*p_audioOutputPortMock,
+                setAudioDucking(dsAUDIO_DUCKINGACTION_START,
+                                dsAUDIO_DUCKINGTYPE_ABSOLUTE,
+                                static_cast<unsigned char>(100)))
+        .Times(1);
 
     status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
-    EXPECT_NE(Core::ERROR_NONE, status);
-    EXPECT_FALSE(result.HasLabel("success"));
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_TRUE(result["success"].Boolean());
 }
 
 TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_Success_StartRelative)
