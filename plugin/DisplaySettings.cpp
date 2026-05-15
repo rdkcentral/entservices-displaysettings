@@ -3743,7 +3743,7 @@ namespace WPEFramework {
             }
             catch (const device::Exception& err)
             {
-                LOGERR("setAudioDucking failed for audioPort %s", audioPort.c_str());
+                LOG_DEVICE_EXCEPTION1(audioPort);
                 success = false;
             }
             returnResponse(success);
@@ -3894,7 +3894,7 @@ namespace WPEFramework {
 	        bool success = false;
             dsVideoCodingFormat_t codecFmt = dsVIDEO_CODEC_MPEGHPART2;
             if (!codecStringToEnum(codec, codecFmt)) {
-                LOGERR("Unsupported codec: %s. Allowed: MPEGH-Part2, MHEVC, PEG4-Part10, HEVC, MPEG2", codec.c_str());
+                LOGERR("Unsupported codec: %s. Allowed: MPEGH-Part2, HEVC, MPEG4-Part10, H264, MPEG2", codec.c_str());
                 returnResponse(success);
             }
 
