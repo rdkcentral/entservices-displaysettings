@@ -1,0 +1,10 @@
+autostart = "true"
+precondition = ["Platform"]
+callsign = "org.rdk.UserPlugin"
+startuporder = "@PLUGIN_USERPLUGIN_STARTUPORDER@"
+
+configuration = JSON()
+rootobject = JSON()
+
+rootobject.add("mode", "@PLUGIN_USERPLUGIN_MODE@")
+configuration.add("root", rootobject)
