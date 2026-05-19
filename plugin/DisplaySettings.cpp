@@ -4087,7 +4087,7 @@ namespace WPEFramework {
 
             bool success = false;
             std::string defaultVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            std::string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : defaultVideoPort;
+            std::string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(defaultVideoPort);
 
             try
             {
