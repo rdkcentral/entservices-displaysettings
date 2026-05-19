@@ -643,9 +643,9 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
             .WillByDefault(::testing::Return(device::List<device::VideoDevice>()));
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getSupportedVideoCodingFormats", params, result);
-	EXPECT_NE(Core::ERROR_NONE, status);
-	EXPECT_TRUE(result.HasLabel("success"));
-	EXPECT_FALSE(result["success"].Boolean());
+        EXPECT_NE(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result.HasLabel("success"));
+        EXPECT_FALSE(result["success"].Boolean());
 
         ON_CALL(*p_hostImplMock, getVideoDevices())
             .WillByDefault(::testing::Return(device::List<device::VideoDevice>({ videoDevice })));
@@ -679,9 +679,9 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         params["codec"] = "VP9";
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getVideoCodecInfo", params, result);
-	EXPECT_NE(Core::ERROR_NONE, status);
-	EXPECT_TRUE(result.HasLabel("success"));
-	EXPECT_FALSE(result["success"].Boolean());
+        EXPECT_NE(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result.HasLabel("success"));
+        EXPECT_FALSE(result["success"].Boolean());
     }
 
     /******************getAudioEncoding - success ******************/
@@ -709,9 +709,9 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         params["audioPort"] = "INVALID_PORT";
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getAudioEncoding", params, result);
-	EXPECT_NE(Core::ERROR_NONE, status);
-	EXPECT_TRUE(result.HasLabel("success"));
-	EXPECT_FALSE(result["success"].Boolean());
+        EXPECT_NE(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result.HasLabel("success"));
+        EXPECT_FALSE(result["success"].Boolean());
     }
 
     /******************setAudioEncoding - success ******************/
@@ -1178,6 +1178,8 @@ TEST_F(DisplaySettings_L2test, getSupportedResolutions_DefaultsToHDMI0)
     device::VideoResolution videoResolution;
     string supportedRes(_T("720p"));
 
+    ON_CALL(*p_hostImplMock, getDefaultVideoPortName())
+        .WillByDefault(::testing::Return(std::string("HDMI0")));
     EXPECT_CALL(*p_hostImplMock, getVideoOutputPort(::testing::Eq(std::string("HDMI0"))))
         .WillOnce(::testing::ReturnRef(videoOutputPort));
     ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
