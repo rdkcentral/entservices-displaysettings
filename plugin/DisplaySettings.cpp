@@ -4091,7 +4091,7 @@ namespace WPEFramework {
 
             try
             {
-                device::VideoOutputPort vPort = device::VideoOutputPortConfig::getInstance().getPort(videoDisplay.c_str());
+                device::VideoOutputPort &vPort = device::VideoOutputPortConfig::getInstance().getPort(videoDisplay.c_str());
 
                 if (!isDisplayConnected(videoDisplay))
                 {
