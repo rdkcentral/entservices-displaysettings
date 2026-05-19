@@ -585,9 +585,9 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
             .WillByDefault(::testing::Return(false));
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setEnableVideoPort", params, result);
-	EXPECT_NE(Core::ERROR_NONE, status);
-	EXPECT_TRUE(result.HasLabel("success"));
-	EXPECT_FALSE(result["success"].Boolean());
+        EXPECT_NE(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result.HasLabel("success"));
+        EXPECT_FALSE(result["success"].Boolean());
     }
 
     /******************getEnableVideoPort - success ******************/
