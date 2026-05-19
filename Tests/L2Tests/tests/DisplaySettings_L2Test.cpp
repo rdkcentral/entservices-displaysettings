@@ -1091,6 +1091,8 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_getVideoCodecInfo_MPEG2_MapsTo
     EXPECT_TRUE(result.HasLabel("success"));
     EXPECT_TRUE(result["success"].Boolean());
     EXPECT_TRUE(result.HasLabel("entries"));
+}
+
 /**
  * @brief Verifies getSupportedResolutions returns a non-empty list when an external display is connected.
  *
