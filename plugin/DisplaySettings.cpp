@@ -3982,7 +3982,7 @@ namespace WPEFramework {
                     }
                 }
             }
-            catch (const device::Exception&)
+            catch (const device::Exception& err)
             {
 				LOG_DEVICE_EXCEPTION1(audioPort);
             }
