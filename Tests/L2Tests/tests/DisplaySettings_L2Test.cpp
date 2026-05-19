@@ -277,7 +277,7 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
     ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
         .WillByDefault(::testing::Return(true));
     ON_CALL(*p_videoOutputPortMock, isEnabled())
-	.WillByDefault(::testing::Return(true));
+        .WillByDefault(::testing::Return(true));
 
     /*********************DisplaySettings Calls - Start*********************************************/
     device::AudioOutputPort audioFormat;
@@ -551,8 +551,9 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         params["mode"] = "invalid_mode";
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
-	EXPECT_NE(Core::ERROR_NONE, status);
-	EXPECT_FALSE(result.HasLabel("success"));
+        EXPECT_NE(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result.HasLabel("success"));
+        EXPECT_FALSE(result["success"].Boolean());
     }
 
     /******************setEnableVideoPort - success ******************/
@@ -751,7 +752,7 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getDisplayAspectRatio", params, result);
         EXPECT_EQ(Core::ERROR_NONE, status);
-        EXPECT_TRUE	(result.HasLabel("success"));
+        EXPECT_TRUE(result.HasLabel("success"));
         EXPECT_TRUE(result["success"].Boolean());
         EXPECT_TRUE(result.HasLabel("aspectRatio"));
         EXPECT_TRUE(result.HasLabel("aspectRatioValue"));
