@@ -3968,29 +3968,25 @@ namespace WPEFramework {
             }
         }
 
-	    static bool getAudioPortNameOrDefault(const JsonObject& parameters, string& audioPort)
+	    static bool getAudioPortNameOrDefault(const string& audioPort)
         {
-            audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            if (audioPort.empty()) {
-		        return false;
-            }
-
+			bool returnValue = false;
             try
             {
                 device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
                 for (size_t i = 0; i < aPorts.size(); ++i)
                 {
                     if (aPorts.at(i).getName() == audioPort) {
-                        return true;
+						returnValue = true;
+						break;
                     }
                 }
             }
             catch (const device::Exception&)
             {
-                return false;
+				LOG_DEVICE_EXCEPTION1(audioPort);
             }
-
-            return false;
+            return returnValue;
         }
 
 	    uint32_t DisplaySettings::getAudioEncoding(const JsonObject& parameters, JsonObject& response)
@@ -3998,21 +3994,27 @@ namespace WPEFramework {
             LOGINFOMETHOD();
 
             string audioPort;
-            if (!getAudioPortNameOrDefault(parameters, audioPort)) {
-                LOGERR("Invalid audioPort");
+			audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+            if (audioPort.empty()) {
+				LOGERR("Invalid audioPort");
                 returnResponse(false);
             }
 
             bool success = false;
             try
             {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                int enc = aPort.getEncoding().getId();
+				if (!getAudioPortNameOrDefault(audioPort)) {
+                	LOGERR("Invalid audioPort");
+            	}
+				else {
+					device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+					int enc = aPort.getEncoding().getId();
 
-                response["audioPort"] = audioPort;
-                response["encoding"] = encodingToString(enc);
-                response["encodingId"] = enc;
-		        success = true;
+					response["audioPort"] = audioPort;
+					response["encoding"] = encodingToString(enc);
+					response["encodingId"] = enc;
+					success = true;
+				}
             }
             catch (const device::Exception& err)
             {
