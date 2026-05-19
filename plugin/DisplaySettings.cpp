@@ -321,9 +321,9 @@ namespace WPEFramework {
             registerMethodLockedApi("setPreferredColorDepth", &DisplaySettings::setPreferredColorDepth, this);
             registerMethodLockedApi("getPreferredColorDepth", &DisplaySettings::getPreferredColorDepth, this);
             registerMethodLockedApi("getColorDepthCapabilities", &DisplaySettings::getColorDepthCapabilities, this);
-	        registerMethodLockedApi("getSupportedMS12Config", &DisplaySettings::getSupportedMS12Config, this);
+            registerMethodLockedApi("getSupportedMS12Config", &DisplaySettings::getSupportedMS12Config, this);
 
-	        registerMethodLockedApi("setAudioDucking", &DisplaySettings::setAudioDucking, this);
+            registerMethodLockedApi("setAudioDucking", &DisplaySettings::setAudioDucking, this);
             registerMethodLockedApi("setEnableVideoPort", &DisplaySettings::setEnableVideoPort, this);
             registerMethodLockedApi("getEnableVideoPort", &DisplaySettings::getEnableVideoPort, this);
             registerMethodLockedApi("getSupportedVideoCodingFormats", &DisplaySettings::getSupportedVideoCodingFormats, this);
@@ -3656,7 +3656,7 @@ namespace WPEFramework {
             returnResponse(success);
         }
 
-	    uint32_t DisplaySettings::setAudioDucking(const JsonObject& parameters, JsonObject& response)
+        uint32_t DisplaySettings::setAudioDucking(const JsonObject& parameters, JsonObject& response)
         {
             LOGINFOMETHOD();
             returnIfParamNotFound(parameters, "mode"); // "mute" | "attenuate" | "raw"
@@ -3753,7 +3753,7 @@ namespace WPEFramework {
             returnResponse(success);
         }
 
-	    uint32_t DisplaySettings::setEnableVideoPort(const JsonObject& parameters, JsonObject& response)
+        uint32_t DisplaySettings::setEnableVideoPort(const JsonObject& parameters, JsonObject& response)
         {
             LOGINFOMETHOD();
             returnIfParamNotFound(parameters, "videoDisplay"); // e.g. "HDMI0"
@@ -3763,7 +3763,7 @@ namespace WPEFramework {
             bool enable = false;
             try {
                 enable = parameters["enable"].Boolean();
-	        } catch (const std::exception& err) {
+            } catch (const std::exception& err) {
                 LOGERR("setEnableVideoPort: invalid 'enable' parameter for port %s: %s", videoDisplay.c_str(), err.what());
                 returnResponse(false);
             }
@@ -3791,7 +3791,7 @@ namespace WPEFramework {
             returnResponse(success);
         }
 
-	    uint32_t DisplaySettings::getEnableVideoPort(const JsonObject& parameters, JsonObject& response)
+        uint32_t DisplaySettings::getEnableVideoPort(const JsonObject& parameters, JsonObject& response)
         {
             LOGINFOMETHOD();
             returnIfParamNotFound(parameters, "videoDisplay");
@@ -3812,7 +3812,7 @@ namespace WPEFramework {
             returnResponse(success);
         }
 
-	    uint32_t DisplaySettings::getSupportedVideoCodingFormats(const JsonObject& parameters, JsonObject& response)
+        uint32_t DisplaySettings::getSupportedVideoCodingFormats(const JsonObject& parameters, JsonObject& response)
         {   //sample response: {"supportedFormats":["HEVC","H264","MPEG2"],"success":true}
             LOGINFOMETHOD();
             JsonArray supportedFormats;
@@ -3826,7 +3826,7 @@ namespace WPEFramework {
                         returnResponse(false);
                 }
 
-		        device::VideoDevice decoder = videoDevices.at(0);
+                device::VideoDevice decoder = videoDevices.at(0);
                 unsigned int formats = decoder.getSupportedVideoCodingFormats();
 
                 if (formats & dsVIDEO_CODEC_MPEGHPART2)
@@ -3835,7 +3835,7 @@ namespace WPEFramework {
                     supportedFormats.Add("H264");
                 if (formats & dsVIDEO_CODEC_MPEG2)
                     supportedFormats.Add("MPEG2");
-		        success = true;
+                success = true;
             }
             catch (const device::Exception& err)
             {
@@ -3853,7 +3853,7 @@ namespace WPEFramework {
             returnResponse(success);
         }
 
-	    static bool codecStringToEnum(const string& codec, dsVideoCodingFormat_t& out)
+        static bool codecStringToEnum(const string& codec, dsVideoCodingFormat_t& out)
         {
             if (codec == "MPEGH-Part2" || codec == "HEVC") {
                 out = dsVIDEO_CODEC_MPEGHPART2;
@@ -3871,7 +3871,7 @@ namespace WPEFramework {
             return true;
         }
 
-	    static const char* hevcProfileToString(dsVideoCodecHevcProfiles_t profile)
+        static const char* hevcProfileToString(dsVideoCodecHevcProfiles_t profile)
         {
             switch (profile)
             {
@@ -3886,7 +3886,7 @@ namespace WPEFramework {
             }
         }
 
-	    uint32_t DisplaySettings::getVideoCodecInfo(const JsonObject& parameters, JsonObject& response)
+        uint32_t DisplaySettings::getVideoCodecInfo(const JsonObject& parameters, JsonObject& response)
         {
             LOGINFOMETHOD();
 
@@ -3895,7 +3895,7 @@ namespace WPEFramework {
                 codec = parameters["codec"].String();
             }
 
-	        bool success = false;
+            bool success = false;
             dsVideoCodingFormat_t codecFmt = dsVIDEO_CODEC_MPEGHPART2;
             if (!codecStringToEnum(codec, codecFmt)) {
                 LOGERR("Unsupported codec: %s. Allowed: MPEGH-Part2, HEVC, MPEG4-Part10, H264, MPEG2", codec.c_str());
@@ -3917,7 +3917,7 @@ namespace WPEFramework {
                 JsonArray entries;
                 unsigned int count = info.num_entries;
 
-		        const auto profileToString = [&codecFmt](const decltype(info.entries[0].profile) profile) -> string {
+                const auto profileToString = [&codecFmt](const decltype(info.entries[0].profile) profile) -> string {
                     if (codecFmt == dsVIDEO_CODEC_MPEGHPART2) {
                         return hevcProfileToString(profile);
                     }
@@ -3939,7 +3939,7 @@ namespace WPEFramework {
 
                 response["numberOfEntries"] = count;
                 response["entries"] = entries;
-		        success = true;
+                success = true;
             }
             catch (const device::Exception& err)
             {
@@ -3956,7 +3956,7 @@ namespace WPEFramework {
             returnResponse(success);
         }
 
-	    static const char* encodingToString(int enc)
+        static const char* encodingToString(int enc)
         {
             switch (enc)
             {
@@ -3968,53 +3968,53 @@ namespace WPEFramework {
             }
         }
 
-	    static bool getAudioPortNameOrDefault(const string& audioPort)
+        static bool getAudioPortNameOrDefault(const string& audioPort)
         {
-			bool returnValue = false;
+            bool returnValue = false;
             try
             {
                 device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
                 for (size_t i = 0; i < aPorts.size(); ++i)
                 {
                     if (aPorts.at(i).getName() == audioPort) {
-						returnValue = true;
-						break;
+                        returnValue = true;
+                        break;
                     }
                 }
             }
             catch (const device::Exception& err)
             {
-				LOG_DEVICE_EXCEPTION1(audioPort);
+                LOG_DEVICE_EXCEPTION1(audioPort);
             }
             return returnValue;
         }
 
-	    uint32_t DisplaySettings::getAudioEncoding(const JsonObject& parameters, JsonObject& response)
+        uint32_t DisplaySettings::getAudioEncoding(const JsonObject& parameters, JsonObject& response)
         {
             LOGINFOMETHOD();
 
             string audioPort;
-			audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+            audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
             if (audioPort.empty()) {
-				LOGERR("Invalid audioPort");
+                LOGERR("Invalid audioPort");
                 returnResponse(false);
             }
 
             bool success = false;
             try
             {
-				if (!getAudioPortNameOrDefault(audioPort)) {
-                	LOGERR("Invalid audioPort");
-            	}
-				else {
-					device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-					int enc = aPort.getEncoding().getId();
+                if (!getAudioPortNameOrDefault(audioPort)) {
+                    LOGERR("Invalid audioPort");
+                }
+                else {
+                    device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+                    int enc = aPort.getEncoding().getId();
 
-					response["audioPort"] = audioPort;
-					response["encoding"] = encodingToString(enc);
-					response["encodingId"] = enc;
-					success = true;
-				}
+                    response["audioPort"] = audioPort;
+                    response["encoding"] = encodingToString(enc);
+                    response["encodingId"] = enc;
+                    success = true;
+                }
             }
             catch (const device::Exception& err)
             {
@@ -4032,18 +4032,18 @@ namespace WPEFramework {
             returnResponse(success);
         }
 
-	    uint32_t DisplaySettings::setAudioEncoding(const JsonObject& parameters, JsonObject& response)
+        uint32_t DisplaySettings::setAudioEncoding(const JsonObject& parameters, JsonObject& response)
         {
             LOGINFOMETHOD();
 
             returnIfParamNotFound(parameters, "encoding");
             string encoding = parameters["encoding"].String();
 
-	        bool success = false;
+            bool success = false;
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
             if (audioPort.empty()) {
-    		    returnResponse(success);		    
+                returnResponse(success);
             }
 
             try
@@ -4059,9 +4059,9 @@ namespace WPEFramework {
                 int encValue = aPort.getEncoding().getId();
 
                 response["audioPort"] = audioPort;
-		        response["encoding"] = encodingToString(encValue);
+                response["encoding"] = encodingToString(encValue);
                 response["encodingId"] = encValue;
-		        success = true;
+                success = true;
             }
             catch (const device::Exception& err)
             {
@@ -4079,7 +4079,7 @@ namespace WPEFramework {
             returnResponse(success);
         }
 
-	    uint32_t DisplaySettings::getDisplayAspectRatio(const JsonObject& parameters, JsonObject& response)
+        uint32_t DisplaySettings::getDisplayAspectRatio(const JsonObject& parameters, JsonObject& response)
         {
             LOGINFOMETHOD();
 
@@ -4100,7 +4100,7 @@ namespace WPEFramework {
                     const device::AspectRatio aspectRatio = vPort.getDisplay().getAspectRatio();
                     response["aspectRatio"] = aspectRatio.getName();   // e.g. "16x9", "4x3"
                     response["aspectRatioValue"] = aspectRatio.getId(); // numeric enum value
-		            success = true;
+                    success = true;
                 }
             }
             catch (const device::Exception& err)
