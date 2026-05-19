@@ -3756,37 +3756,37 @@ namespace WPEFramework {
         uint32_t DisplaySettings::setEnableVideoPort(const JsonObject& parameters, JsonObject& response)
         {
             LOGINFOMETHOD();
-            returnIfParamNotFound(parameters, "videoDisplay"); // e.g. "HDMI0"
-            returnIfParamNotFound(parameters, "enable");       // true | false
+
+            returnIfParamNotFound(parameters, "videoDisplay");        // e.g. "HDMI0"
+			returnIfBooleanParamNotFound(parameters, "enable");       // true | false
 
             string videoDisplay = parameters["videoDisplay"].String();
-            bool enable = false;
-            try {
-                enable = parameters["enable"].Boolean();
-            } catch (const std::exception& err) {
-                LOGERR("setEnableVideoPort: invalid 'enable' parameter for port %s: %s", videoDisplay.c_str(), err.what());
-                returnResponse(false);
-            }
+            bool enable = parameters["enable"].Boolean();
 
-            bool success = true;
+            bool success = false;
             try
             {
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
                 if (!vPort.isDisplayConnected())
                 {
                     LOGERR("setEnableVideoPort: display NOT connected on port %s", videoDisplay.c_str());
-                    returnResponse(false);
                 }
-
-                if (enable)
-                    vPort.enable();
-                else
-                    vPort.disable();
+				else
+				{
+					if (enable)
+					{
+						vPort.enable();
+					}
+                	else
+					{
+						vPort.disable();
+					}
+					success = true;
+				}
             }
             catch (const device::Exception& err)
             {
                 LOG_DEVICE_EXCEPTION1(videoDisplay);
-                success = false;
             }
             returnResponse(success);
         }
@@ -3797,17 +3797,16 @@ namespace WPEFramework {
             returnIfParamNotFound(parameters, "videoDisplay");
 
             string videoDisplay = parameters["videoDisplay"].String();
-            bool success = true;
+            bool success = false;
             try
             {
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
-                bool enabled = vPort.isEnabled();
-                response["enable"]      = enabled;
+                response["enable"] = vPort.isEnabled();
+                success = true;
             }
             catch (const device::Exception& err)
             {
                 LOG_DEVICE_EXCEPTION1(videoDisplay);
-                success = false;
             }
             returnResponse(success);
         }
@@ -3825,16 +3824,18 @@ namespace WPEFramework {
                         LOGINFO("DSMGR_NOT_RUNNING");
                         returnResponse(false);
                 }
-
-                device::VideoDevice decoder = videoDevices.at(0);
-                unsigned int formats = decoder.getSupportedVideoCodingFormats();
-
-                if (formats & dsVIDEO_CODEC_MPEGHPART2)
-                    supportedFormats.Add("HEVC");
-                if (formats & dsVIDEO_CODEC_MPEG4PART10)
-                    supportedFormats.Add("H264");
-                if (formats & dsVIDEO_CODEC_MPEG2)
-                    supportedFormats.Add("MPEG2");
+				else
+				{
+					device::VideoDevice decoder = videoDevices.at(0);
+	                unsigned int formats = decoder.getSupportedVideoCodingFormats();
+	
+	                if (formats & dsVIDEO_CODEC_MPEGHPART2)
+	                    supportedFormats.Add("HEVC");
+	                if (formats & dsVIDEO_CODEC_MPEG4PART10)
+	                    supportedFormats.Add("H264");
+	                if (formats & dsVIDEO_CODEC_MPEG2)
+	                    supportedFormats.Add("MPEG2");
+				}
                 success = true;
             }
             catch (const device::Exception& err)
@@ -4003,10 +4004,12 @@ namespace WPEFramework {
             bool success = false;
             try
             {
-                if (!getAudioPortNameOrDefault(audioPort)) {
+                if (!getAudioPortNameOrDefault(audioPort))
+				{
                     LOGERR("Invalid audioPort");
                 }
-                else {
+                else
+				{
                     device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
                     int enc = aPort.getEncoding().getId();
 
@@ -4028,7 +4031,6 @@ namespace WPEFramework {
             {
                 LOGWARN("Unknown exception occurred");
             }
-
             returnResponse(success);
         }
 
