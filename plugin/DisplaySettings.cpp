@@ -3904,13 +3904,13 @@ namespace WPEFramework {
 
             try
             {
-                if (device::Host::getInstance().getVideoDevices().size() < 1)
+                device::List<device::VideoDevice> videoDevices = device::Host::getInstance().getVideoDevices();
+                if (videoDevices.size() < 1)
                 {
                     LOGINFO("DSMGR_NOT_RUNNING");
                     returnResponse(success);
                 }
 
-                device::List<device::VideoDevice> videoDevices = device::Host::getInstance().getVideoDevices();
                 device::VideoDevice &decoder = videoDevices.at(0);
                 dsVideoCodecInfo_t info = decoder.getVideoCodecInfo(codecFmt);
 

@@ -195,7 +195,7 @@ namespace WPEFramework {
             uint32_t getColorDepthCapabilities(const JsonObject& parameters, JsonObject& response);
 	    uint32_t getSupportedMS12Config(const JsonObject& parameters, JsonObject& response);
 
-	    uint32_t setAudioDucking(const JsonObject& parameters, JsonObject& response);
+            uint32_t setAudioDucking(const JsonObject& parameters, JsonObject& response);
             uint32_t setEnableVideoPort(const JsonObject& parameters, JsonObject& response);
             uint32_t getEnableVideoPort(const JsonObject& parameters, JsonObject& response);
             uint32_t getSupportedVideoCodingFormats(const JsonObject& parameters, JsonObject& response);
