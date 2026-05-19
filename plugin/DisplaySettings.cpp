@@ -4071,7 +4071,7 @@ namespace WPEFramework {
             }
             catch (const std::exception& err)
             {
-                LOGERR("Mani >> exception: %s", err.what());
+                LOGERR("std::exception: %s", err.what());
             }
             catch (...)
             {
