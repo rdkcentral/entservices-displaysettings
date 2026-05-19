@@ -3969,7 +3969,7 @@ namespace WPEFramework {
             }
         }
 
-        static bool getAudioPortNameOrDefault(const string& audioPort)
+        static bool isValidAudioPort(const string& audioPort)
         {
             bool returnValue = false;
             try
@@ -4004,7 +4004,7 @@ namespace WPEFramework {
             bool success = false;
             try
             {
-                if (!getAudioPortNameOrDefault(audioPort))
+                if (!isValidAudioPort(audioPort))
 				{
                     LOGERR("Invalid audioPort");
                 }
