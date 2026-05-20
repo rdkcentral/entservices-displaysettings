@@ -21,6 +21,7 @@
 
 #include "UtilsLogging.h"
 #include <syscall.h>
+#include <vector>
 
 using namespace std;
 
@@ -178,6 +179,56 @@ namespace Plugin {
         LOGINFO("GetAudioPort: type=%d, index=%d", type, index);
         uint32_t result = _audio.GetAudioPort(type, index, handle);
         return result;
+    }
+
+    Core::hresult DeviceSettingsAudioImpl::GetAudioConfigurations(IDeviceSettingsAudioConfigurationIterator*& audioConfigs) {
+        LOGINFO("GetAudioConfigurations");
+
+        // Fill all possible enum values as supported, like AudioOutputPortConfig::load does
+        std::vector<AudioCompression> compressions;
+        for (int i = 0; i < DeviceSettingsAudio::AUDIO_COMPRESSION_MAX; ++i) {
+            compressions.push_back(static_cast<AudioCompression>(i));
+        }
+
+        std::vector<AudioEncoding> encodings;
+        for (int i = 0; i < DeviceSettingsAudio::AUDIO_ENCODING_MAX; ++i) {
+            encodings.push_back(static_cast<AudioEncoding>(i));
+        }
+
+        std::vector<AudioStereoMode> stereoModes;
+        for (int i = 0; i < DeviceSettingsAudio::AUDIO_STEREO_MAX; ++i) {
+            stereoModes.push_back(static_cast<AudioStereoMode>(i));
+        }
+
+        std::vector<AudioPortConfig> ports;
+        for (int i = 0; i < DeviceSettingsAudio::AUDIO_PORT_TYPE_MAX; ++i) {
+            AudioPortConfig portConfig {};
+            portConfig.id = i;
+            portConfig.type = static_cast<AudioPortType>(i);
+            portConfig.index = 0;
+            switch (i) {
+                case DeviceSettingsAudio::AUDIO_PORT_TYPE_LR: portConfig.name = "IDLR"; break;
+                case DeviceSettingsAudio::AUDIO_PORT_TYPE_HDMI: portConfig.name = "HDMI"; break;
+                case DeviceSettingsAudio::AUDIO_PORT_TYPE_SPDIF: portConfig.name = "SPDIF"; break;
+                case DeviceSettingsAudio::AUDIO_PORT_TYPE_SPEAKER: portConfig.name = "SPEAKER"; break;
+                case DeviceSettingsAudio::AUDIO_PORT_TYPE_HDMIARC: portConfig.name = "HDMIARC"; break;
+                case DeviceSettingsAudio::AUDIO_PORT_TYPE_HEADPHONE: portConfig.name = "HEADPHONE"; break;
+                default: portConfig.name = "UNKNOWN"; break;
+            }
+            ports.push_back(portConfig);
+        }
+
+        AudioConfig config {};
+        config.type = DeviceSettingsAudio::AUDIO_PORT_TYPE_HDMI;
+        config.name = "HDMI";
+        config.audioCompressions = WPEFramework::Core::Service<WPEFramework::RPC::IteratorType<IDeviceSettingsAudioCompressionIterator>>::Create<IDeviceSettingsAudioCompressionIterator>(compressions);
+        config.audioEncodings = WPEFramework::Core::Service<WPEFramework::RPC::IteratorType<IDeviceSettingsAudioEncodingIterator>>::Create<IDeviceSettingsAudioEncodingIterator>(encodings);
+        config.stereoModes = WPEFramework::Core::Service<WPEFramework::RPC::IteratorType<IDeviceSettingsStereoModeIterator>>::Create<IDeviceSettingsStereoModeIterator>(stereoModes);
+        config.ports = WPEFramework::Core::Service<WPEFramework::RPC::IteratorType<IDeviceSettingsAudioPortConfigIterator>>::Create<IDeviceSettingsAudioPortConfigIterator>(ports);
+
+        std::vector<AudioConfig> configs { config };
+        audioConfigs = WPEFramework::Core::Service<WPEFramework::RPC::IteratorType<IDeviceSettingsAudioConfigurationIterator>>::Create<IDeviceSettingsAudioConfigurationIterator>(configs);
+        return WPEFramework::Core::ERROR_NONE;
     }
 
     // GetAudioPorts and GetSupportedAudioPorts methods removed - iterator type doesn't exist

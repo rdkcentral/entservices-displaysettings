@@ -32,6 +32,7 @@
 
 // Device Settings library includes for accessing audio port configurations
 #include "manager.hpp"
+#include "audioOutputPortConfig.hpp"
 #include "audioOutputPortType.hpp"
 #include "audioOutputPort.hpp"
 #include "audioCompression.hpp"
@@ -416,6 +417,56 @@ public:
         }
     }
 
+    AudioPortConfig createAudioPortConfig(const device::AudioOutputPort& port)
+    {
+        AudioPortConfig portConfig{};
+
+        portConfig.id = static_cast<uint32_t>(port.getId());
+        portConfig.type = static_cast<AudioPortType>(port.getType().getId());
+        portConfig.index = port.getIndex();
+        portConfig.name = port.getName();
+
+        return portConfig;
+    }
+
+    void populateAudioConfig(const device::AudioOutputPortType& portType, AudioConfig& audioConfig)
+    {
+        audioConfig.type = static_cast<AudioPortType>(portType.getId());
+        audioConfig.name = portType.getName();
+
+        std::vector<AudioCompression> compressions;
+        const device::List<device::AudioCompression> supportedCompressions = portType.getSupportedCompressions();
+        compressions.reserve(supportedCompressions.size());
+        for (size_t index = 0; index < supportedCompressions.size(); ++index) {
+            compressions.push_back(static_cast<AudioCompression>(supportedCompressions.at(index).getId()));
+        }
+        audioConfig.audioCompressions = WPEFramework::Core::Service<WPEFramework::RPC::IteratorType<IDeviceSettingsAudioCompressionIterator>>::Create<IDeviceSettingsAudioCompressionIterator>(compressions);
+
+        std::vector<AudioEncoding> encodings;
+        const device::List<device::AudioEncoding> supportedEncodings = portType.getSupportedEncodings();
+        encodings.reserve(supportedEncodings.size());
+        for (size_t index = 0; index < supportedEncodings.size(); ++index) {
+            encodings.push_back(static_cast<AudioEncoding>(supportedEncodings.at(index).getId()));
+        }
+        audioConfig.audioEncodings = WPEFramework::Core::Service<WPEFramework::RPC::IteratorType<IDeviceSettingsAudioEncodingIterator>>::Create<IDeviceSettingsAudioEncodingIterator>(encodings);
+
+        std::vector<AudioStereoMode> stereoModes;
+        const device::List<device::AudioStereoMode> supportedStereoModes = portType.getSupportedStereoModes();
+        stereoModes.reserve(supportedStereoModes.size());
+        for (size_t index = 0; index < supportedStereoModes.size(); ++index) {
+            stereoModes.push_back(static_cast<AudioStereoMode>(supportedStereoModes.at(index).getId()));
+        }
+        audioConfig.stereoModes = WPEFramework::Core::Service<WPEFramework::RPC::IteratorType<IDeviceSettingsStereoModeIterator>>::Create<IDeviceSettingsStereoModeIterator>(stereoModes);
+
+        std::vector<AudioPortConfig> ports;
+        const device::List<device::AudioOutputPort> configuredPorts = portType.getPorts();
+        ports.reserve(configuredPorts.size());
+        for (size_t index = 0; index < configuredPorts.size(); ++index) {
+            ports.push_back(createAudioPortConfig(configuredPorts.at(index)));
+        }
+        audioConfig.ports = WPEFramework::Core::Service<WPEFramework::RPC::IteratorType<IDeviceSettingsAudioPortConfigIterator>>::Create<IDeviceSettingsAudioPortConfigIterator>(ports);
+    }
+
     // Audio Platform interface implementations - stub implementations
     // IPlatform interface implementation
     uint32_t GetAudioPort(const AudioPortType type, const int32_t index, int32_t &handle) override {
@@ -446,6 +497,41 @@ public:
         return WPEFramework::Core::ERROR_NONE;
     }
 
+    /*
+    uint32_t GetAudioConfigurations(IDeviceSettingsAudioConfigurationIterator*& audioConfigs) override {
+        ENTRY_LOG;
+        if (!_isInitialized) {
+            LOGERR("Audio platform not initialized");
+            return WPEFramework::Core::ERROR_GENERAL;
+        }
+
+        try {
+            device::Manager::Initialize();
+
+            const device::List<device::AudioOutputPortType> supportedTypes = device::AudioOutputPortConfig::getInstance().getSupportedTypes();
+            std::vector<AudioConfig> configurations;
+            configurations.reserve(supportedTypes.size());
+
+            for (size_t index = 0; index < supportedTypes.size(); ++index) {
+                AudioConfig audioConfig{};
+                populateAudioConfig(supportedTypes.at(index), audioConfig);
+                configurations.push_back(audioConfig);
+            }
+
+            audioConfigs = WPEFramework::Core::Service<WPEFramework::RPC::IteratorType<IDeviceSettingsAudioConfigurationIterator>>::Create<IDeviceSettingsAudioConfigurationIterator>(configurations);
+        } catch (const device::Exception& exception) {
+            LOGERR("Device settings exception in GetAudioConfigurations: %s", exception.what());
+            return WPEFramework::Core::ERROR_GENERAL;
+        } catch (...) {
+            LOGERR("Unknown exception in GetAudioConfigurations");
+            return WPEFramework::Core::ERROR_GENERAL;
+        }
+
+        EXIT_LOG;
+        return WPEFramework::Core::ERROR_NONE;
+    }
+    */
+
     // GetAudioPorts and GetSupportedAudioPorts methods removed - iterator type doesn't exist
     uint32_t GetAudioPortConfig(const AudioPortType audioPort, AudioConfig &audioConfig) override {
         ENTRY_LOG;
@@ -454,47 +540,28 @@ public:
             return WPEFramework::Core::ERROR_GENERAL;
         }
 
-        /*try {
-            // Convert AudioPortType to dsAudioPortType_t
-            dsAudioPortType_t dsType = convertToDS(audioPort);
-            
-            // Get audio port type information
-            try {
-                // Initialize device settings manager to access port configurations
-                device::Manager::Initialize();
-                
-                // Get the audio output port type
-                device::AudioOutputPortType &portType = device::AudioOutputPortType::getInstance(dsType);
-                
-                // Fill the AudioConfig structure
-                audioConfig.typeId = static_cast<int32_t>(dsType);
-                audioConfig.name = portType.getName();
-                
-                // Log supported features for debugging
-                const device::List<device::AudioCompression> compressions = portType.getSupportedCompressions();
-                const device::List<device::AudioEncoding> encodings = portType.getSupportedEncodings();
-                const device::List<device::AudioStereoMode> stereoModes = portType.getSupportedStereoModes();
-                
-                LOGINFO("GetAudioPortConfig success: typeId=%d, name=%s, compressions=%d, encodings=%d, stereoModes=%d", 
-                       audioConfig.typeId, audioConfig.name.c_str(), 
-                       compressions.size(), encodings.size(), stereoModes.size());
-                       
-                // Note: The iterator fields are commented out in AudioConfig struct
-                // If needed, they can be populated using WPEFramework RPC iterator creation
-                
-            } catch (const device::Exception &e) {
-                LOGERR("Device settings exception in GetAudioPortConfig: %s", e.what());
-                return WPEFramework::Core::ERROR_GENERAL;
-            } catch (...) {
-                LOGERR("Unknown exception in GetAudioPortConfig");
-                return WPEFramework::Core::ERROR_GENERAL;
+        try {
+            const dsAudioPortType_t dsType = convertToDS(audioPort);
+            device::Manager::Initialize();
+
+            const device::List<device::AudioOutputPortType> supportedTypes = device::AudioOutputPortConfig::getInstance().getSupportedTypes();
+            for (size_t index = 0; index < supportedTypes.size(); ++index) {
+                if (supportedTypes.at(index).getId() == dsType) {
+                    populateAudioConfig(supportedTypes.at(index), audioConfig);
+                    EXIT_LOG;
+                    return WPEFramework::Core::ERROR_NONE;
+                }
             }
-        } catch (...) {
-            LOGERR("Exception in GetAudioPortConfig");
+
+            LOGERR("Audio port type %d is not part of platform configuration", static_cast<int>(audioPort));
             return WPEFramework::Core::ERROR_GENERAL;
-        }*/
-        EXIT_LOG;
-        return WPEFramework::Core::ERROR_NONE;
+        } catch (const device::Exception& exception) {
+            LOGERR("Device settings exception in GetAudioPortConfig: %s", exception.what());
+            return WPEFramework::Core::ERROR_GENERAL;
+        } catch (...) {
+            LOGERR("Unknown exception in GetAudioPortConfig");
+            return WPEFramework::Core::ERROR_GENERAL;
+        }
     }
 
     uint32_t GetAudioCapabilities(const int32_t handle, int32_t &capabilities) override {

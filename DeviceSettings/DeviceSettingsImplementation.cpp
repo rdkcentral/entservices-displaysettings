@@ -231,10 +231,6 @@ namespace Plugin {
         DELEGATE_TO_COMPONENT(_fpdSettings, SetFPDMode, fpdMode)
     }
 
-    Core::hresult DeviceSettingsImp::GetFPDDeviceConfig(Exchange::IDeviceSettingsFPD::IFPDDeviceConfigIterator*& deviceConfig) {
-        DELEGATE_TO_COMPONENT(_fpdSettings, GetFPDDeviceConfig, deviceConfig)
-    }
-
     // ============================================================================
     // IDeviceSettingsHDMIIn interface implementation - delegate to _hdmiInSettings interface
     // ============================================================================
@@ -345,6 +341,10 @@ namespace Plugin {
     
     Core::hresult DeviceSettingsImp::GetAudioPort(const AudioPortType type, const int32_t index, int32_t &handle) {
         DELEGATE_TO_COMPONENT(_audioSettings, GetAudioPort, type, index, handle)
+    }
+
+    Core::hresult DeviceSettingsImp::GetAudioConfigurations(IDeviceSettingsAudioConfigurationIterator*& audioConfigs) {
+        DELEGATE_TO_COMPONENT(_audioSettings, GetAudioConfigurations, audioConfigs)
     }
     
     // GetAudioPorts and GetSupportedAudioPorts methods removed - iterator type doesn't exist

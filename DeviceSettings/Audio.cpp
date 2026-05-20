@@ -182,6 +182,22 @@ uint32_t Audio::GetAudioPortConfig(const AudioPortType audioPort, AudioConfig &a
     return result;
 }
 
+/*
+uint32_t Audio::GetAudioConfigurations(IDeviceSettingsAudioConfigurationIterator*& audioConfigs) {
+    LOGINFO("GetAudioConfigurations");
+    uint32_t result = WPEFramework::Core::ERROR_GENERAL;
+    if (_platform) {
+        result = this->platform().GetAudioConfigurations(audioConfigs);
+    }
+    if (result == WPEFramework::Core::ERROR_NONE) {
+        LOGINFO("GetAudioConfigurations: SUCCESS");
+    } else {
+        LOGERR("GetAudioConfigurations: FAILED - result=%u", result);
+    }
+    return result;
+}
+*/
+
 uint32_t Audio::GetAudioCapabilities(const int32_t handle, int32_t &capabilities) {
     LOGINFO("GetAudioCapabilities: handle=%d", handle);
     uint32_t result = WPEFramework::Core::ERROR_GENERAL;
