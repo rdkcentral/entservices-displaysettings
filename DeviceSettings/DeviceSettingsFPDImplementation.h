@@ -116,6 +116,7 @@ namespace Plugin {
         Core::hresult GetFPDTimeFormat(FPDTimeFormat &fpdTimeFormat);
         Core::hresult SetFPDTimeFormat(const FPDTimeFormat fpdTimeFormat);
         Core::hresult SetFPDMode(const FPDMode fpdMode);
+        Core::hresult GetFPDDeviceConfig(DeviceSettingsFPD::IFPDDeviceConfigIterator*& deviceConfig);
 
         private:
         std::list<Exchange::IDeviceSettingsFPD::INotification*> _FPDNotifications;

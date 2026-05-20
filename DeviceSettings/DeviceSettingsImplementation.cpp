@@ -231,6 +231,10 @@ namespace Plugin {
         DELEGATE_TO_COMPONENT(_fpdSettings, SetFPDMode, fpdMode)
     }
 
+    Core::hresult DeviceSettingsImp::GetFPDDeviceConfig(Exchange::IDeviceSettingsFPD::IFPDDeviceConfigIterator*& deviceConfig) {
+        DELEGATE_TO_COMPONENT(_fpdSettings, GetFPDDeviceConfig, deviceConfig)
+    }
+
     // ============================================================================
     // IDeviceSettingsHDMIIn interface implementation - delegate to _hdmiInSettings interface
     // ============================================================================

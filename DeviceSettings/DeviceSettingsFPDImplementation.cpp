@@ -20,7 +20,10 @@
 #include "DeviceSettingsFPDImplementation.h"
 
 #include "UtilsLogging.h"
+#include <com/IteratorType.h>
+#include <cstdlib>
 #include <syscall.h>
+#include <time.h>
 
 using namespace std;
 
@@ -174,6 +177,198 @@ namespace Plugin {
     Core::hresult DeviceSettingsFPDImpl::SetFPDMode(const FPDMode fpdMode) {
         LOGINFO("SetFPDMode: fpdMode=%d", fpdMode);
         LOGINFO("SetFPDMode: SUCCESS - stub implementation completed");
+        return Core::ERROR_NONE;
+    }
+
+    Core::hresult DeviceSettingsFPDImpl::GetFPDDeviceConfig(DeviceSettingsFPD::IFPDDeviceConfigIterator*& deviceConfig)
+    {
+        using DeviceConfigInfo = DeviceSettingsFPD::FPDDeviceConfigInfo;
+        using DeviceConfigIterator = DeviceSettingsFPD::IFPDDeviceConfigIterator;
+        using DeviceConfigIteratorImpl = RPC::IteratorType<DeviceConfigIterator>;
+
+        auto randomU32 = [](const uint32_t minValue, const uint32_t maxValue) -> uint32_t {
+            if (maxValue <= minValue) {
+                return minValue;
+            }
+            const uint32_t span = maxValue - minValue + 1;
+            return minValue + (static_cast<uint32_t>(std::rand()) % span);
+        };
+
+        auto randomLong = [](const long minValue, const long maxValue) -> long {
+            if (maxValue <= minValue) {
+                return minValue;
+            }
+            const long span = maxValue - minValue + 1;
+            return minValue + (static_cast<long>(std::rand()) % span);
+        };
+
+        auto randomFloat = [](const float minValue, const float maxValue) -> float {
+            if (maxValue <= minValue) {
+                return minValue;
+            }
+            const float ratio = static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
+            return minValue + ((maxValue - minValue) * ratio);
+        };
+
+        auto randomDouble = [](const double minValue, const double maxValue) -> double {
+            if (maxValue <= minValue) {
+                return minValue;
+            }
+            const double ratio = static_cast<double>(std::rand()) / static_cast<double>(RAND_MAX);
+            return minValue + ((maxValue - minValue) * ratio);
+        };
+
+        _apiLock.Lock();
+
+        static bool isSeeded = false;
+        if (isSeeded == false) {
+            std::srand(static_cast<unsigned int>(time(nullptr)));
+            isSeeded = true;
+        }
+
+        std::list<DeviceConfigInfo> configEntries;
+        for (uint32_t i = 0; i < 3; ++i) {
+            DeviceConfigInfo info;
+
+            info.deviceId = 1000 + i;
+            info.hardwareSku = randomU32(1, 128);
+            info.firmwareBuild = randomU32(10000, 99999);
+            info.capabilitiesMask = randomU32(1, 0xFFFF);
+            info.panelBrightness = randomFloat(10.0f, 100.0f);
+            info.ambientLightLevel = randomFloat(0.0f, 1000.0f);
+            info.powerLimitPercent = randomFloat(50.0f, 100.0f);
+            info.refreshRateHz = randomFloat(30.0f, 120.0f);
+            info.boardTemperature = randomDouble(20.0, 85.0);
+            info.inputVoltage = randomDouble(3.0, 12.0);
+            info.totalPowerWatt = randomDouble(1.0, 15.0);
+            info.uptimeSeconds = randomDouble(1000.0, 999999.0);
+            info.bootEpoch = randomLong(1700000000L, 1900000000L);
+            info.provisionEpoch = randomLong(1700000000L, 1900000000L);
+            info.lastSyncEpoch = randomLong(1700000000L, 1900000000L);
+            info.serialNumeric = randomLong(10000000L, 99999999L);
+            info.deviceName = string("FPD_Device_") + std::to_string(i);
+            info.version = string("v1.") + std::to_string(i);
+            info.serialNumber = string("SN-") + std::to_string(randomU32(100000, 999999));
+            info.manufacturer = "RDK";
+
+            info.primaryGroup.groupId = i + 1;
+            info.primaryGroup.elementCount = randomU32(1, 8);
+            info.primaryGroup.activeCount = randomU32(1, 8);
+            info.primaryGroup.priority = randomU32(1, 10);
+            info.primaryGroup.groupBrightnessScale = randomFloat(0.1f, 2.0f);
+            info.primaryGroup.powerBudgetPercent = randomFloat(10.0f, 100.0f);
+            info.primaryGroup.heartbeatSec = randomFloat(0.1f, 5.0f);
+            info.primaryGroup.failoverDelaySec = randomFloat(0.0f, 30.0f);
+            info.primaryGroup.maxGroupPowerWatt = randomDouble(1.0, 20.0);
+            info.primaryGroup.avgCurrentAmp = randomDouble(0.1, 2.5);
+            info.primaryGroup.uptimeHours = randomDouble(1.0, 50000.0);
+            info.primaryGroup.temperatureAvg = randomDouble(20.0, 90.0);
+            info.primaryGroup.createdEpoch = randomLong(1700000000L, 1900000000L);
+            info.primaryGroup.modifiedEpoch = randomLong(1700000000L, 1900000000L);
+            info.primaryGroup.scheduleId = randomLong(1L, 1000L);
+            info.primaryGroup.policyVersion = randomLong(1L, 100L);
+            info.primaryGroup.groupName = string("Group_") + std::to_string(i);
+            info.primaryGroup.policyName = "DefaultPolicy";
+            info.primaryGroup.owner = "DeviceSettings";
+            info.primaryGroup.comment = "Auto-generated sample group";
+
+            info.primaryGroup.representativeElement.elementId = 200 + i;
+            info.primaryGroup.representativeElement.gpioPin = randomU32(1, 64);
+            info.primaryGroup.representativeElement.pwmChannel = randomU32(0, 8);
+            info.primaryGroup.representativeElement.maxBrightness = randomU32(80, 100);
+            info.primaryGroup.representativeElement.minBrightness = randomU32(0, 20);
+            info.primaryGroup.representativeElement.defaultBrightness = randomFloat(1.0f, 100.0f);
+            info.primaryGroup.representativeElement.blinkRateHz = randomFloat(0.5f, 10.0f);
+            info.primaryGroup.representativeElement.thermalLimitC = randomFloat(50.0f, 95.0f);
+            info.primaryGroup.representativeElement.updateIntervalSec = randomFloat(0.01f, 1.0f);
+            info.primaryGroup.representativeElement.maxCurrentAmp = randomDouble(0.01, 1.50);
+            info.primaryGroup.representativeElement.operatingVoltage = randomDouble(1.8, 5.0);
+            info.primaryGroup.representativeElement.calibrationFactor = randomDouble(0.8, 1.2);
+            info.primaryGroup.representativeElement.lifetimeHours = randomDouble(1000.0, 100000.0);
+            info.primaryGroup.representativeElement.bootSequenceOrder = randomLong(1L, 10L);
+            info.primaryGroup.representativeElement.lastFailureEpoch = randomLong(1700000000L, 1900000000L);
+            info.primaryGroup.representativeElement.retryCount = randomLong(0L, 10L);
+            info.primaryGroup.representativeElement.lockToken = randomLong(1L, 100000L);
+            info.primaryGroup.representativeElement.elementName = string("Element_") + std::to_string(i);
+            info.primaryGroup.representativeElement.elementType = "INDICATOR";
+            info.primaryGroup.representativeElement.ownerModule = "DeviceSettingsFPD";
+            info.primaryGroup.representativeElement.diagnostics = "Generated default diagnostics";
+
+            info.primaryGroup.representativeElement.colorConfig.colorMode = randomU32(0, 1);
+            info.primaryGroup.representativeElement.colorConfig.defaultColorId = randomU32(0, 8);
+            info.primaryGroup.representativeElement.colorConfig.maxColorSlots = randomU32(1, 16);
+            info.primaryGroup.representativeElement.colorConfig.transitionMode = randomU32(0, 4);
+            info.primaryGroup.representativeElement.colorConfig.fadeInSec = randomFloat(0.0f, 3.0f);
+            info.primaryGroup.representativeElement.colorConfig.fadeOutSec = randomFloat(0.0f, 3.0f);
+            info.primaryGroup.representativeElement.colorConfig.blinkDutyCycle = randomFloat(0.1f, 1.0f);
+            info.primaryGroup.representativeElement.colorConfig.brightnessScale = randomFloat(0.1f, 2.0f);
+            info.primaryGroup.representativeElement.colorConfig.transitionCurveA = randomDouble(0.0, 10.0);
+            info.primaryGroup.representativeElement.colorConfig.transitionCurveB = randomDouble(0.0, 10.0);
+            info.primaryGroup.representativeElement.colorConfig.maxPowerWatt = randomDouble(0.1, 5.0);
+            info.primaryGroup.representativeElement.colorConfig.voltageDrop = randomDouble(0.0, 1.0);
+            info.primaryGroup.representativeElement.colorConfig.lastPersistEpoch = randomLong(1700000000L, 1900000000L);
+            info.primaryGroup.representativeElement.colorConfig.configVersion = randomLong(1L, 1000L);
+            info.primaryGroup.representativeElement.colorConfig.checksum = randomLong(1000L, 999999L);
+            info.primaryGroup.representativeElement.colorConfig.migrationId = randomLong(1L, 10000L);
+            info.primaryGroup.representativeElement.colorConfig.modeName = "DefaultMode";
+            info.primaryGroup.representativeElement.colorConfig.fallbackPolicy = "KeepLastKnown";
+            info.primaryGroup.representativeElement.colorConfig.colorSpace = "RGB";
+            info.primaryGroup.representativeElement.colorConfig.transitionProfile = "Smooth";
+
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.colorId = randomU32(0, 8);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.paletteIndex = randomU32(0, 32);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.rgbPacked = randomU32(0x000000, 0xFFFFFF);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.hsvHue = randomU32(0, 360);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.hue = randomFloat(0.0f, 360.0f);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.saturation = randomFloat(0.0f, 1.0f);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.value = randomFloat(0.0f, 1.0f);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.alpha = randomFloat(0.0f, 1.0f);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.cieX = randomDouble(0.0, 1.0);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.cieY = randomDouble(0.0, 1.0);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.cieZ = randomDouble(0.0, 1.0);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.wavelengthNm = randomDouble(380.0, 780.0);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.creationEpoch = randomLong(1700000000L, 1900000000L);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.lastUpdateEpoch = randomLong(1700000000L, 1900000000L);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.usageCounter = randomLong(0L, 50000L);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.reservedLong = randomLong(0L, 1000L);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.colorName = "Blue";
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.colorFamily = "Primary";
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.vendorTag = "RDK";
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.metadata = "Generated color metadata";
+
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.minValue = randomU32(0, 20);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.maxValue = randomU32(200, 255);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.stepSize = randomU32(1, 10);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.precision = randomU32(8, 16);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.gain = randomFloat(0.1f, 4.0f);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.offset = randomFloat(-10.0f, 10.0f);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.gamma = randomFloat(0.5f, 3.0f);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.noiseFloor = randomFloat(0.0f, 0.1f);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.calibrationSlope = randomDouble(0.5, 2.0);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.calibrationIntercept = randomDouble(-5.0, 5.0);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.referenceLux = randomDouble(10.0, 1000.0);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.thermalDrift = randomDouble(0.0, 0.2);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.sampleCount = randomLong(10L, 1000L);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.stableWindowMs = randomLong(10L, 5000L);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.warmupMs = randomLong(0L, 3000L);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.expiryEpoch = randomLong(1700000000L, 1900000000L);
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.profileName = "DefaultRangeProfile";
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.unit = "nits";
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.revision = "r1";
+            info.primaryGroup.representativeElement.colorConfig.primaryColor.range.notes = "Generated range notes";
+
+            configEntries.push_back(info);
+        }
+
+        deviceConfig = Core::Service<DeviceConfigIteratorImpl>::Create<DeviceConfigIterator>(std::move(configEntries));
+        _apiLock.Unlock();
+
+        if (deviceConfig == nullptr) {
+            LOGERR("GetFPDDeviceConfig: iterator allocation failed");
+            return Core::ERROR_GENERAL;
+        }
+
+        LOGINFO("GetFPDDeviceConfig: generated default/random sample data for iterator");
         return Core::ERROR_NONE;
     }
     //Depricated
