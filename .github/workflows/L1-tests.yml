@@ -45,7 +45,6 @@ jobs:
         with:
           path: |
             build/Thunder
-            build/entservices-apis
             build/ThunderTools
             install
             !install/etc/WPEFramework/plugins
