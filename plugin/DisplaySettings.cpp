@@ -2647,26 +2647,27 @@ namespace WPEFramework {
                 LOGWARN("muted invalid: '%s' (expected true/false)", sMuted.c_str());
                 returnResponse(false);
             }
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                LOGWARN("DisplaySettings::setMuted called Audio Port :%s muted:%d\n", audioPort.c_str(), muted);
-                try
+            bool success = true;
+            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+            LOGWARN("DisplaySettings::setMuted called Audio Port :%s muted:%d\n", audioPort.c_str(), muted);
+            try
+            {
+                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+                aPort.setMuted(muted);
+                if(cache_muted != muted)
                 {
-                    device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                    aPort.setMuted(muted);
-                    if(cache_muted != muted)
-                    {
-                        cache_muted = muted;
-                        JsonObject params;
-                        params["muted"] = muted;
-                        sendNotify("muteStatusChanged", params);
-                    }
+                    cache_muted = muted;
+                    JsonObject params;
+                    params["muted"] = muted;
+                    sendNotify("muteStatusChanged", params);
                 }
-                catch (const device::Exception& err)
-                {
-                    LOG_DEVICE_EXCEPTION2(audioPort, sMuted);
-                    success = false;
-                }
-                returnResponse(success);
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION2(audioPort, sMuted);
+                success = false;
+            }
+            returnResponse(success);
         }
 
         uint32_t DisplaySettings::setVolumeLevel(const JsonObject& parameters, JsonObject& response)
