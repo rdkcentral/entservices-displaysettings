@@ -146,7 +146,6 @@ namespace Plugin {
         Core::hresult Register(Exchange::IDeviceSettingsAudio::INotification* notification) override;
         Core::hresult Unregister(Exchange::IDeviceSettingsAudio::INotification* notification) override;
         Core::hresult GetAudioPort(const AudioPortType type, const int32_t index, int32_t &handle) override;
-        Core::hresult GetAudioConfigurations(IDeviceSettingsAudioConfigurationIterator*& audioConfigs) override;
         // Removed GetAudioPorts and GetSupportedAudioPorts - iterator type doesn't exist
         Core::hresult GetAudioPortConfig(const AudioPortType audioPort, AudioConfig &audioConfig);
         Core::hresult SetAudioPortConfig(const AudioPortType audioPort, const AudioConfig audioConfig);

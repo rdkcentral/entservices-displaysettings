@@ -78,7 +78,6 @@ public:
 
     // Audio Port Management
     uint32_t GetAudioPort(const AudioPortType type, const int32_t index, int32_t &handle);
-    // uint32_t GetAudioConfigurations(IDeviceSettingsAudioConfigurationIterator*& audioConfigs);
     // GetAudioPorts and GetSupportedAudioPorts methods removed - iterator type doesn't exist
     // uint32_t GetAudioPorts(IDeviceSettingsAudioPortsIterator*& audioPortsIterator);
     // uint32_t GetSupportedAudioPorts(IDeviceSettingsAudioPortsIterator*& audioPortsIterator);

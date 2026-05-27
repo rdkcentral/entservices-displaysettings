@@ -20,10 +20,7 @@
 #include "DeviceSettingsFPDImplementation.h"
 
 #include "UtilsLogging.h"
-#include <com/IteratorType.h>
-#include <cstdlib>
 #include <syscall.h>
-#include <time.h>
 
 using namespace std;
 
@@ -179,6 +176,7 @@ namespace Plugin {
         LOGINFO("SetFPDMode: SUCCESS - stub implementation completed");
         return Core::ERROR_NONE;
     }
+    //Depricated
 
     Core::hresult DeviceSettingsFPDImpl::SetFPDBrightness(const FPDIndicator indicator, const uint32_t brightNess, const bool persist) {
         LOGINFO("SetFPDBrightness: indicator=%d, brightNess=%u, persist=%s", indicator, brightNess, persist ? "true" : "false");

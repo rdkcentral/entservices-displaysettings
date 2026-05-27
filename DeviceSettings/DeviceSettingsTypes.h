@@ -97,7 +97,6 @@ using AudioPortType = DeviceSettingsAudio::AudioPortType;
 using AudioPortState = DeviceSettingsAudio::AudioPortState;
 using AudioFormat = DeviceSettingsAudio::AudioFormat;
 using AudioEncoding = DeviceSettingsAudio::AudioEncoding;
-using AudioPortConfig = DeviceSettingsAudio::AudioPortConfig;
 using AudioConfig = DeviceSettingsAudio::AudioConfig;
 using AudioStereoMode = DeviceSettingsAudio::StereoMode;
 using AudioDuckingType = DeviceSettingsAudio::AudioDuckingType;
@@ -118,8 +117,6 @@ using IDeviceSettingsAudioEncodingIterator = DeviceSettingsAudio::IDeviceSetting
 using IDeviceSettingsAudioCompressionIterator = DeviceSettingsAudio::IDeviceSettingsAudioCompressionIterator;
 using IDeviceSettingsStereoModeIterator = DeviceSettingsAudio::IDeviceSettingsStereoModeIterator;
 using IDeviceSettingsAudioMS12AudioProfileIterator = DeviceSettingsAudio::IDeviceSettingsAudioMS12AudioProfileIterator;
-using IDeviceSettingsAudioPortConfigIterator = DeviceSettingsAudio::IDeviceSettingsAudioPortConfigIterator;
-using IDeviceSettingsAudioConfigurationIterator = DeviceSettingsAudio::IDeviceSettingsAudioConfigurationIterator;
 
 // VideoPort type aliases for convenience
 using VideoPortType = DeviceSettingsVideoPort::VideoPort;
