@@ -216,41 +216,57 @@ namespace WPEFramework {
 
             bool TryParseIntInRange(const string& value, const int minValue, const int maxValue, int& parsedValue)
             {
-                if (value.empty()) {
-                    return false;
-                }
+                try {
+                    if (value.empty()) {
+                        return false;
+                    }
 
-                char* endPtr = nullptr;
-                errno = 0;
-                const long longValue = strtol(value.c_str(), &endPtr, 10);
-                if ((errno == ERANGE) || (endPtr == value.c_str()) || (*endPtr != '\0')) {
-                    return false;
-                }
-                if ((longValue < minValue) || (longValue > maxValue)) {
-                    return false;
-                }
+                    char* endPtr = nullptr;
+                    errno = 0;
+                    const long longValue = strtol(value.c_str(), &endPtr, 10);
+                    if ((errno == ERANGE) || (endPtr == value.c_str()) || (*endPtr != '\0')) {
+                        return false;
+                    }
+                    if ((longValue < minValue) || (longValue > maxValue)) {
+                        return false;
+                    }
 
-                parsedValue = static_cast<int>(longValue);
-                return true;
+                    parsedValue = static_cast<int>(longValue);
+                    return true;
+                } catch (const std::exception& err) {
+                    LOGERR("Exception in TryParseIntInRange: %s", err.what());
+                    return false;
+                } catch (...) {
+                    LOGERR("Unknown exception in TryParseIntInRange");
+                    return false;
+                }
             }
 
             bool TryGetBoolParam(const JsonObject& parameters, const char* label, bool& value)
             {
-                if (!parameters.HasLabel(label)) {
+                try {
+                    if (!parameters.HasLabel(label)) {
+                        return false;
+                    }
+
+                    const string rawValue = parameters[label].String();
+                    if ((rawValue == "true") || (rawValue == "TRUE") || (rawValue == "True") || (rawValue == "1")) {
+                        value = true;
+                        return true;
+                    }
+                    if ((rawValue == "false") || (rawValue == "FALSE") || (rawValue == "False") || (rawValue == "0")) {
+                        value = false;
+                        return true;
+                    }
+
+                    return false;
+                } catch (const std::exception& err) {
+                    LOGERR("Exception in TryGetBoolParam for label '%s': %s", label, err.what());
+                    return false;
+                } catch (...) {
+                    LOGERR("Unknown exception in TryGetBoolParam for label '%s'", label);
                     return false;
                 }
-
-                const string rawValue = parameters[label].String();
-                if ((rawValue == "true") || (rawValue == "TRUE") || (rawValue == "True") || (rawValue == "1")) {
-                    value = true;
-                    return true;
-                }
-                if ((rawValue == "false") || (rawValue == "FALSE") || (rawValue == "False") || (rawValue == "0")) {
-                    value = false;
-                    return true;
-                }
-
-                return false;
             }
         }
 
@@ -2353,24 +2369,16 @@ namespace WPEFramework {
                 returnIfParamNotFound(parameters, "level");
                 string sVolumeLeveller = parameters["level"].String();
                 dsVolumeLeveller_t VolumeLeveller;
-                try {
-                    if (!TryParseIntInRange(sVolumeLeveller, 0, 10, VolumeLeveller.level)) {
-                        LOGWARN("level should be in range [0, 10]");
-                        returnResponse(false);
-                    }
+                if (!TryParseIntInRange(sVolumeLeveller, 0, 10, VolumeLeveller.level)) {
+                    LOGWARN("level invalid: '%s' (expected range [0, 10])", sVolumeLeveller.c_str());
+                    returnResponse(false);
+                }
 
-                    if(VolumeLeveller.level == 0) {
-                        VolumeLeveller.mode = 0; //Off
-                    }
-                    else {
-                        VolumeLeveller.mode = 1; //On
-                    }
-                } catch (const std::exception& err) {
-                    LOGERR("Failed to validate level '%s': %s", sVolumeLeveller.c_str(), err.what());
-                    returnResponse(false);
-                } catch (...) {
-                    LOGERR("Failed to validate level '%s'", sVolumeLeveller.c_str());
-                    returnResponse(false);
+                if(VolumeLeveller.level == 0) {
+                    VolumeLeveller.mode = 0; //Off
+                }
+                else {
+                    VolumeLeveller.mode = 1; //On
                 }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
@@ -2397,38 +2405,30 @@ namespace WPEFramework {
                 dsVolumeLeveller_t volumeLeveller;
 
             int mode = 0;
-            try {
-                if (!TryParseIntInRange(sMode, 0, 2, mode)) {
-                    LOGWARN("mode should be in range [0, 2]");
+            if (!TryParseIntInRange(sMode, 0, 2, mode)) {
+                LOGWARN("mode invalid: '%s' (expected range [0, 2])", sMode.c_str());
+                returnResponse(false);
+            }
+            if ((mode == 1) && !TryParseIntInRange(sLevel, 0, 10, volumeLeveller.level)) {
+                    LOGWARN("level invalid: '%s' (expected range [0, 10] when mode is 1)", sLevel.c_str());
                     returnResponse(false);
-                }
-                if ((mode == 1) && !TryParseIntInRange(sLevel, 0, 10, volumeLeveller.level)) {
-                        LOGWARN("level should be in range [0, 10] when mode is 1");
-                        returnResponse(false);
-                    }
+            }
 
-                if (mode == 0) {
-                    volumeLeveller.mode = 0; //Off
-					volumeLeveller.level = 0;
-                }
-                else if (mode == 1){
-                    volumeLeveller.mode = 1; //On
-                }
-				else if (mode == 2) {
-					volumeLeveller.mode = 2; //Auto
-					volumeLeveller.level = 0;
-                }
-                else {
-                    LOGERR("Invalid volume leveller mode \n");
-                    returnResponse(false);
-                }
-            } catch (const std::exception& err) {
-                LOGERR("Failed to validate mode/level '%s'/'%s': %s", sMode.c_str(), sLevel.c_str(), err.what());
+            if (mode == 0) {
+                volumeLeveller.mode = 0; //Off
+				volumeLeveller.level = 0;
+            }
+            else if (mode == 1){
+                volumeLeveller.mode = 1; //On
+            }
+			else if (mode == 2) {
+				volumeLeveller.mode = 2; //Auto
+				volumeLeveller.level = 0;
+            }
+            else {
+                LOGERR("Invalid volume leveller mode \n");
                 returnResponse(false);
-            } catch (...) {
-                LOGERR("Failed to validate mode/level '%s'/'%s'", sMode.c_str(), sLevel.c_str());
-                returnResponse(false);
-                }
+            }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
                 try
@@ -2451,16 +2451,8 @@ namespace WPEFramework {
                 returnIfParamNotFound(parameters, "surroundDecoderEnable");
                 string sEnableSurroundDecoder = parameters["surroundDecoderEnable"].String();
                 bool enableSurroundDecoder = false;
-                try {
-                    if (!TryGetBoolParam(parameters, "surroundDecoderEnable", enableSurroundDecoder)) {
-                        LOGWARN("surroundDecoderEnable should be a boolean");
-                        returnResponse(false);
-                    }
-                } catch (const std::exception& err) {
-                    LOGERR("Failed to validate surroundDecoderEnable '%s': %s", sEnableSurroundDecoder.c_str(), err.what());
-                    returnResponse(false);
-                } catch (...) {
-                    LOGERR("Failed to validate surroundDecoderEnable '%s'", sEnableSurroundDecoder.c_str());
+                if (!TryGetBoolParam(parameters, "surroundDecoderEnable", enableSurroundDecoder)) {
+                    LOGWARN("surroundDecoderEnable invalid: '%s' (expected true/false)", sEnableSurroundDecoder.c_str());
                     returnResponse(false);
                 }
                 bool success = true;
@@ -2484,16 +2476,8 @@ namespace WPEFramework {
                 returnIfParamNotFound(parameters, "bassBoost");
                 string sBassBoost = parameters["bassBoost"].String();
                 int bassBoost = 0;
-                try {
-                    if (!TryParseIntInRange(sBassBoost, 0, 100, bassBoost)) {
-                        LOGWARN("bassBoost should be in range [0, 100]");
-                        returnResponse(false);
-                    }
-                } catch (const std::exception& err) {
-                    LOGERR("Failed to validate bassBoost '%s': %s", sBassBoost.c_str(), err.what());
-                    returnResponse(false);
-                } catch (...) {
-                    LOGERR("Failed to validate bassBoost '%s'", sBassBoost.c_str());
+                if (!TryParseIntInRange(sBassBoost, 0, 100, bassBoost)) {
+                    LOGWARN("bassBoost invalid: '%s' (expected range [0, 100])", sBassBoost.c_str());
                     returnResponse(false);
                 }
                 bool success = true;
@@ -2517,24 +2501,16 @@ namespace WPEFramework {
                returnIfParamNotFound(parameters, "boost");
                string sSurroundVirtualizer = parameters["boost"].String();
                dsSurroundVirtualizer_t surroundVirtualizer;
-               try {
-                   if (!TryParseIntInRange(sSurroundVirtualizer, 0, 96, surroundVirtualizer.boost)) {
-                       LOGWARN("boost should be in range [0, 96]");
-                       returnResponse(false);
-                   }
+               if (!TryParseIntInRange(sSurroundVirtualizer, 0, 96, surroundVirtualizer.boost)) {
+                   LOGWARN("boost invalid: '%s' (expected range [0, 96])", sSurroundVirtualizer.c_str());
+                   returnResponse(false);
+               }
 
-                   if(surroundVirtualizer.boost == 0) {
-			  surroundVirtualizer.mode = 0; //Off
-                   }
-			  else {
-				  surroundVirtualizer.mode = 1; //On
-                   }
-               } catch (const std::exception& err) {
-                   LOGERR("Failed to validate boost '%s': %s", sSurroundVirtualizer.c_str(), err.what());
-                   returnResponse(false);
-               } catch (...) {
-                   LOGERR("Failed to validate boost '%s'", sSurroundVirtualizer.c_str());
-                   returnResponse(false);
+               if(surroundVirtualizer.boost == 0) {
+		  surroundVirtualizer.mode = 0; //Off
+               }
+		  else {
+			  surroundVirtualizer.mode = 1; //On
                }
                bool success = true;
                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
@@ -2561,38 +2537,30 @@ namespace WPEFramework {
                 dsSurroundVirtualizer_t surroundVirtualizer;
 
             int mode = 0;
-            try {
-                if (!TryParseIntInRange(sMode, 0, 2, mode)) {
-                    LOGWARN("mode should be in range [0, 2]");
-                    returnResponse(false);
-                }
-                if ((mode == 1) && !TryParseIntInRange(sBoost, 0, 96, surroundVirtualizer.boost)) {
-                    LOGWARN("boost should be in range [0, 96] when mode is 1");
-                    returnResponse(false);
-                }
+            if (!TryParseIntInRange(sMode, 0, 2, mode)) {
+                LOGWARN("mode invalid: '%s' (expected range [0, 2])", sMode.c_str());
+                returnResponse(false);
+            }
+            if ((mode == 1) && !TryParseIntInRange(sBoost, 0, 96, surroundVirtualizer.boost)) {
+                LOGWARN("boost invalid: '%s' (expected range [0, 96] when mode is 1)", sBoost.c_str());
+                returnResponse(false);
+            }
 
-                if (mode == 0) {
-                    surroundVirtualizer.mode = 0; //Off
-                    surroundVirtualizer.boost = 0;
-                }
-                else if (mode == 1){
-                    surroundVirtualizer.mode = 1; //On
-                }
-                else if (mode == 2) {
-                    surroundVirtualizer.mode = 2; //Auto
-                    surroundVirtualizer.boost = 0;
-                }
-                else {
-                    LOGERR("Invalid surround virtualizer mode \n");
-                    returnResponse(false);
-                }
-            } catch (const std::exception& err) {
-                LOGERR("Failed to validate mode/boost '%s'/'%s': %s", sMode.c_str(), sBoost.c_str(), err.what());
+            if (mode == 0) {
+                surroundVirtualizer.mode = 0; //Off
+                surroundVirtualizer.boost = 0;
+            }
+            else if (mode == 1){
+                surroundVirtualizer.mode = 1; //On
+            }
+            else if (mode == 2) {
+                surroundVirtualizer.mode = 2; //Auto
+                surroundVirtualizer.boost = 0;
+            }
+            else {
+                LOGERR("Invalid surround virtualizer mode \n");
                 returnResponse(false);
-            } catch (...) {
-                LOGERR("Failed to validate mode/boost '%s'/'%s'", sMode.c_str(), sBoost.c_str());
-                returnResponse(false);
-                }
+            }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
                 try
@@ -2614,18 +2582,10 @@ namespace WPEFramework {
                 returnIfParamNotFound(parameters, "MISteeringEnable");
             string sMISteering = parameters["MISteeringEnable"].String();
                 bool MISteering = false;
-            try {
-                if (!TryGetBoolParam(parameters, "MISteeringEnable", MISteering)) {
-                    LOGWARN("MISteeringEnable should be a boolean");
-                    returnResponse(false);
-                }
-            } catch (const std::exception& err) {
-                LOGERR("Failed to validate MISteeringEnable '%s': %s", sMISteering.c_str(), err.what());
+            if (!TryGetBoolParam(parameters, "MISteeringEnable", MISteering)) {
+                LOGWARN("MISteeringEnable invalid: '%s' (expected true/false)", sMISteering.c_str());
                 returnResponse(false);
-            } catch (...) {
-                LOGERR("Failed to validate MISteeringEnable '%s'", sMISteering.c_str());
-                returnResponse(false);
-                }
+            }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
                 try
@@ -2683,20 +2643,10 @@ namespace WPEFramework {
                 string sMuted = parameters["muted"].String();
                 bool muted = false;
                 static bool cache_muted = false;
-            try {
-                if (!TryGetBoolParam(parameters, "muted", muted)) {
-                    LOGWARN("muted should be a boolean");
-                    returnResponse(false);
-                }
-            } catch (const std::exception& err) {
-                LOGERR("Failed to validate muted '%s': %s", sMuted.c_str(), err.what());
+            if (!TryGetBoolParam(parameters, "muted", muted)) {
+                LOGWARN("muted invalid: '%s' (expected true/false)", sMuted.c_str());
                 returnResponse(false);
-            } catch (...) {
-                LOGERR("Failed to validate muted '%s'", sMuted.c_str());
-                returnResponse(false);
-                }
-
-                bool success = true;
+            }
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
                 LOGWARN("DisplaySettings::setMuted called Audio Port :%s muted:%d\n", audioPort.c_str(), muted);
                 try
@@ -2726,18 +2676,10 @@ namespace WPEFramework {
                 string sLevel = parameters["volumeLevel"].String();
             int level = 0;
                 int current_volumelevel = 0;
-            try {
-                if (!TryParseIntInRange(sLevel, 0, 100, level)) {
-                    LOGWARN("volumeLevel should be in range [0, 100]");
-                    returnResponse(false);
-                }
-            } catch (const std::exception& err) {
-                LOGERR("Failed to validate volumeLevel '%s': %s", sLevel.c_str(), err.what());
+            if (!TryParseIntInRange(sLevel, 0, 100, level)) {
+                LOGWARN("volumeLevel invalid: '%s' (expected range [0, 100])", sLevel.c_str());
                 returnResponse(false);
-            } catch (...) {
-                LOGERR("Failed to validate volumeLevel '%s'", sLevel.c_str());
-                returnResponse(false);
-                }
+            }
 
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
@@ -2768,16 +2710,8 @@ namespace WPEFramework {
                 returnIfParamNotFound(parameters, "DRCMode");
                 string sDRCMode = parameters["DRCMode"].String();
                 int DRCMode = 0;
-                try {
-                    if (!TryParseIntInRange(sDRCMode, 0, 1, DRCMode)) {
-                        LOGWARN("DRCMode should be 0 (Line) or 1 (RF)");
-                        returnResponse(false);
-                    }
-                } catch (const std::exception& err) {
-                    LOGERR("Failed to validate DRCMode '%s': %s", sDRCMode.c_str(), err.what());
-                    returnResponse(false);
-                } catch (...) {
-                    LOGERR("Failed to validate DRCMode '%s'", sDRCMode.c_str());
+                if (!TryParseIntInRange(sDRCMode, 0, 1, DRCMode)) {
+                    LOGWARN("DRCMode invalid: '%s' (expected 0 for Line or 1 for RF)", sDRCMode.c_str());
                     returnResponse(false);
                 }
                 bool success = true;
@@ -2802,17 +2736,9 @@ namespace WPEFramework {
 
             string sCompresionLevel = parameters["compresionLevel"].String();
             int compresionLevel = 0;
-            try {
-                if (!TryParseIntInRange(sCompresionLevel, 0, 10, compresionLevel)) {
-                    LOGWARN("compresionLevel should be in range [0, 10]");
-                    returnResponse(false);
-                }
-            }catch (const std::exception &err) {
-               LOGERR("Failed to parse compresionLevel '%s': %s", sCompresionLevel.c_str(), err.what());
-               returnResponse(false);
-            }catch (...) {
-               LOGERR("Failed to parse compresionLevel '%s'", sCompresionLevel.c_str());
-               returnResponse(false);
+            if (!TryParseIntInRange(sCompresionLevel, 0, 10, compresionLevel)) {
+                LOGWARN("compresionLevel invalid: '%s' (expected range [0, 10])", sCompresionLevel.c_str());
+                returnResponse(false);
             }
 
             bool success = true;
@@ -2913,17 +2839,9 @@ namespace WPEFramework {
 
             string sEnhancerlevel = parameters["enhancerlevel"].String();
             int enhancerlevel = 0;
-            try {
-                if (!TryParseIntInRange(sEnhancerlevel, 0, 16, enhancerlevel)) {
-                    LOGWARN("enhancerlevel should be in range [0, 16]");
-                    returnResponse(false);
-                }
-            }catch (const std::exception &err) {
-               LOGERR("Failed to parse enhancerlevel '%s': %s", sEnhancerlevel.c_str(), err.what());
-               returnResponse(false);
-            }catch (...) {
-               LOGERR("Failed to parse enhancerlevel '%s'", sEnhancerlevel.c_str());
-               returnResponse(false);
+            if (!TryParseIntInRange(sEnhancerlevel, 0, 16, enhancerlevel)) {
+                LOGWARN("enhancerlevel invalid: '%s' (expected range [0, 16])", sEnhancerlevel.c_str());
+                returnResponse(false);
             }
 
             bool success = true;
@@ -3182,18 +3100,10 @@ namespace WPEFramework {
                 returnIfParamNotFound(parameters, "mixing");
                 string sMixing = parameters["mixing"].String();
                 bool mixing = false;
-            try {
-                if (!TryGetBoolParam(parameters, "mixing", mixing)) {
-                    LOGWARN("mixing should be a boolean");
-                    returnResponse(false);
-                }
-            } catch (const std::exception& err) {
-                LOGERR("Failed to validate mixing '%s': %s", sMixing.c_str(), err.what());
+            if (!TryGetBoolParam(parameters, "mixing", mixing)) {
+                LOGWARN("mixing invalid: '%s' (expected true/false)", sMixing.c_str());
                 returnResponse(false);
-            } catch (...) {
-                LOGERR("Failed to validate mixing '%s'", sMixing.c_str());
-                returnResponse(false);
-                }
+            }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
                 try
@@ -3249,16 +3159,8 @@ namespace WPEFramework {
                 returnIfParamNotFound(parameters, "mixerBalance");
                 string sMixerBalance = parameters["mixerBalance"].String();
                 int mixerBalance = 0;
-                try {
-                    if (!TryParseIntInRange(sMixerBalance, -32, 32, mixerBalance)) {
-                        LOGWARN("mixerBalance should be in range [-32, 32]");
-                        returnResponse(false);
-                    }
-                } catch (const std::exception& err) {
-                    LOGERR("Failed to validate mixerBalance '%s': %s", sMixerBalance.c_str(), err.what());
-                    returnResponse(false);
-                } catch (...) {
-                    LOGERR("Failed to validate mixerBalance '%s'", sMixerBalance.c_str());
+                if (!TryParseIntInRange(sMixerBalance, -32, 32, mixerBalance)) {
+                    LOGWARN("mixerBalance invalid: '%s' (expected range [-32, 32])", sMixerBalance.c_str());
                     returnResponse(false);
                 }
                 bool success = true;
@@ -3625,16 +3527,8 @@ namespace WPEFramework {
 
             string sEnable = parameters["enable"].String();
             bool enable = false;
-            try {
-                if (!TryGetBoolParam(parameters, "enable", enable)) {
-                    LOGWARN("enable should be a boolean");
-                    returnResponse(false);
-                }
-            } catch (const std::exception& err) {
-                LOGERR("Failed to parse enable '%s': %s", sEnable.c_str(), err.what());
-                returnResponse(false);
-            } catch (...) {
-                LOGERR("Failed to parse enable '%s'", sEnable.c_str());
+            if (!TryGetBoolParam(parameters, "enable", enable)) {
+                LOGWARN("enable invalid: '%s' (expected true/false)", sEnable.c_str());
                 returnResponse(false);
             }
 
@@ -4581,16 +4475,8 @@ namespace WPEFramework {
             returnIfParamNotFound(parameters, "enable");
             string spEnable = parameters["enable"].String();
             bool pEnable = false;
-            try {
-                if (!TryGetBoolParam(parameters, "enable", pEnable)) {
-                    LOGWARN("enable should be a boolean");
-                    returnResponse(false);
-                }
-            } catch (const std::exception& err) {
-                LOGERR("Failed to validate enable '%s': %s", spEnable.c_str(), err.what());
-                returnResponse(false);
-            } catch (...) {
-                LOGERR("Failed to validate enable '%s'", spEnable.c_str());
+            if (!TryGetBoolParam(parameters, "enable", pEnable)) {
+                LOGWARN("enable invalid: '%s' (expected true/false)", spEnable.c_str());
                 returnResponse(false);
             }
 
