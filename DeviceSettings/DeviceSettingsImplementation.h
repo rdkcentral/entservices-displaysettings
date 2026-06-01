@@ -147,6 +147,8 @@ namespace Plugin {
         Core::hresult Register(Exchange::IDeviceSettingsAudio::INotification* notification) override;
         Core::hresult Unregister(Exchange::IDeviceSettingsAudio::INotification* notification) override;
         Core::hresult GetAudioPort(const AudioPortType type, const int32_t index, int32_t &handle) override;
+        Core::hresult GetAudioConfig(IAudioTypeConfigIterator*& audioTypes,
+                         IAudioPortConfigIterator*& audioPorts) override;
         // Removed GetAudioPorts and GetSupportedAudioPorts - iterator type doesn't exist
         Core::hresult GetAudioPortConfig(const AudioPortType audioPort, AudioConfig &audioConfig);
         Core::hresult SetAudioPortConfig(const AudioPortType audioPort, const AudioConfig audioConfig);
@@ -274,6 +276,9 @@ namespace Plugin {
         Core::hresult Register(Exchange::IDeviceSettingsVideoPort::INotification* notification) override;
         Core::hresult Unregister(Exchange::IDeviceSettingsVideoPort::INotification* notification) override;
         Core::hresult GetVideoPort(const VideoPortType videoPort, const int32_t index, int32_t &handle) override;
+        Core::hresult GetVideoPortConfig(IVideoPortTypeConfigIterator*& videoPortTypes,
+                         IVideoPortPortConfigIterator*& videoPorts,
+                         IVideoPortResolutionIterator*& resolutions) override;
         Core::hresult IsVideoPortEnabled(const int32_t handle, bool &enabled) override;
         Core::hresult EnableVideoPort(const int32_t handle, const bool enabled) override;
         Core::hresult IsVideoPortDisplayConnected(const int32_t handle, bool &connected) override;

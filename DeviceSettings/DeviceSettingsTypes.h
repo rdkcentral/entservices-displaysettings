@@ -122,10 +122,14 @@ using SurroundVirtualizer = DeviceSettingsAudio::SurroundVirtualizer;
 using SurroundMode = DeviceSettingsAudio::SurroundMode;
 using MS12Feature = DeviceSettingsAudio::MS12Feature;
 using AudioARCStatus = DeviceSettingsAudio::AudioARCStatus;
+using AudioTypeConfigInfo = DeviceSettingsAudio::dsAudioTypeConfigInfo_t;
+using AudioPortConfigInfo = DeviceSettingsAudio::dsAudioPortConfigInfo_t;
 using IDeviceSettingsAudioEncodingIterator = DeviceSettingsAudio::IDeviceSettingsAudioEncodingIterator;
 using IDeviceSettingsAudioCompressionIterator = DeviceSettingsAudio::IDeviceSettingsAudioCompressionIterator;
 using IDeviceSettingsStereoModeIterator = DeviceSettingsAudio::IDeviceSettingsStereoModeIterator;
 using IDeviceSettingsAudioMS12AudioProfileIterator = DeviceSettingsAudio::IDeviceSettingsAudioMS12AudioProfileIterator;
+using IAudioTypeConfigIterator = DeviceSettingsAudio::IAudioTypeConfigIterator;
+using IAudioPortConfigIterator = DeviceSettingsAudio::IAudioPortConfigIterator;
 
 // VideoPort type aliases for convenience
 using VideoPortType = DeviceSettingsVideoPort::VideoPort;
@@ -147,6 +151,11 @@ using DisplayColorDepth = DeviceSettingsVideoPort::DisplayColorDepth;
 using TVResolution = DeviceSettingsVideoPort::TVResolution;
 using VideoPortSurroundMode = DeviceSettingsVideoPort::VideoPortSurroundMode;
 using VideoScanMode = DeviceSettingsVideoPort::VideoScanMode;
+using VideoPortTypeConfig = DeviceSettingsVideoPort::dsVideoPortTypeConfig_t;
+using VideoPortPortConfig = DeviceSettingsVideoPort::dsVideoPortPortConfig_t;
+using IVideoPortTypeConfigIterator = DeviceSettingsVideoPort::IVideoPortTypeConfigIterator;
+using IVideoPortPortConfigIterator = DeviceSettingsVideoPort::IVideoPortPortConfigIterator;
+using IVideoPortResolutionIterator = DeviceSettingsVideoPort::IVideoPortResolutionIterator;
 
 // Display type aliases for convenience
 using DisplayEvent = DeviceSettingsDisplay::DisplayEvent;

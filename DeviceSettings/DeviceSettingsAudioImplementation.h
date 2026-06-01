@@ -97,6 +97,8 @@ namespace Plugin {
         // Audio Port Management
         Core::hresult GetAudioPort(const AudioPortType type, const int32_t index, int32_t &handle);
         // Removed GetAudioPorts and GetSupportedAudioPorts - iterator type doesn't exist
+        Core::hresult GetAudioConfig(IAudioTypeConfigIterator*& audioTypes,
+                         IAudioPortConfigIterator*& audioPorts);
         Core::hresult GetAudioPortConfig(const AudioPortType audioPort, AudioConfig &audioConfig);
         Core::hresult GetMS12Capabilities(const int32_t handle, IDeviceSettingsAudioCompressionIterator*& compressions);
         Core::hresult GetAudioCapabilities(const int32_t handle, int32_t &capabilities);

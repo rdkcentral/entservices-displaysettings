@@ -40,8 +40,169 @@
 
 #include "UtilsLogging.h"
 #include <syscall.h>
+#include <dlfcn.h>
+#include <cstring>
+#include <vector>
+#include <sstream>
 
 using namespace std;
+
+namespace {
+    typedef struct _dlSymbolLookup {
+        const char* name;
+        void** dataptr;
+    } dlSymbolLookup;
+
+    typedef struct _videoPortConfigs {
+        const dsVideoPortTypeConfig_t* pKConfigs;
+        int* pKVideoPortConfigs_size;
+        const dsVideoPortPortConfig_t* pKPorts;
+        int* pKVideoPortPorts_size;
+        dsVideoPortResolution_t* pKResolutionsSettings;
+        int* pKResolutionsSettings_size;
+    } videoPortConfigs_t;
+
+    static bool LoadDLSymbols(void* pDLHandle, const dlSymbolLookup* symbols, const int numberOfSymbols)
+    {
+        int currentSymbols = 0;
+
+        if ((pDLHandle == NULL) || (symbols == NULL)) {
+            LOGERR("LoadDLSymbols(VideoPort): Invalid handle or symbols");
+            return false;
+        }
+
+        for (int i = 0; i < numberOfSymbols; i++) {
+            if ((symbols[i].dataptr == NULL) || (symbols[i].name == NULL)) {
+                LOGERR("LoadDLSymbols(VideoPort): Invalid symbol entry at index %d", i);
+                continue;
+            }
+
+            *(symbols[i].dataptr) = dlsym(pDLHandle, symbols[i].name);
+            if (*(symbols[i].dataptr) != NULL) {
+                currentSymbols++;
+            } else {
+                LOGWARN("LoadDLSymbols(VideoPort): [%s] not found", symbols[i].name);
+            }
+        }
+
+        return (numberOfSymbols > 0) ? (currentSymbols == numberOfSymbols) : false;
+    }
+
+    static bool LoadVideoPortConfigFromHAL(videoPortConfigs_t& config)
+    {
+        void* pDLHandle = NULL;
+        bool isSymbolsLoaded = false;
+
+        memset(&config, 0, sizeof(config));
+
+        dlerror();
+        pDLHandle = dlopen(RDK_DSHAL_NAME, RTLD_LAZY);
+        if (pDLHandle == NULL) {
+            const char* dlErr = dlerror();
+            LOGWARN("LoadVideoPortConfigFromHAL: dlopen failed for %s: %s", RDK_DSHAL_NAME, (dlErr ? dlErr : "unknown"));
+            return false;
+        }
+
+        dlSymbolLookup videoPortConfigSymbols[] = {
+            {"kVideoPortConfigs", (void**)&config.pKConfigs},
+            {"kVideoPortConfigs_size", (void**)&config.pKVideoPortConfigs_size},
+            {"kVideoPortPorts", (void**)&config.pKPorts},
+            {"kVideoPortPorts_size", (void**)&config.pKVideoPortPorts_size},
+            {"kResolutionsSettings", (void**)&config.pKResolutionsSettings},
+            {"kResolutionsSettings_size", (void**)&config.pKResolutionsSettings_size}
+        };
+
+        isSymbolsLoaded = LoadDLSymbols(pDLHandle, videoPortConfigSymbols, sizeof(videoPortConfigSymbols) / sizeof(dlSymbolLookup));
+        dlclose(pDLHandle);
+
+        if (!isSymbolsLoaded) {
+            LOGWARN("LoadVideoPortConfigFromHAL: Failed to load all video port symbols from HAL");
+            return false;
+        }
+
+        if ((config.pKConfigs == NULL) || (config.pKPorts == NULL) || (config.pKResolutionsSettings == NULL) ||
+            (config.pKVideoPortConfigs_size == NULL) || (config.pKVideoPortPorts_size == NULL) || (config.pKResolutionsSettings_size == NULL)) {
+            LOGWARN("LoadVideoPortConfigFromHAL: HAL symbols loaded but one or more pointers are null");
+            return false;
+        }
+
+        return true;
+    }
+
+    static void PopulateVideoPortConfig(std::vector<VideoPortTypeConfig>& videoPortTypes,
+                                        std::vector<VideoPortPortConfig>& videoPorts,
+                                        std::vector<VideoPortResolution>& resolutions)
+    {
+        videoPortConfigs_t halConfig;
+        memset(&halConfig, 0, sizeof(halConfig));
+        const bool loadedFromHAL = LoadVideoPortConfigFromHAL(halConfig);
+
+        videoPortTypes.clear();
+        videoPorts.clear();
+        resolutions.clear();
+
+        if (!loadedFromHAL) {
+            LOGWARN("PopulateVideoPortConfig: HAL config not available, returning empty config");
+            return;
+        }
+
+        const int configCount = *(halConfig.pKVideoPortConfigs_size);
+        const int portCount = *(halConfig.pKVideoPortPorts_size);
+        const int resolutionCount = *(halConfig.pKResolutionsSettings_size);
+
+        for (int i = 0; i < configCount; i++) {
+            const dsVideoPortTypeConfig_t& cfg = halConfig.pKConfigs[i];
+
+            VideoPortTypeConfig typeCfg;
+            typeCfg.typeId = static_cast<VideoPortType>(cfg.typeId);
+            typeCfg.name = (cfg.name ? cfg.name : "");
+            typeCfg.dtcpSupported = cfg.dtcpSupported;
+            typeCfg.hdcpSupported = cfg.hdcpSupported;
+            typeCfg.restrictedResollution = cfg.restrictedResollution;
+            if ((cfg.supportedResolutions != NULL) && (cfg.numSupportedResolutions > 0)) {
+                std::ostringstream supportedResolutions;
+                for (size_t j = 0; j < cfg.numSupportedResolutions; ++j) {
+                    if (j != 0) {
+                        supportedResolutions << ',';
+                    }
+                    supportedResolutions << cfg.supportedResolutions[j].name;
+                }
+                typeCfg.supportedResolutionNames = supportedResolutions.str();
+            } else {
+                typeCfg.supportedResolutionNames.clear();
+            }
+            videoPortTypes.push_back(typeCfg);
+        }
+
+        for (int i = 0; i < portCount; i++) {
+            const dsVideoPortPortConfig_t& cfg = halConfig.pKPorts[i];
+
+            VideoPortPortConfig portCfg;
+            portCfg.videoPortType = static_cast<VideoPortType>(cfg.id.type);
+            portCfg.videoPortIndex = cfg.id.index;
+            portCfg.connectedAudioPortType = static_cast<int32_t>(cfg.connectedAOP.type);
+            portCfg.connectedAudioPortIndex = cfg.connectedAOP.index;
+            portCfg.defaultResolution = (cfg.defaultResolution ? cfg.defaultResolution : "");
+            videoPorts.push_back(portCfg);
+        }
+
+        for (int i = 0; i < resolutionCount; i++) {
+            const dsVideoPortResolution_t& cfg = halConfig.pKResolutionsSettings[i];
+
+            VideoPortResolution resCfg;
+            resCfg.name = cfg.name;
+            resCfg.pixelResolution = static_cast<VideoResolution>(cfg.pixelResolution);
+            resCfg.aspectRatio = static_cast<VideoAspectRatio>(cfg.aspectRatio);
+            resCfg.stereoScopicMode = static_cast<VideoStereoScopicMode>(cfg.stereoScopicMode);
+            resCfg.frameRate = static_cast<VideoFrameRate>(cfg.frameRate);
+            resCfg.interlaced = cfg.interlaced;
+            resolutions.push_back(resCfg);
+        }
+
+    LOGINFO("PopulateVideoPortConfig: Loaded config from HAL (videoPortTypes=%zu videoPorts=%zu resolutions=%zu)",
+        videoPortTypes.size(), videoPorts.size(), resolutions.size());
+    }
+}
 
 namespace WPEFramework {
 namespace Plugin {
@@ -174,6 +335,29 @@ namespace Plugin {
             LOGERR("GetVideoPort failed: videoPort=%d, index=%d, error=%u", static_cast<int>(videoPort), index, result);
         }
         return result;
+    }
+
+    uint32_t DeviceSettingsVideoPortImpl::GetVideoPortConfig(IVideoPortTypeConfigIterator*& videoPortTypes,
+                                                             IVideoPortPortConfigIterator*& videoPorts,
+                                     IVideoPortResolutionIterator*& resolutions)
+    {
+        std::vector<VideoPortTypeConfig> typeConfigs;
+        std::vector<VideoPortPortConfig> portConfigs;
+        std::vector<VideoPortResolution> resolutionConfigs;
+
+        PopulateVideoPortConfig(typeConfigs, portConfigs, resolutionConfigs);
+
+        using VideoPortTypeIterator = RPC::IteratorType<IVideoPortTypeConfigIterator>;
+        using VideoPortPortIterator = RPC::IteratorType<IVideoPortPortConfigIterator>;
+        using ResolutionIterator = RPC::IteratorType<IVideoPortResolutionIterator>;
+
+        videoPortTypes = Core::Service<VideoPortTypeIterator>::Create<IVideoPortTypeConfigIterator>(typeConfigs);
+        videoPorts = Core::Service<VideoPortPortIterator>::Create<IVideoPortPortConfigIterator>(portConfigs);
+        resolutions = Core::Service<ResolutionIterator>::Create<IVideoPortResolutionIterator>(resolutionConfigs);
+
+        LOGINFO("GetVideoPortConfig: videoPortTypes=%zu videoPorts=%zu resolutions=%zu",
+            typeConfigs.size(), portConfigs.size(), resolutionConfigs.size());
+        return Core::ERROR_NONE;
     }
 
     uint32_t DeviceSettingsVideoPortImpl::IsVideoPortEnabled(const int32_t handle, bool &enabled)
