@@ -231,6 +231,10 @@ namespace Plugin {
         DELEGATE_TO_COMPONENT(_fpdSettings, SetFPDMode, fpdMode)
     }
 
+    Core::hresult DeviceSettingsImp::GetFrontPanelConfig(IFPDTextDisplayConfigIterator*& textDisplays, IFPDIndicatorConfigIterator*& indicators, IFPDColorConfigIterator*& colors, IFPDColorBindingIterator*& colorBindings) {
+        DELEGATE_TO_COMPONENT(_fpdSettings, GetFrontPanelConfig, textDisplays, indicators, colors, colorBindings)
+    }
+
     // ============================================================================
     // IDeviceSettingsHDMIIn interface implementation - delegate to _hdmiInSettings interface
     // ============================================================================

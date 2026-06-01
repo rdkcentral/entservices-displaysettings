@@ -21,6 +21,248 @@
 
 #include "UtilsLogging.h"
 #include <syscall.h>
+#include <vector>
+#include <dlfcn.h>
+#include <cstring>
+
+namespace {
+    static const int32_t kMaxBrightness = 100;
+    static const int32_t kMinBrightness = 0;
+    static const int32_t kDefaultLevels = 10;
+    static const int32_t kMaxCycleRate = 2;
+    static const int32_t kMaxHorizontalColumns = 0;
+    static const int32_t kMaxVerticalRows = 0;
+    static const int32_t kMaxHorizontalIterations = 0;
+    static const int32_t kMaxVerticalIterations = 0;
+    static const int32_t kDefaultColorMode = 0;
+    static const char* kDefaultSupportedCharacters = "ABCEDFG";
+
+    typedef struct _dlSymbolLookup {
+        const char* name;
+        void** dataptr;
+    } dlSymbolLookup;
+
+    typedef struct _fpdConfigs {
+        const dsFPDColorConfig_t* pKFPDIndicatorColors;
+        const dsFPDIndicatorConfig_t* pKIndicators;
+        const dsFPDTextDisplayConfig_t* pKTextDisplays;
+        int* pKFPDIndicatorColors_size;
+        int* pKIndicators_size;
+        int* pKTextDisplays_size;
+    } fpdConfigs_t;
+
+    static bool LoadDLSymbols(void* pDLHandle, const dlSymbolLookup* symbols, const int numberOfSymbols)
+    {
+        int currentSymbols = 0;
+        bool isAllSymbolsLoaded = false;
+
+        if ((pDLHandle == NULL) || (symbols == NULL)) {
+            LOGERR("LoadDLSymbols: Invalid handle or symbols");
+            return false;
+        }
+
+        for (int i = 0; i < numberOfSymbols; i++) {
+            if ((symbols[i].dataptr == NULL) || (symbols[i].name == NULL)) {
+                LOGERR("LoadDLSymbols: Invalid symbol entry at index %d", i);
+                continue;
+            }
+
+            *(symbols[i].dataptr) = dlsym(pDLHandle, symbols[i].name);
+            if (*(symbols[i].dataptr) == NULL) {
+                LOGWARN("LoadDLSymbols: [%s] not found", symbols[i].name);
+            } else {
+                currentSymbols++;
+            }
+        }
+
+        isAllSymbolsLoaded = (numberOfSymbols > 0) ? (currentSymbols == numberOfSymbols) : false;
+        return isAllSymbolsLoaded;
+    }
+
+    static bool LoadFrontPanelConfigFromHAL(fpdConfigs_t& config)
+    {
+        void* pDLHandle = NULL;
+        bool isSymbolsLoaded = false;
+
+        memset(&config, 0, sizeof(config));
+
+        dlerror();
+        pDLHandle = dlopen(RDK_DSHAL_NAME, RTLD_LAZY);
+        if (pDLHandle == NULL) {
+            const char* dlErr = dlerror();
+            LOGWARN("LoadFrontPanelConfigFromHAL: dlopen failed for %s: %s", RDK_DSHAL_NAME, (dlErr ? dlErr : "unknown"));
+            return false;
+        }
+
+        dlSymbolLookup fpdConfigSymbols[] = {
+            {"kFPDIndicatorColors", (void**)&config.pKFPDIndicatorColors},
+            {"kFPDIndicatorColors_size", (void**)&config.pKFPDIndicatorColors_size},
+            {"kIndicators", (void**)&config.pKIndicators},
+            {"kIndicators_size", (void**)&config.pKIndicators_size},
+            {"kFPDTextDisplays", (void**)&config.pKTextDisplays},
+            {"kFPDTextDisplays_size", (void**)&config.pKTextDisplays_size}
+        };
+
+        isSymbolsLoaded = LoadDLSymbols(pDLHandle, fpdConfigSymbols, sizeof(fpdConfigSymbols) / sizeof(dlSymbolLookup));
+        dlclose(pDLHandle);
+
+        if (!isSymbolsLoaded) {
+            LOGWARN("LoadFrontPanelConfigFromHAL: Failed to load all front panel symbols from HAL");
+            return false;
+        }
+
+        if ((config.pKFPDIndicatorColors == NULL) || (config.pKIndicators == NULL) || (config.pKTextDisplays == NULL) ||
+            (config.pKFPDIndicatorColors_size == NULL) || (config.pKIndicators_size == NULL) || (config.pKTextDisplays_size == NULL)) {
+            LOGWARN("LoadFrontPanelConfigFromHAL: HAL symbols loaded but one or more pointers are null");
+            return false;
+        }
+
+        return true;
+    }
+
+    static void PopulateFrontPanelConfig(std::vector<FPDColorConfig>& colors,
+                                         std::vector<FPDIndicatorConfig>& indicators,
+                                         std::vector<FPDTextDisplayConfig>& textDisplays,
+                                         std::vector<FPDColorBinding>& colorBindings)
+    {
+        fpdConfigs_t halConfig;
+        memset(&halConfig, 0, sizeof(halConfig));
+        bool loadedFromHAL = LoadFrontPanelConfigFromHAL(halConfig);
+
+        colors.clear();
+        indicators.clear();
+        textDisplays.clear();
+        colorBindings.clear();
+
+        if (loadedFromHAL) {
+            const int colorCount = *(halConfig.pKFPDIndicatorColors_size);
+            const int indicatorCount = *(halConfig.pKIndicators_size);
+            const int textDisplayCount = *(halConfig.pKTextDisplays_size);
+
+            for (int i = 0; i < colorCount; i++) {
+                const dsFPDColorConfig_t& cfg = halConfig.pKFPDIndicatorColors[i];
+                FPDColorConfig colorCfg;
+                colorCfg.id = cfg.id;
+                colorCfg.color = cfg.color;
+                colors.push_back(colorCfg);
+            }
+
+            for (int i = 0; i < indicatorCount; i++) {
+                const dsFPDIndicatorConfig_t& cfg = halConfig.pKIndicators[i];
+                FPDIndicatorConfig indicatorCfg;
+                indicatorCfg.id = cfg.id;
+                indicatorCfg.maxBrightness = cfg.maxBrightness;
+                indicatorCfg.maxCycleRate = cfg.maxCycleRate;
+                indicatorCfg.minBrightness = cfg.minBrightness;
+                indicatorCfg.levels = cfg.levels;
+                indicatorCfg.colorMode = cfg.colorMode;
+                indicators.push_back(indicatorCfg);
+
+                if (cfg.supportedColors != nullptr) {
+                    for (int colorIndex = 0; colorIndex < colorCount; ++colorIndex) {
+                        const dsFPDColorConfig_t& colorCfg = halConfig.pKFPDIndicatorColors[colorIndex];
+                        FPDColorBinding mapEntry;
+                        mapEntry.targetType = DeviceSettingsFPD::DS_FPD_COLOR_TARGET_INDICATOR;
+                        mapEntry.targetId = cfg.id;
+                        mapEntry.colorId = colorCfg.id;
+                        colorBindings.push_back(mapEntry);
+                    }
+                }
+            }
+
+            for (int i = 0; i < textDisplayCount; i++) {
+                const dsFPDTextDisplayConfig_t& cfg = halConfig.pKTextDisplays[i];
+                FPDTextDisplayConfig textDisplayCfg;
+                textDisplayCfg.id = cfg.id;
+                textDisplayCfg.name = (cfg.name ? cfg.name : "");
+                textDisplayCfg.maxBrightness = cfg.maxBrightness;
+                textDisplayCfg.maxCycleRate = cfg.maxCycleRate;
+                textDisplayCfg.supportedCharacters = (cfg.supportedCharacters ? cfg.supportedCharacters : kDefaultSupportedCharacters);
+                textDisplayCfg.columns = cfg.columns;
+                textDisplayCfg.rows = cfg.rows;
+                textDisplayCfg.maxHorizontalIterations = cfg.maxHorizontalIterations;
+                textDisplayCfg.maxVerticalIterations = cfg.maxVerticalIterations;
+                textDisplayCfg.levels = cfg.levels;
+                textDisplayCfg.colorMode = cfg.colorMode;
+                textDisplays.push_back(textDisplayCfg);
+
+                if (cfg.supportedColors != nullptr) {
+                    for (int colorIndex = 0; colorIndex < colorCount; ++colorIndex) {
+                        const dsFPDColorConfig_t& colorCfg = halConfig.pKFPDIndicatorColors[colorIndex];
+                        FPDColorBinding mapEntry;
+                        mapEntry.targetType = DeviceSettingsFPD::DS_FPD_COLOR_TARGET_TEXTDISPLAY;
+                        mapEntry.targetId = cfg.id;
+                        mapEntry.colorId = colorCfg.id;
+                        colorBindings.push_back(mapEntry);
+                    }
+                }
+            }
+
+            LOGINFO("PopulateFrontPanelConfig: Loaded config from HAL (colors=%d indicators=%d textDisplays=%d)", colorCount, indicatorCount, textDisplayCount);
+            return;
+        }
+
+        LOGWARN("PopulateFrontPanelConfig: HAL config not available, using fallback defaults");
+
+        {
+            FPDColorConfig cfg;
+            cfg.id = 0; cfg.color = dsFPD_COLOR_BLUE; colors.push_back(cfg);
+            cfg.id = 1; cfg.color = dsFPD_COLOR_GREEN; colors.push_back(cfg);
+            cfg.id = 2; cfg.color = dsFPD_COLOR_RED; colors.push_back(cfg);
+            cfg.id = 3; cfg.color = dsFPD_COLOR_YELLOW; colors.push_back(cfg);
+            cfg.id = 4; cfg.color = dsFPD_COLOR_ORANGE; colors.push_back(cfg);
+            cfg.id = 5; cfg.color = dsFPD_COLOR_WHITE; colors.push_back(cfg);
+        }
+
+        {
+            FPDIndicatorConfig cfg;
+            cfg.maxBrightness = kMaxBrightness;
+            cfg.maxCycleRate = kMaxCycleRate;
+            cfg.minBrightness = kMinBrightness;
+            cfg.levels = kDefaultLevels;
+            cfg.colorMode = kDefaultColorMode;
+
+            cfg.id = dsFPD_INDICATOR_MESSAGE; indicators.push_back(cfg);
+            cfg.id = dsFPD_INDICATOR_POWER; indicators.push_back(cfg);
+            cfg.id = dsFPD_INDICATOR_RECORD; indicators.push_back(cfg);
+            cfg.id = dsFPD_INDICATOR_REMOTE; indicators.push_back(cfg);
+        }
+
+        for (const auto& indicatorCfg : indicators) {
+            for (const auto& colorCfg : colors) {
+                FPDColorBinding mapEntry;
+                mapEntry.targetType = DeviceSettingsFPD::DS_FPD_COLOR_TARGET_INDICATOR;
+                mapEntry.targetId = indicatorCfg.id;
+                mapEntry.colorId = colorCfg.id;
+                colorBindings.push_back(mapEntry);
+            }
+        }
+
+        {
+            FPDTextDisplayConfig cfg;
+            cfg.id = dsFPD_TEXTDISP_TEXT;
+            cfg.name = "Text";
+            cfg.maxBrightness = kMaxBrightness;
+            cfg.maxCycleRate = kMaxCycleRate;
+            cfg.supportedCharacters = kDefaultSupportedCharacters;
+            cfg.columns = kMaxHorizontalColumns;
+            cfg.rows = kMaxVerticalRows;
+            cfg.maxHorizontalIterations = kMaxHorizontalIterations;
+            cfg.maxVerticalIterations = kMaxVerticalIterations;
+            cfg.levels = kDefaultLevels;
+            cfg.colorMode = kDefaultColorMode;
+            textDisplays.push_back(cfg);
+
+            for (const auto& colorCfg : colors) {
+                FPDColorBinding mapEntry;
+                mapEntry.targetType = DeviceSettingsFPD::DS_FPD_COLOR_TARGET_TEXTDISPLAY;
+                mapEntry.targetId = cfg.id;
+                mapEntry.colorId = colorCfg.id;
+                colorBindings.push_back(mapEntry);
+            }
+        }
+    }
+}
 
 using namespace std;
 
@@ -241,6 +483,29 @@ namespace Plugin {
         
         LOGINFO("SetFPDColor: SUCCESS - platform call completed");
 
+        return Core::ERROR_NONE;
+    }
+
+    Core::hresult DeviceSettingsFPDImpl::GetFrontPanelConfig(IFPDTextDisplayConfigIterator*& textDisplays, IFPDIndicatorConfigIterator*& indicators, IFPDColorConfigIterator*& colors, IFPDColorBindingIterator*& colorBindings)
+    {
+        std::vector<FPDColorConfig> colorConfigs;
+        std::vector<FPDIndicatorConfig> indicatorConfigs;
+        std::vector<FPDTextDisplayConfig> textDisplayConfigs;
+        std::vector<FPDColorBinding> colorBindingConfigs;
+
+        PopulateFrontPanelConfig(colorConfigs, indicatorConfigs, textDisplayConfigs, colorBindingConfigs);
+
+        using ColorIterator = RPC::IteratorType<IFPDColorConfigIterator>;
+        using IndicatorIterator = RPC::IteratorType<IFPDIndicatorConfigIterator>;
+        using TextDisplayIterator = RPC::IteratorType<IFPDTextDisplayConfigIterator>;
+        using ColorBindingIterator = RPC::IteratorType<IFPDColorBindingIterator>;
+
+        colors = Core::Service<ColorIterator>::Create<IFPDColorConfigIterator>(colorConfigs);
+        indicators = Core::Service<IndicatorIterator>::Create<IFPDIndicatorConfigIterator>(indicatorConfigs);
+        textDisplays = Core::Service<TextDisplayIterator>::Create<IFPDTextDisplayConfigIterator>(textDisplayConfigs);
+        colorBindings = Core::Service<ColorBindingIterator>::Create<IFPDColorBindingIterator>(colorBindingConfigs);
+
+        LOGINFO("GetFrontPanelConfig: colors=%zu indicators=%zu textDisplays=%zu colorBindings=%zu", colorConfigs.size(), indicatorConfigs.size(), textDisplayConfigs.size(), colorBindingConfigs.size());
         return Core::ERROR_NONE;
     }
 

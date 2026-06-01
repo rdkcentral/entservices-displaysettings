@@ -89,8 +89,17 @@ using FPDTimeFormat = DeviceSettingsFPD::FPDTimeFormat;
 using FPDIndicator = DeviceSettingsFPD::FPDIndicator;
 using FPDState = DeviceSettingsFPD::FPDState;
 using FPDTextDisplay = DeviceSettingsFPD::FPDTextDisplay;
+using FPDColorBindingTarget = DeviceSettingsFPD::FPDColorBindingTarget;
 using FPDMode = DeviceSettingsFPD::FPDMode;
 using FDPLEDState = DeviceSettingsFPD::FDPLEDState;
+using FPDColorConfig = DeviceSettingsFPD::dsFPDColorConfig_t;
+using FPDIndicatorConfig = DeviceSettingsFPD::dsFPDIndicatorConfig_t;
+using FPDColorBinding = DeviceSettingsFPD::dsFPDColorBinding_t;
+using FPDTextDisplayConfig = DeviceSettingsFPD::dsFPDTextDisplayConfig_t;
+using IFPDColorConfigIterator = DeviceSettingsFPD::IFPDColorConfigIterator;
+using IFPDIndicatorConfigIterator = DeviceSettingsFPD::IFPDIndicatorConfigIterator;
+using IFPDTextDisplayConfigIterator = DeviceSettingsFPD::IFPDTextDisplayConfigIterator;
+using IFPDColorBindingIterator = DeviceSettingsFPD::IFPDColorBindingIterator;
 
 // Audio type aliases for convenience
 using AudioPortType = DeviceSettingsAudio::AudioPortType;

@@ -118,6 +118,7 @@ namespace Plugin {
         Core::hresult GetFPDTimeFormat(FPDTimeFormat &fpdTimeFormat) override;
         Core::hresult SetFPDTimeFormat(const FPDTimeFormat fpdTimeFormat) override;
         Core::hresult SetFPDMode(const FPDMode fpdMode) override;
+        Core::hresult GetFrontPanelConfig(IFPDTextDisplayConfigIterator*& textDisplays, IFPDIndicatorConfigIterator*& indicators, IFPDColorConfigIterator*& colors, IFPDColorBindingIterator*& colorBindings) override;
         
         // IDeviceSettingsHDMIIn interface implementation - delegate to _hdmiInSettings interface
         Core::hresult Register(Exchange::IDeviceSettingsHDMIIn::INotification* notification) override;
