@@ -379,111 +379,242 @@ namespace Plugin {
 
     Core::hresult DeviceSettingsFPDImpl::SetFPDTextBrightness(const FPDTextDisplay textDisplay, const uint32_t brightNess) {
         LOGINFO("SetFPDTextBrightness: textDisplay=%d, brightNess=%u", textDisplay, brightNess);
-        LOGINFO("SetFPDTextBrightness: SUCCESS - stub implementation completed");
-        return Core::ERROR_NONE;
+        Core::hresult errorCode = Core::ERROR_GENERAL;
+        if (_fpd.SetFPDTextBrightness(textDisplay, brightNess) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("SetFPDTextBrightness: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
+        LOGINFO("SetFPDTextBrightness: SUCCESS - platform call completed");
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsFPDImpl::GetFPDTextBrightness(const FPDTextDisplay textDisplay, uint32_t &brightNess) {
-        brightNess = 50; // Example value
+        Core::hresult errorCode = Core::ERROR_GENERAL;
+        if (_fpd.GetFPDTextBrightness(textDisplay, brightNess) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetFPDTextBrightness: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
         LOGINFO("GetFPDTextBrightness: SUCCESS - textDisplay=%d, brightNess=%d", textDisplay, brightNess);
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsFPDImpl::EnableFPDClockDisplay(const bool enable) {
+        Core::hresult errorCode = Core::ERROR_GENERAL;
+        if (_fpd.EnableFPDClockDisplay(enable) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("EnableFPDClockDisplay: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
         LOGINFO("EnableFPDClockDisplay: enable=%s", enable ? "true" : "false");
-        LOGINFO("EnableFPDClockDisplay: SUCCESS - stub implementation completed");
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsFPDImpl::GetFPDTimeFormat(FPDTimeFormat &fpdTimeFormat) {
-        fpdTimeFormat = FPDTimeFormat::DS_FPD_TIMEFORMAT_24_HOUR; // Example value
+        Core::hresult errorCode = Core::ERROR_GENERAL;
+        if (_fpd.GetFPDTimeFormat(fpdTimeFormat) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetFPDTimeFormat: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
         LOGINFO("GetFPDTimeFormat: SUCCESS - fpdTimeFormat=%d", fpdTimeFormat);
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsFPDImpl::SetFPDTimeFormat(const FPDTimeFormat fpdTimeFormat) {
+        Core::hresult errorCode = Core::ERROR_GENERAL;
+        if (_fpd.SetFPDTimeFormat(fpdTimeFormat) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("SetFPDTimeFormat: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
         LOGINFO("SetFPDTimeFormat: fpdTimeFormat=%d", fpdTimeFormat);
-        LOGINFO("SetFPDTimeFormat: SUCCESS - stub implementation completed");
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsFPDImpl::SetFPDBlink(const FPDIndicator indicator, const uint32_t blinkDuration, const uint32_t blinkIterations) {
+        Core::hresult errorCode = Core::ERROR_GENERAL;
+        if (_fpd.SetFPDBlink(indicator, blinkDuration, blinkIterations) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("SetFPDBlink: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
         LOGINFO("SetFPDBlink: indicator=%d, blinkDuration=%u, blinkIterations=%u", indicator, blinkDuration, blinkIterations);
-        LOGINFO("SetFPDBlink: SUCCESS - stub implementation completed");
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsFPDImpl::SetFPDMode(const FPDMode fpdMode) {
+        Core::hresult errorCode = Core::ERROR_GENERAL;
+        if (_fpd.SetFPDMode(fpdMode) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("SetFPDMode: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
         LOGINFO("SetFPDMode: fpdMode=%d", fpdMode);
-        LOGINFO("SetFPDMode: SUCCESS - stub implementation completed");
-        return Core::ERROR_NONE;
+        return errorCode;
     }
     //Depricated
 
     Core::hresult DeviceSettingsFPDImpl::SetFPDBrightness(const FPDIndicator indicator, const uint32_t brightNess, const bool persist) {
         LOGINFO("SetFPDBrightness: indicator=%d, brightNess=%u, persist=%s", indicator, brightNess, persist ? "true" : "false");
 
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _fpd.SetFPDBrightness(indicator, brightNess, persist);
+        if (_fpd.SetFPDBrightness(indicator, brightNess, persist) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("SetFPDBrightness: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
         
         LOGINFO("SetFPDBrightness: SUCCESS - platform call completed");
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsFPDImpl::GetFPDBrightness(const FPDIndicator indicator, uint32_t &brightNess) {
 
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _fpd.GetFPDBrightness(indicator, brightNess);
+        if (_fpd.GetFPDBrightness(indicator, brightNess) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
 
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetFPDBrightness: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
         LOGINFO("GetFPDBrightness: SUCCESS - indicator=%d, brightNess=%d", indicator, brightNess);
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsFPDImpl::SetFPDState(const FPDIndicator indicator, const FPDState state) {
         LOGINFO("SetFPDState: indicator=%d, state=%d", indicator, state);
 
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _fpd.SetFPDState(indicator, state);
+        if (_fpd.SetFPDState(indicator, state) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("SetFPDState: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
         
         LOGINFO("SetFPDState: SUCCESS - platform call completed");
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsFPDImpl::GetFPDState(const FPDIndicator indicator, FPDState &state) {
 
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _fpd.GetFPDState(indicator, state);
+        if (_fpd.GetFPDState(indicator, state) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
 
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetFPDState: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
         LOGINFO("GetFPDState: SUCCESS - indicator=%d, state=%d", indicator, state);
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsFPDImpl::GetFPDColor(const FPDIndicator indicator, uint32_t &color) {
 
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _fpd.GetFPDColor(indicator, color);
+        if (_fpd.GetFPDColor(indicator, color) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
 
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetFPDColor: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
         LOGINFO("GetFPDColor: SUCCESS - indicator=%d, color=0x%X", indicator, color);
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsFPDImpl::SetFPDColor(const FPDIndicator indicator, const uint32_t color) {
         LOGINFO("SetFPDColor: indicator=%d, color=0x%X", indicator, color);
 
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _fpd.SetFPDColor(indicator, color);
+        if (_fpd.SetFPDColor(indicator, color) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("SetFPDColor: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
         
         LOGINFO("SetFPDColor: SUCCESS - platform call completed");
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsFPDImpl::GetFrontPanelConfig(IFPDTextDisplayConfigIterator*& textDisplays, IFPDIndicatorConfigIterator*& indicators, IFPDColorConfigIterator*& colors, IFPDColorBindingIterator*& colorBindings)

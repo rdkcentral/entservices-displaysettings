@@ -168,237 +168,433 @@ namespace Plugin {
     Core::hresult DeviceSettingsHdmiInImp::GetHDMIInNumbefOfInputs(int32_t &count) {
 
         LOGINFO("GetHDMIInNumberOfInputs");
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _hdmiIn.GetHDMIInNumberOfInputs(count);
+        if (_hdmiIn.GetHDMIInNumberOfInputs(count) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetHDMIInNumberOfInputs: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
         LOGINFO("GetHDMIInNumberOfInputs: SUCCESS - count=%d", count);
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::GetHDMIInStatus(HDMIInStatus &hdmiStatus, IHDMIInPortConnectionStatusIterator*& portConnectionStatus) {
 
         LOGINFO("GetHDMIInStatus");
+        Core::hresult errorCode = Core::ERROR_GENERAL;
 
         _apiLock.Lock();
-        _hdmiIn.GetHDMIInStatus(hdmiStatus, portConnectionStatus);
+        if (_hdmiIn.GetHDMIInStatus(hdmiStatus, portConnectionStatus) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetHDMIInStatus: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
         
         LOGINFO("GetHDMIInStatus: SUCCESS - platform call completed");
         LOGINFO("GetHDMIInStatus: activePort=%d, isPresented=%s", hdmiStatus.activePort, hdmiStatus.isPresented ? "true" : "false");
 
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::SelectHDMIInPort(const HDMIInPort port, const bool requestAudioMix, const bool topMostPlane, const HDMIVideoPlaneType videoPlaneType) {
 
         LOGINFO("SelectHDMIInPort: port=%d, requestAudioMix=%s, topMostPlane=%s, videoPlaneType=%d",
             port, requestAudioMix ? "true" : "false", topMostPlane ? "true" : "false", videoPlaneType);
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _hdmiIn.SelectHDMIInPort(port, requestAudioMix, topMostPlane, videoPlaneType);
+        if (_hdmiIn.SelectHDMIInPort(port, requestAudioMix, topMostPlane, videoPlaneType) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("SelectHDMIInPort: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
         
         LOGINFO("SelectHDMIInPort: SUCCESS - platform call completed");
 
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::ScaleHDMIInVideo(const HDMIInVideoRectangle videoPosition) {
 
         LOGINFO("ScaleHDMIInVideo: x=%d, y=%d, w=%d, h=%d", videoPosition.x, videoPosition.y, videoPosition.width, videoPosition.height);
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _hdmiIn.ScaleHDMIInVideo(videoPosition);
+        if (_hdmiIn.ScaleHDMIInVideo(videoPosition) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("ScaleHDMIInVideo: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
         
         LOGINFO("ScaleHDMIInVideo: SUCCESS - platform call completed");
 
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::SelectHDMIZoomMode(const HDMIInVideoZoom zoomMode) {
 
         LOGINFO("SelectHDMIZoomMode: zoomMode=%d", zoomMode);
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _hdmiIn.SelectHDMIZoomMode(zoomMode);
+        if (_hdmiIn.SelectHDMIZoomMode(zoomMode) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("SelectHDMIZoomMode: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
         
         LOGINFO("SelectHDMIZoomMode: SUCCESS - platform call completed");
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::GetSupportedGameFeaturesList(IHDMIInGameFeatureListIterator *& gameFeatureList) {
 
         LOGINFO("GetSupportedGameFeaturesList");
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _hdmiIn.GetSupportedGameFeaturesList(gameFeatureList);
+        if (_hdmiIn.GetSupportedGameFeaturesList(gameFeatureList) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetSupportedGameFeaturesList: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
         
         LOGINFO("GetSupportedGameFeaturesList: SUCCESS - platform call completed");
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::GetHDMIInAVLatency(uint32_t &videoLatency, uint32_t &audioLatency) {
 
         LOGINFO("GetHDMIInAVLatency");
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _hdmiIn.GetHDMIInAVLatency(videoLatency, audioLatency);
+        if (_hdmiIn.GetHDMIInAVLatency(videoLatency, audioLatency) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetHDMIInAVLatency: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
         LOGINFO("GetHDMIInAVLatency: SUCCESS - videoLatency=%u, audioLatency=%u", videoLatency, audioLatency);
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::GetHDMIInAllmStatus(const HDMIInPort port, bool &allmStatus) {
 
         LOGINFO("GetHDMIInAllmStatus: port=%d", port);
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _hdmiIn.GetHDMIInAllmStatus(port, allmStatus);
+        if (_hdmiIn.GetHDMIInAllmStatus(port, allmStatus) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetHDMIInAllmStatus: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
         
         LOGINFO("GetHDMIInAllmStatus: SUCCESS - port=%d, allmStatus=%s", port, allmStatus ? "true" : "false");
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::GetHDMIInEdid2AllmSupport(const HDMIInPort port, bool &allmSupport) {
 
         LOGINFO("GetHDMIInEdid2AllmSupport: port=%d", port);
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _hdmiIn.GetHDMIInEdid2AllmSupport(port, allmSupport);
+        if (_hdmiIn.GetHDMIInEdid2AllmSupport(port, allmSupport) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetHDMIInEdid2AllmSupport: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
         
         LOGINFO("GetHDMIInEdid2AllmSupport: SUCCESS - port=%d, allmSupport=%s", port, allmSupport ? "true" : "false");
-        LOGINFO("GetHDMIInEdid2AllmSupport: SUCCESS - port=%d, allmSupport=%s", port, allmSupport ? "true" : "false");
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::SetHDMIInEdid2AllmSupport(const HDMIInPort port, bool allmSupport) {
 
         LOGINFO("SetHDMIInEdid2AllmSupport: port=%d, allmSupport=%s", port, allmSupport ? "true" : "false");
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _hdmiIn.SetHDMIInEdid2AllmSupport(port, allmSupport);
+        if (_hdmiIn.SetHDMIInEdid2AllmSupport(port, allmSupport) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("SetHDMIInEdid2AllmSupport: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
         
         LOGINFO("SetHDMIInEdid2AllmSupport: SUCCESS - platform call completed");
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::GetEdidBytes(const HDMIInPort port, const uint16_t edidBytesLength, uint8_t edidBytes[]) {
 
         LOGINFO("GetEdidBytes: port=%d, edidBytesLength=%u", port, edidBytesLength);
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _hdmiIn.GetEdidBytes(port, edidBytesLength, edidBytes);
+        if (_hdmiIn.GetEdidBytes(port, edidBytesLength, edidBytes) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetEdidBytes: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
         LOGINFO("GetEdidBytes: SUCCESS - port=%d, edidBytes[0]=0x%X", port, edidBytes[0]);
 
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::GetHDMISPDInformation(const HDMIInPort port, const uint16_t spdBytesLength, uint8_t spdBytes[]) {
 
         LOGINFO("GetHDMISPDInformation: port=%d, spdBytesLength=%u", port, spdBytesLength);
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         if (spdBytes && spdBytesLength > 0) {
             spdBytes[0] = 0x00; // Example value
         }
         _apiLock.Lock();
-        _hdmiIn.GetHDMISPDInformation(port, spdBytesLength, spdBytes);
+        if (_hdmiIn.GetHDMISPDInformation(port, spdBytesLength, spdBytes) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetHDMISPDInformation: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
         
         LOGINFO("GetHDMISPDInformation: SUCCESS - platform call completed");
         LOGINFO("GetHDMISPDInformation: port=%d, spdBytes[0]=0x%X", port, spdBytes[0]);
 
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::GetHDMIEdidVersion(const HDMIInPort port, HDMIInEdidVersion &edidVersion) {
 
         LOGINFO("GetHDMIEdidVersion: port=%d", port);
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _hdmiIn.GetHDMIEdidVersion(port, edidVersion);
+        if (_hdmiIn.GetHDMIEdidVersion(port, edidVersion) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetHDMIEdidVersion: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
         LOGINFO("GetHDMIEdidVersion: SUCCESS - port=%d, edidVersion=%d", port, edidVersion);
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::SetHDMIEdidVersion(const HDMIInPort port, const HDMIInEdidVersion edidVersion) {
 
         LOGINFO("SetHDMIEdidVersion: port=%d, edidVersion=%d", port, edidVersion);
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _hdmiIn.SetHDMIEdidVersion(port, edidVersion);
+        if (_hdmiIn.SetHDMIEdidVersion(port, edidVersion) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("SetHDMIEdidVersion: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
         
         LOGINFO("SetHDMIEdidVersion: SUCCESS - platform call completed");
 
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::GetHDMIVideoMode(HDMIVideoPortResolution &videoPortResolution) {
 
         LOGINFO("GetHDMIVideoMode");
+        Core::hresult errorCode = Core::ERROR_GENERAL;
 
         _apiLock.Lock();
-        _hdmiIn.GetHDMIVideoMode(videoPortResolution);
+        if (_hdmiIn.GetHDMIVideoMode(videoPortResolution) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetHDMIVideoMode: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
         LOGINFO("GetHDMIVideoMode: SUCCESS - resolution=%s", videoPortResolution.name.c_str());
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::GetHDMIVersion(const HDMIInPort port, HDMIInCapabilityVersion &capabilityVersion) {
 
         LOGINFO("GetHDMIVersion: port=%d", port);
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _hdmiIn.GetHDMIVersion(port, capabilityVersion);
+        if (_hdmiIn.GetHDMIVersion(port, capabilityVersion) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetHDMIVersion: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
 
         LOGINFO("GetHDMIVersion: SUCCESS - port=%d, capabilityVersion=%d", port, capabilityVersion);
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::GetVRRSupport(const HDMIInPort port, bool &vrrSupport) {
 
         LOGINFO("GetVRRSupport: port=%d", port);
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _hdmiIn.GetVRRSupport(port, vrrSupport);
+        if (_hdmiIn.GetVRRSupport(port, vrrSupport) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetVRRSupport: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
         LOGINFO("GetVRRSupport: SUCCESS - port=%d, vrrSupport=%s", port, vrrSupport ? "true" : "false");
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::SetVRRSupport(const HDMIInPort port, const bool vrrSupport) {
 
         LOGINFO("SetVRRSupport: port=%d, vrrSupport=%s", port, vrrSupport ? "true" : "false");
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _hdmiIn.SetVRRSupport(port, vrrSupport);
+        if (_hdmiIn.SetVRRSupport(port, vrrSupport) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("SetVRRSupport: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
         
         LOGINFO("SetVRRSupport: SUCCESS - platform call completed");
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
     Core::hresult DeviceSettingsHdmiInImp::GetVRRStatus(const HDMIInPort port, HDMIInVRRStatus &vrrStatus) {
 
         LOGINFO("GetVRRStatus: port=%d", port);
+        Core::hresult errorCode = Core::ERROR_GENERAL;
         _apiLock.Lock();
-        _hdmiIn.GetVRRStatus(port, vrrStatus);
+        if (_hdmiIn.GetVRRStatus(port, vrrStatus) == dsERR_NONE) {
+            errorCode = Core::ERROR_NONE;
+        } else {
+            errorCode = Core::ERROR_GENERAL;
+        }
         _apiLock.Unlock();
+
+        if (errorCode != Core::ERROR_NONE) {
+            LOGWARN("GetVRRStatus: failed with errorCode=%u", errorCode);
+            return errorCode;
+        }
+
         LOGINFO("GetVRRStatus: SUCCESS - port=%d, vrrStatus.vrrType=%d", port, vrrStatus.vrrType);
 
-        return Core::ERROR_NONE;
+        return errorCode;
     }
 
 } // namespace Plugin
