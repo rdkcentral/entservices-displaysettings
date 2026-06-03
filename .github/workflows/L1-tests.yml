@@ -123,14 +123,14 @@ jobs:
         with:
           repository: rdkcentral/entservices-testframework
           path: entservices-testframework
-          ref: feature/helpers_v1
+          ref: 1.0.12
 
       - name: Checkout entservices-displaysettings
         if: ${{ inputs.caller_source == 'local' }}
         uses: actions/checkout@v3
         with:
           path: entservices-displaysettings
-          ref: feature/RDKEMW-18278
+          ref: develop
 
       - name: Checkout entservices-displaysettings-testframework
         if: ${{ inputs.caller_source == 'testframework' }}
@@ -332,7 +332,7 @@ jobs:
         with:
           repository: rdkcentral/entservices-helpers
           path: entservices-helpers
-          ref: feature/RDKEMW-16743
+          ref: develop
 
       - name: Build entservices-helpers
         run: >
