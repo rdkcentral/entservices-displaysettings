@@ -44,6 +44,7 @@
 #include <cstring>
 #include <vector>
 #include <sstream>
+#include <unistd.h>
 
 using namespace std;
 
@@ -202,6 +203,57 @@ namespace {
     LOGINFO("PopulateVideoPortConfig: Loaded config from HAL (videoPortTypes=%zu videoPorts=%zu resolutions=%zu)",
         videoPortTypes.size(), videoPorts.size(), resolutions.size());
     }
+
+    static void dumpConfig(const std::vector<VideoPortTypeConfig>& videoPortTypes,
+                           const std::vector<VideoPortPortConfig>& videoPorts,
+                           const std::vector<VideoPortResolution>& resolutions)
+    {
+        if (-1 == access("/opt/dsMgrDumpDeviceConfigs", F_OK)) {
+            LOGINFO("dumpConfig(VideoPort): Dumping of Device configs is disabled");
+            return;
+        }
+
+        LOGINFO("\n=============== Dump DeviceSettings VideoPort Cached Config ===============");
+        LOGINFO("VideoPortTypes count=%zu", videoPortTypes.size());
+        for (size_t i = 0; i < videoPortTypes.size(); ++i) {
+            const VideoPortTypeConfig& cfg = videoPortTypes[i];
+            LOGINFO("videoPortTypes[%zu]: typeId=%d name=%s dtcpSupported=%s hdcpSupported=%s restrictedResolution=%s supportedResolutionNames=%s",
+                i,
+                static_cast<int>(cfg.typeId),
+                cfg.name.c_str(),
+                cfg.dtcpSupported ? "true" : "false",
+                cfg.hdcpSupported ? "true" : "false",
+                cfg.restrictedResollution ? "true" : "false",
+                cfg.supportedResolutionNames.c_str());
+        }
+
+        LOGINFO("VideoPorts count=%zu", videoPorts.size());
+        for (size_t i = 0; i < videoPorts.size(); ++i) {
+            const VideoPortPortConfig& cfg = videoPorts[i];
+            LOGINFO("videoPorts[%zu]: videoPortType=%d videoPortIndex=%d connectedAudioPortType=%d connectedAudioPortIndex=%d defaultResolution=%s",
+                i,
+                static_cast<int>(cfg.videoPortType),
+                cfg.videoPortIndex,
+                cfg.connectedAudioPortType,
+                cfg.connectedAudioPortIndex,
+                cfg.defaultResolution.c_str());
+        }
+
+        LOGINFO("Resolutions count=%zu", resolutions.size());
+        for (size_t i = 0; i < resolutions.size(); ++i) {
+            const VideoPortResolution& cfg = resolutions[i];
+            LOGINFO("resolutions[%zu]: name=%s pixelResolution=%d aspectRatio=%d stereoScopicMode=%d frameRate=%d interlaced=%s",
+                i,
+                cfg.name.c_str(),
+                static_cast<int>(cfg.pixelResolution),
+                static_cast<int>(cfg.aspectRatio),
+                static_cast<int>(cfg.stereoScopicMode),
+                static_cast<int>(cfg.frameRate),
+                cfg.interlaced ? "true" : "false");
+        }
+
+        LOGINFO("=============== Dump DeviceSettings VideoPort Cached Config done ===============\n");
+    }
 }
 
 namespace WPEFramework {
@@ -215,11 +267,23 @@ namespace Plugin {
         _callbackLock(),
         _videoPort(VideoPort::Create(*this))
     {
+        InitializeVideoPortConfigCache();
         LOGINFO("DeviceSettingsVideoPortImpl Constructor - Instance Address: %p", this);
     }
 
     DeviceSettingsVideoPortImpl::~DeviceSettingsVideoPortImpl() {
         LOGINFO("DeviceSettingsVideoPortImpl Destructor - Instance Address: %p", this);
+    }
+
+    void DeviceSettingsVideoPortImpl::InitializeVideoPortConfigCache()
+    {
+        _apiLock.Lock();
+        PopulateVideoPortConfig(_cachedVideoPortTypes, _cachedVideoPorts, _cachedResolutions);
+        dumpConfig(_cachedVideoPortTypes, _cachedVideoPorts, _cachedResolutions);
+        _apiLock.Unlock();
+
+        LOGINFO("InitializeVideoPortConfigCache: videoPortTypes=%zu videoPorts=%zu resolutions=%zu",
+            _cachedVideoPortTypes.size(), _cachedVideoPorts.size(), _cachedResolutions.size());
     }
 
     template<typename Func, typename... Args>
@@ -345,7 +409,13 @@ namespace Plugin {
         std::vector<VideoPortPortConfig> portConfigs;
         std::vector<VideoPortResolution> resolutionConfigs;
 
-        PopulateVideoPortConfig(typeConfigs, portConfigs, resolutionConfigs);
+        _apiLock.Lock();
+        typeConfigs = _cachedVideoPortTypes;
+        portConfigs = _cachedVideoPorts;
+        resolutionConfigs = _cachedResolutions;
+        _apiLock.Unlock();
+
+        dumpConfig(typeConfigs, portConfigs, resolutionConfigs);
 
         using VideoPortTypeIterator = RPC::IteratorType<IVideoPortTypeConfigIterator>;
         using VideoPortPortIterator = RPC::IteratorType<IVideoPortPortConfigIterator>;
@@ -355,7 +425,7 @@ namespace Plugin {
         videoPorts = Core::Service<VideoPortPortIterator>::Create<IVideoPortPortConfigIterator>(portConfigs);
         resolutions = Core::Service<ResolutionIterator>::Create<IVideoPortResolutionIterator>(resolutionConfigs);
 
-        LOGINFO("GetVideoPortConfig: videoPortTypes=%zu videoPorts=%zu resolutions=%zu",
+        LOGINFO("GetVideoPortConfig: returning cached config videoPortTypes=%zu videoPorts=%zu resolutions=%zu",
             typeConfigs.size(), portConfigs.size(), resolutionConfigs.size());
         return Core::ERROR_NONE;
     }

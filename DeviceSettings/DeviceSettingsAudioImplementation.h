@@ -26,6 +26,9 @@
 #include <chrono>
 #include <cstdint>
 #include <list>
+#include <vector>
+#include <functional>
+#include <utility>
 
 #include <com/com.h>
 #include <core/core.h>
@@ -256,6 +259,8 @@ namespace Plugin {
         void OnAudioModeEvent(AudioPortType audioPortType, AudioStereoMode audioMode) override;
 
     private:
+        void InitializeAudioConfigCache();
+
         template<typename Func, typename... Args>
         void dispatchAudioEvent(Func notifyFunc, Args&&... args);
 
@@ -267,7 +272,10 @@ namespace Plugin {
 
         Audio _audio;
         std::list<DeviceSettingsAudio::INotification*> _AudioNotifications;
+        mutable Core::CriticalSection _configLock;
         mutable Core::CriticalSection _callbackLock;
+        std::vector<AudioTypeConfigInfo> _cachedAudioTypeConfigs;
+        std::vector<AudioPortConfigInfo> _cachedAudioPortConfigs;
     };
 } // namespace Plugin
 } // namespace WPEFramework

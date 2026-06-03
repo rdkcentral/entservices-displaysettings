@@ -25,6 +25,7 @@
 #include <unordered_map>
 #include <chrono>
 #include <cstdint>
+#include <vector>
 
 #include <com/com.h>
 #include <core/core.h>
@@ -133,11 +134,17 @@ namespace Plugin {
         uint32_t SetPreferredColorDepth(const int32_t handle, const DisplayColorDepth colorDepth, const bool persist);
 
     private:
+        void InitializeVideoPortConfigCache();
+
         std::list<Exchange::IDeviceSettingsVideoPort::INotification*> _VideoPortNotifications;
 
         // Thread-safety locks
         mutable Core::CriticalSection _apiLock;
         mutable Core::CriticalSection _callbackLock;
+
+        std::vector<VideoPortTypeConfig> _cachedVideoPortTypes;
+        std::vector<VideoPortPortConfig> _cachedVideoPorts;
+        std::vector<VideoPortResolution> _cachedResolutions;
 
         VideoPort _videoPort;
     };

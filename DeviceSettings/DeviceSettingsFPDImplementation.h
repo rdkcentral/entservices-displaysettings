@@ -25,6 +25,9 @@
 #include <unordered_map>
 #include <chrono>
 #include <cstdint>
+#include <vector>
+#include <functional>
+#include <utility>
 
 #include <com/com.h>
 #include <core/core.h>
@@ -119,12 +122,19 @@ namespace Plugin {
         Core::hresult GetFrontPanelConfig(IFPDTextDisplayConfigIterator*& textDisplays, IFPDIndicatorConfigIterator*& indicators, IFPDColorConfigIterator*& colors, IFPDColorBindingIterator*& colorBindings);
 
         private:
+            void InitializeFrontPanelConfigCache();
+
         std::list<Exchange::IDeviceSettingsFPD::INotification*> _FPDNotifications;
 
         // lock to guard all apis of DeviceSettings
         mutable Core::CriticalSection _apiLock;
         // lock to guard all notification from DeviceSettings to clients and also their callback register & unregister
         mutable Core::CriticalSection _callbackLock;
+
+            std::vector<FPDColorConfig> _cachedColorConfigs;
+            std::vector<FPDIndicatorConfig> _cachedIndicatorConfigs;
+            std::vector<FPDTextDisplayConfig> _cachedTextDisplayConfigs;
+            std::vector<FPDColorBinding> _cachedColorBindingConfigs;
 
         template <typename T>
         Core::hresult Register(std::list<T*>& list, T* notification);

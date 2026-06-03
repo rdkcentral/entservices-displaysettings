@@ -24,17 +24,9 @@
 #include <vector>
 #include <dlfcn.h>
 #include <cstring>
+#include <unistd.h>
 
 namespace {
-    static const int32_t kMaxBrightness = 100;
-    static const int32_t kMinBrightness = 0;
-    static const int32_t kDefaultLevels = 10;
-    static const int32_t kMaxCycleRate = 2;
-    static const int32_t kMaxHorizontalColumns = 0;
-    static const int32_t kMaxVerticalRows = 0;
-    static const int32_t kMaxHorizontalIterations = 0;
-    static const int32_t kMaxVerticalIterations = 0;
-    static const int32_t kDefaultColorMode = 0;
     static const char* kDefaultSupportedCharacters = "ABCEDFG";
 
     typedef struct _dlSymbolLookup {
@@ -202,65 +194,67 @@ namespace {
             return;
         }
 
-        LOGWARN("PopulateFrontPanelConfig: HAL config not available, using fallback defaults");
+        LOGWARN("PopulateFrontPanelConfig: HAL config not available, returning empty config");
+    }
 
-        {
-            FPDColorConfig cfg;
-            cfg.id = 0; cfg.color = dsFPD_COLOR_BLUE; colors.push_back(cfg);
-            cfg.id = 1; cfg.color = dsFPD_COLOR_GREEN; colors.push_back(cfg);
-            cfg.id = 2; cfg.color = dsFPD_COLOR_RED; colors.push_back(cfg);
-            cfg.id = 3; cfg.color = dsFPD_COLOR_YELLOW; colors.push_back(cfg);
-            cfg.id = 4; cfg.color = dsFPD_COLOR_ORANGE; colors.push_back(cfg);
-            cfg.id = 5; cfg.color = dsFPD_COLOR_WHITE; colors.push_back(cfg);
+    static void dumpConfig(const std::vector<FPDColorConfig>& colors,
+                           const std::vector<FPDIndicatorConfig>& indicators,
+                           const std::vector<FPDTextDisplayConfig>& textDisplays,
+                           const std::vector<FPDColorBinding>& colorBindings)
+    {
+        if (-1 == access("/opt/dsMgrDumpDeviceConfigs", F_OK)) {
+            LOGINFO("dumpConfig(FPD): Dumping of Device configs is disabled");
+            return;
         }
 
-        {
-            FPDIndicatorConfig cfg;
-            cfg.maxBrightness = kMaxBrightness;
-            cfg.maxCycleRate = kMaxCycleRate;
-            cfg.minBrightness = kMinBrightness;
-            cfg.levels = kDefaultLevels;
-            cfg.colorMode = kDefaultColorMode;
-
-            cfg.id = dsFPD_INDICATOR_MESSAGE; indicators.push_back(cfg);
-            cfg.id = dsFPD_INDICATOR_POWER; indicators.push_back(cfg);
-            cfg.id = dsFPD_INDICATOR_RECORD; indicators.push_back(cfg);
-            cfg.id = dsFPD_INDICATOR_REMOTE; indicators.push_back(cfg);
+        LOGINFO("\n=============== Dump DeviceSettings FPD Cached Config ===============");
+        LOGINFO("Colors count=%zu", colors.size());
+        for (size_t i = 0; i < colors.size(); ++i) {
+            LOGINFO("colors[%zu]: id=%d color=%d", i, colors[i].id, colors[i].color);
         }
 
-        for (const auto& indicatorCfg : indicators) {
-            for (const auto& colorCfg : colors) {
-                FPDColorBinding mapEntry;
-                mapEntry.targetType = DeviceSettingsFPD::DS_FPD_COLOR_TARGET_INDICATOR;
-                mapEntry.targetId = indicatorCfg.id;
-                mapEntry.colorId = colorCfg.id;
-                colorBindings.push_back(mapEntry);
-            }
+        LOGINFO("Indicators count=%zu", indicators.size());
+        for (size_t i = 0; i < indicators.size(); ++i) {
+            const FPDIndicatorConfig& cfg = indicators[i];
+            LOGINFO("indicators[%zu]: id=%d maxBrightness=%d maxCycleRate=%d minBrightness=%d levels=%d colorMode=%d",
+                i,
+                cfg.id,
+                cfg.maxBrightness,
+                cfg.maxCycleRate,
+                cfg.minBrightness,
+                cfg.levels,
+                cfg.colorMode);
         }
 
-        {
-            FPDTextDisplayConfig cfg;
-            cfg.id = dsFPD_TEXTDISP_TEXT;
-            cfg.name = "Text";
-            cfg.maxBrightness = kMaxBrightness;
-            cfg.maxCycleRate = kMaxCycleRate;
-            cfg.supportedCharacters = kDefaultSupportedCharacters;
-            cfg.columns = kMaxHorizontalColumns;
-            cfg.rows = kMaxVerticalRows;
-            cfg.maxHorizontalIterations = kMaxHorizontalIterations;
-            cfg.maxVerticalIterations = kMaxVerticalIterations;
-            cfg.levels = kDefaultLevels;
-            cfg.colorMode = kDefaultColorMode;
-            textDisplays.push_back(cfg);
-
-            for (const auto& colorCfg : colors) {
-                FPDColorBinding mapEntry;
-                mapEntry.targetType = DeviceSettingsFPD::DS_FPD_COLOR_TARGET_TEXTDISPLAY;
-                mapEntry.targetId = cfg.id;
-                mapEntry.colorId = colorCfg.id;
-                colorBindings.push_back(mapEntry);
-            }
+        LOGINFO("TextDisplays count=%zu", textDisplays.size());
+        for (size_t i = 0; i < textDisplays.size(); ++i) {
+            const FPDTextDisplayConfig& cfg = textDisplays[i];
+            LOGINFO("textDisplays[%zu]: id=%d name=%s maxBrightness=%d maxCycleRate=%d columns=%d rows=%d maxHIter=%d maxVIter=%d levels=%d colorMode=%d supportedChars=%s",
+                i,
+                cfg.id,
+                cfg.name.c_str(),
+                cfg.maxBrightness,
+                cfg.maxCycleRate,
+                cfg.columns,
+                cfg.rows,
+                cfg.maxHorizontalIterations,
+                cfg.maxVerticalIterations,
+                cfg.levels,
+                cfg.colorMode,
+                cfg.supportedCharacters.c_str());
         }
+
+        LOGINFO("ColorBindings count=%zu", colorBindings.size());
+        for (size_t i = 0; i < colorBindings.size(); ++i) {
+            const FPDColorBinding& cfg = colorBindings[i];
+            LOGINFO("colorBindings[%zu]: targetType=%d targetId=%d colorId=%d",
+                i,
+                static_cast<int>(cfg.targetType),
+                cfg.targetId,
+                cfg.colorId);
+        }
+
+        LOGINFO("=============== Dump DeviceSettings FPD Cached Config done ===============\n");
     }
 }
 
@@ -274,11 +268,23 @@ namespace Plugin {
     DeviceSettingsFPDImpl::DeviceSettingsFPDImpl()
         : _fpd(FPD::Create(*this))
     {
+        InitializeFrontPanelConfigCache();
         LOGINFO("DeviceSettingsFPDImpl Constructor - Instance Address: %p", this);
     }
 
     DeviceSettingsFPDImpl::~DeviceSettingsFPDImpl() {
         LOGINFO("DeviceSettingsFPDImpl Destructor - Instance Address: %p", this);
+    }
+
+    void DeviceSettingsFPDImpl::InitializeFrontPanelConfigCache()
+    {
+        _apiLock.Lock();
+        PopulateFrontPanelConfig(_cachedColorConfigs, _cachedIndicatorConfigs, _cachedTextDisplayConfigs, _cachedColorBindingConfigs);
+        dumpConfig(_cachedColorConfigs, _cachedIndicatorConfigs, _cachedTextDisplayConfigs, _cachedColorBindingConfigs);
+        _apiLock.Unlock();
+
+        LOGINFO("InitializeFrontPanelConfigCache: colors=%zu indicators=%zu textDisplays=%zu colorBindings=%zu",
+            _cachedColorConfigs.size(), _cachedIndicatorConfigs.size(), _cachedTextDisplayConfigs.size(), _cachedColorBindingConfigs.size());
     }
 
 
@@ -624,7 +630,14 @@ namespace Plugin {
         std::vector<FPDTextDisplayConfig> textDisplayConfigs;
         std::vector<FPDColorBinding> colorBindingConfigs;
 
-        PopulateFrontPanelConfig(colorConfigs, indicatorConfigs, textDisplayConfigs, colorBindingConfigs);
+        _apiLock.Lock();
+        colorConfigs = _cachedColorConfigs;
+        indicatorConfigs = _cachedIndicatorConfigs;
+        textDisplayConfigs = _cachedTextDisplayConfigs;
+        colorBindingConfigs = _cachedColorBindingConfigs;
+        _apiLock.Unlock();
+
+        dumpConfig(colorConfigs, indicatorConfigs, textDisplayConfigs, colorBindingConfigs);
 
         using ColorIterator = RPC::IteratorType<IFPDColorConfigIterator>;
         using IndicatorIterator = RPC::IteratorType<IFPDIndicatorConfigIterator>;
@@ -636,7 +649,7 @@ namespace Plugin {
         textDisplays = Core::Service<TextDisplayIterator>::Create<IFPDTextDisplayConfigIterator>(textDisplayConfigs);
         colorBindings = Core::Service<ColorBindingIterator>::Create<IFPDColorBindingIterator>(colorBindingConfigs);
 
-        LOGINFO("GetFrontPanelConfig: colors=%zu indicators=%zu textDisplays=%zu colorBindings=%zu", colorConfigs.size(), indicatorConfigs.size(), textDisplayConfigs.size(), colorBindingConfigs.size());
+        LOGINFO("GetFrontPanelConfig: returning cached config colors=%zu indicators=%zu textDisplays=%zu colorBindings=%zu", colorConfigs.size(), indicatorConfigs.size(), textDisplayConfigs.size(), colorBindingConfigs.size());
         return Core::ERROR_NONE;
     }
 

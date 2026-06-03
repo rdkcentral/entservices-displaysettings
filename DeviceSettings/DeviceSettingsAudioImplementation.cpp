@@ -25,6 +25,7 @@
 #include <cstring>
 #include <vector>
 #include <type_traits>
+#include <unistd.h>
 
 using namespace std;
 
@@ -177,6 +178,41 @@ namespace {
     LOGINFO("PopulateAudioConfig: Loaded config from HAL (audioTypes=%zu audioPorts=%zu)",
         audioTypes.size(), audioPorts.size());
     }
+
+    static void dumpConfig(const std::vector<AudioTypeConfigInfo>& audioTypes,
+                           const std::vector<AudioPortConfigInfo>& audioPorts)
+    {
+        if (-1 == access("/opt/dsMgrDumpDeviceConfigs", F_OK)) {
+            LOGINFO("dumpConfig(Audio): Dumping of Device configs is disabled");
+            return;
+        }
+
+        LOGINFO("\n=============== Dump DeviceSettings Audio Cached Config ===============");
+        LOGINFO("AudioTypes count=%zu", audioTypes.size());
+        for (size_t i = 0; i < audioTypes.size(); ++i) {
+            const AudioTypeConfigInfo& cfg = audioTypes[i];
+            LOGINFO("audioTypes[%zu]: typeId=%d name=%s compressionMask=0x%x encodingMask=0x%x stereoModeMask=0x%x",
+                i,
+                static_cast<int>(cfg.typeId),
+                cfg.name.c_str(),
+                static_cast<unsigned int>(cfg.supportedCompressionMask),
+                static_cast<unsigned int>(cfg.supportedEncodingMask),
+                static_cast<unsigned int>(cfg.supportedStereoModeMask));
+        }
+
+        LOGINFO("AudioPorts count=%zu", audioPorts.size());
+        for (size_t i = 0; i < audioPorts.size(); ++i) {
+            const AudioPortConfigInfo& cfg = audioPorts[i];
+            LOGINFO("audioPorts[%zu]: portType=%d portIndex=%d connectedVideoPortType=%d connectedVideoPortIndex=%d",
+                i,
+                static_cast<int>(cfg.audioPortType),
+                cfg.audioPortIndex,
+                cfg.connectedVideoPortType,
+                cfg.connectedVideoPortIndex);
+        }
+
+        LOGINFO("=============== Dump DeviceSettings Audio Cached Config done ===============\n");
+    }
 }
 
 namespace WPEFramework {
@@ -184,12 +220,26 @@ namespace Plugin {
 
     DeviceSettingsAudioImpl::DeviceSettingsAudioImpl()
         : _audio(Audio::Create(*this))
+        , _configLock()
+        , _callbackLock()
     {
+        InitializeAudioConfigCache();
         LOGINFO("DeviceSettingsAudioImpl Constructor - Instance Address: %p", this);
     }
 
     DeviceSettingsAudioImpl::~DeviceSettingsAudioImpl() {
         LOGINFO("DeviceSettingsAudioImpl Destructor - Instance Address: %p", this);
+    }
+
+    void DeviceSettingsAudioImpl::InitializeAudioConfigCache()
+    {
+        _configLock.Lock();
+        PopulateAudioConfig(_cachedAudioTypeConfigs, _cachedAudioPortConfigs);
+        dumpConfig(_cachedAudioTypeConfigs, _cachedAudioPortConfigs);
+        _configLock.Unlock();
+
+        LOGINFO("InitializeAudioConfigCache: audioTypes=%zu audioPorts=%zu",
+            _cachedAudioTypeConfigs.size(), _cachedAudioPortConfigs.size());
     }
 
     template<typename Func, typename... Args>
@@ -340,7 +390,12 @@ namespace Plugin {
         std::vector<AudioTypeConfigInfo> typeConfigs;
         std::vector<AudioPortConfigInfo> portConfigs;
 
-        PopulateAudioConfig(typeConfigs, portConfigs);
+        _configLock.Lock();
+        typeConfigs = _cachedAudioTypeConfigs;
+        portConfigs = _cachedAudioPortConfigs;
+        _configLock.Unlock();
+
+        dumpConfig(typeConfigs, portConfigs);
 
         using AudioTypeIterator = RPC::IteratorType<IAudioTypeConfigIterator>;
         using AudioPortIterator = RPC::IteratorType<IAudioPortConfigIterator>;
@@ -348,7 +403,7 @@ namespace Plugin {
         audioTypes = Core::Service<AudioTypeIterator>::Create<IAudioTypeConfigIterator>(typeConfigs);
         audioPorts = Core::Service<AudioPortIterator>::Create<IAudioPortConfigIterator>(portConfigs);
 
-        LOGINFO("GetAudioConfig: audioTypes=%zu audioPorts=%zu",
+        LOGINFO("GetAudioConfig: returning cached config audioTypes=%zu audioPorts=%zu",
             typeConfigs.size(), portConfigs.size());
         return Core::ERROR_NONE;
     }
