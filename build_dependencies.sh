@@ -129,7 +129,8 @@ mkdir -p rdk/iarmbus
 touch rdk/iarmbus/libIARM.h
 touch rdk/iarmbus/libIBus.h
 touch iarm.h
-cd $GITHUB_WORKSPACE#############################
+cd $GITHUB_WORKSPACE
+#########################################
 # Build entservices-helpers
 echo "======================================================================================"
 echo "building entservices-helpers"
