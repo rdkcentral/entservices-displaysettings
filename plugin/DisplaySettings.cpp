@@ -46,6 +46,7 @@
 #include "UtilsJsonRpc.h"
 #include "UtilsString.h"
 #include "UtilsisValidInt.h"
+#include "UtilsSearchRDKProfile.h"
 
 using namespace std;
 
@@ -3659,7 +3660,7 @@ namespace WPEFramework {
         uint32_t DisplaySettings::setAudioDucking(const JsonObject& parameters, JsonObject& response)
         {
             LOGINFOMETHOD();
-            returnIfParamNotFound(parameters, "mode"); // "mute" | "attenuate" | "raw"
+            returnIfStringParamNotFound(parameters, "mode"); // "mute" | "attenuate" | "raw"
 
             std::string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
             std::string mode = parameters["mode"].String();
@@ -3670,7 +3671,7 @@ namespace WPEFramework {
 
             if (mode == "mute")
             {
-                returnIfParamNotFound(parameters, "mute");
+                returnIfBooleanParamNotFound(parameters, "mute");
                 bool mute = parameters["mute"].Boolean();
 
                 action = mute ? dsAUDIO_DUCKINGACTION_START : dsAUDIO_DUCKINGACTION_STOP;
@@ -3679,9 +3680,9 @@ namespace WPEFramework {
             }
             else if (mode == "attenuate")
             {
-                returnIfParamNotFound(parameters, "enable");
-                returnIfParamNotFound(parameters, "relative");
-                returnIfParamNotFound(parameters, "volume"); // 0.0..1.0
+                returnIfBooleanParamNotFound(parameters, "enable");
+                returnIfBooleanParamNotFound(parameters, "relative");
+                returnIfNumberParamNotFound(parameters, "volume"); // 0.0..1.0
 
                 bool enable = parameters["enable"].Boolean();
                 bool relative = parameters["relative"].Boolean();
@@ -3699,13 +3700,28 @@ namespace WPEFramework {
             }
             else if (mode == "raw")
             {
-                returnIfParamNotFound(parameters, "action");      // "start" | "stop"
-                returnIfParamNotFound(parameters, "duckingType"); // "absolute" | "relative"
-                returnIfParamNotFound(parameters, "level");       // 0..100
+                returnIfStringParamNotFound(parameters, "action");      // "start" | "stop"
+                returnIfStringParamNotFound(parameters, "duckingType"); // "absolute" | "relative"
+                returnIfNumberParamNotFound(parameters, "level");       // 0..100
 
                 std::string actionStr = parameters["action"].String();
                 std::string typeStr = parameters["duckingType"].String();
-                int reqLevel = static_cast<int>(std::round(parameters["level"].Number()));  // ← explicit rounding
+                
+                std::string levelStr = parameters["level"].String();
+                LOGINFO("setAudioDucking raw: level Content-type=%d String='%s' Number=%s",
+                        (int)parameters["level"].Content(),
+                        levelStr.c_str(),
+                        std::to_string(parameters["level"].Number()).c_str());
+
+                // String() preserves the original token text in this Thunder version.
+                // Validate it is actually an unsigned integer before using Number().
+                if (!Utils::isValidUnsignedInt((char*)levelStr.c_str()))
+                {
+                    LOGERR("Invalid level value '%s': must be a non-negative integer 0..100", levelStr.c_str());
+                    returnResponse(false);
+                }
+
+                int reqLevel = static_cast<int>(std::round(parameters["level"].Number()));
 
                 if (reqLevel < 0 || reqLevel > 100)
                 {
@@ -3794,7 +3810,7 @@ namespace WPEFramework {
         uint32_t DisplaySettings::getEnableVideoPort(const JsonObject& parameters, JsonObject& response)
         {
             LOGINFOMETHOD();
-            returnIfParamNotFound(parameters, "videoDisplay");
+            returnIfStringParamNotFound(parameters, "videoDisplay");
 
             string videoDisplay = parameters["videoDisplay"].String();
             bool success = false;
@@ -3890,6 +3906,13 @@ namespace WPEFramework {
         uint32_t DisplaySettings::getVideoCodecInfo(const JsonObject& parameters, JsonObject& response)
         {
             LOGINFOMETHOD();
+
+            if (searchRdkProfile() == TV)
+            {
+                LOGWARN("getVideoCodecInfo: Feature Not Supported on TV/Panel profile");
+                response["message"] = "Feature Not Supported";
+                returnResponse(false);
+            }
 
             string codec = "MPEGH-Part2"; // default keeps TR-069 behavior
             if (parameters.HasLabel("codec")) {
@@ -4038,7 +4061,7 @@ namespace WPEFramework {
         {
             LOGINFOMETHOD();
 
-            returnIfParamNotFound(parameters, "encoding");
+            returnIfStringParamNotFound(parameters, "encoding");
             string encoding = parameters["encoding"].String();
 
             bool success = false;
@@ -4084,6 +4107,13 @@ namespace WPEFramework {
         uint32_t DisplaySettings::getDisplayAspectRatio(const JsonObject& parameters, JsonObject& response)
         {
             LOGINFOMETHOD();
+
+            if (searchRdkProfile() == TV)
+            {
+                LOGWARN("getDisplayAspectRatio: Feature Not Supported on TV/Panel profile");
+                response["message"] = "Feature Not Supported";
+                returnResponse(false);
+            }
 
             bool success = false;
             std::string defaultVideoPort = device::Host::getInstance().getDefaultVideoPortName();
