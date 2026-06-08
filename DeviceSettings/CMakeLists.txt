@@ -53,6 +53,7 @@ install(TARGETS ${MODULE_NAME}
 add_library(${PLUGIN_IMPLEMENTATION} SHARED
     Module.cpp
     DeviceSettingsImplementation.cpp
+    DeviceSettingsHALConfig.cpp
     DeviceSettingsFPDImplementation.cpp
     DeviceSettingsVideoPortImplementation.cpp
     DeviceSettingsVideoDeviceImplementation.cpp

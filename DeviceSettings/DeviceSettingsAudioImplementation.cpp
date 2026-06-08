@@ -21,199 +21,11 @@
 
 #include "UtilsLogging.h"
 #include <syscall.h>
-#include <dlfcn.h>
-#include <cstring>
 #include <vector>
-#include <type_traits>
-#include <unistd.h>
 
 using namespace std;
 
-namespace {
-    typedef struct _dlSymbolLookup {
-        const char* name;
-        void** dataptr;
-    } dlSymbolLookup;
-
-    typedef struct _audioConfigs {
-        const dsAudioTypeConfig_t* pKConfigs;
-        const dsAudioPortConfig_t* pKPorts;
-        int* pKConfigSize;
-        int* pKPortSize;
-    } audioConfigs_t;
-
-    static bool LoadDLSymbols(void* pDLHandle, const dlSymbolLookup* symbols, const int numberOfSymbols)
-    {
-        int currentSymbols = 0;
-
-        if ((pDLHandle == NULL) || (symbols == NULL)) {
-            LOGERR("LoadDLSymbols(Audio): Invalid handle or symbols");
-            return false;
-        }
-
-        for (int i = 0; i < numberOfSymbols; i++) {
-            if ((symbols[i].dataptr == NULL) || (symbols[i].name == NULL)) {
-                LOGERR("LoadDLSymbols(Audio): Invalid symbol entry at index %d", i);
-                continue;
-            }
-
-            *(symbols[i].dataptr) = dlsym(pDLHandle, symbols[i].name);
-            if (*(symbols[i].dataptr) != NULL) {
-                currentSymbols++;
-            } else {
-                LOGWARN("LoadDLSymbols(Audio): [%s] not found", symbols[i].name);
-            }
-        }
-
-        return (numberOfSymbols > 0) ? (currentSymbols == numberOfSymbols) : false;
-    }
-
-    static bool LoadAudioConfigFromHAL(audioConfigs_t& config)
-    {
-        void* pDLHandle = NULL;
-        bool isSymbolsLoaded = false;
-
-        memset(&config, 0, sizeof(config));
-
-        dlerror();
-        pDLHandle = dlopen(RDK_DSHAL_NAME, RTLD_LAZY);
-        if (pDLHandle == NULL) {
-            const char* dlErr = dlerror();
-            LOGWARN("LoadAudioConfigFromHAL: dlopen failed for %s: %s", RDK_DSHAL_NAME, (dlErr ? dlErr : "unknown"));
-            return false;
-        }
-
-        dlSymbolLookup audioConfigSymbols[] = {
-            {"kAudioConfigs", (void**)&config.pKConfigs},
-            {"kAudioPorts", (void**)&config.pKPorts},
-            {"kAudioConfigs_size", (void**)&config.pKConfigSize},
-            {"kAudioPorts_size", (void**)&config.pKPortSize}
-        };
-
-        isSymbolsLoaded = LoadDLSymbols(pDLHandle, audioConfigSymbols, sizeof(audioConfigSymbols) / sizeof(dlSymbolLookup));
-        dlclose(pDLHandle);
-
-        if (!isSymbolsLoaded) {
-            LOGWARN("LoadAudioConfigFromHAL: Failed to load all audio symbols from HAL");
-            return false;
-        }
-
-        if ((config.pKConfigs == NULL) || (config.pKPorts == NULL) ||
-            (config.pKConfigSize == NULL) || (config.pKPortSize == NULL)) {
-            LOGWARN("LoadAudioConfigFromHAL: HAL symbols loaded but one or more pointers are null");
-            return false;
-        }
-
-        return true;
-    }
-
-    template <typename EnumType>
-    static uint32_t ToEnumMask(const EnumType* values, const size_t count)
-    {
-        static_assert(std::is_enum<EnumType>::value, "EnumType must be an enum");
-
-        uint32_t mask = 0;
-        for (size_t index = 0; index < count; ++index) {
-            const uint32_t bit = static_cast<uint32_t>(values[index]);
-            if (bit < (sizeof(mask) * 8)) {
-                mask |= (1u << bit);
-            }
-        }
-
-        return mask;
-    }
-
-    static void PopulateAudioConfig(std::vector<AudioTypeConfigInfo>& audioTypes,
-                                    std::vector<AudioPortConfigInfo>& audioPorts)
-    {
-        audioConfigs_t halConfig;
-        memset(&halConfig, 0, sizeof(halConfig));
-        const bool loadedFromHAL = LoadAudioConfigFromHAL(halConfig);
-
-        audioTypes.clear();
-        audioPorts.clear();
-
-        if (!loadedFromHAL) {
-            LOGWARN("PopulateAudioConfig: HAL config not available, returning empty config");
-            return;
-        }
-
-        const int typeCount = *(halConfig.pKConfigSize);
-        const int portCount = *(halConfig.pKPortSize);
-
-        for (int i = 0; i < typeCount; i++) {
-            const dsAudioTypeConfig_t& cfg = halConfig.pKConfigs[i];
-
-            AudioTypeConfigInfo typeCfg;
-            typeCfg.typeId = cfg.typeId;
-            typeCfg.name = (cfg.name ? cfg.name : "");
-            typeCfg.supportedCompressionMask = (cfg.compressions != NULL)
-                ? ToEnumMask(cfg.compressions, cfg.numSupportedCompressions)
-                : 0;
-            typeCfg.supportedEncodingMask = (cfg.encodings != NULL)
-                ? ToEnumMask(cfg.encodings, cfg.numSupportedEncodings)
-                : 0;
-            typeCfg.supportedStereoModeMask = (cfg.stereoModes != NULL)
-                ? ToEnumMask(cfg.stereoModes, cfg.numSupportedStereoModes)
-                : 0;
-            audioTypes.push_back(typeCfg);
-        }
-
-        for (int i = 0; i < portCount; i++) {
-            const dsAudioPortConfig_t& cfg = halConfig.pKPorts[i];
-
-            AudioPortConfigInfo portCfg;
-            portCfg.audioPortType = static_cast<AudioPortType>(cfg.id.type);
-            portCfg.audioPortIndex = cfg.id.index;
-            if (cfg.connectedVOPs != NULL) {
-                portCfg.connectedVideoPortType = static_cast<int32_t>(cfg.connectedVOPs->type);
-                portCfg.connectedVideoPortIndex = cfg.connectedVOPs->index;
-            } else {
-                portCfg.connectedVideoPortType = -1;
-                portCfg.connectedVideoPortIndex = -1;
-            }
-            audioPorts.push_back(portCfg);
-        }
-
-    LOGINFO("PopulateAudioConfig: Loaded config from HAL (audioTypes=%zu audioPorts=%zu)",
-        audioTypes.size(), audioPorts.size());
-    }
-
-    static void dumpConfig(const std::vector<AudioTypeConfigInfo>& audioTypes,
-                           const std::vector<AudioPortConfigInfo>& audioPorts)
-    {
-        if (-1 == access("/opt/dsMgrDumpDeviceConfigs", F_OK)) {
-            LOGINFO("dumpConfig(Audio): Dumping of Device configs is disabled");
-            return;
-        }
-
-        LOGINFO("\n=============== Dump DeviceSettings Audio Cached Config ===============");
-        LOGINFO("AudioTypes count=%zu", audioTypes.size());
-        for (size_t i = 0; i < audioTypes.size(); ++i) {
-            const AudioTypeConfigInfo& cfg = audioTypes[i];
-            LOGINFO("audioTypes[%zu]: typeId=%d name=%s compressionMask=0x%x encodingMask=0x%x stereoModeMask=0x%x",
-                i,
-                static_cast<int>(cfg.typeId),
-                cfg.name.c_str(),
-                static_cast<unsigned int>(cfg.supportedCompressionMask),
-                static_cast<unsigned int>(cfg.supportedEncodingMask),
-                static_cast<unsigned int>(cfg.supportedStereoModeMask));
-        }
-
-        LOGINFO("AudioPorts count=%zu", audioPorts.size());
-        for (size_t i = 0; i < audioPorts.size(); ++i) {
-            const AudioPortConfigInfo& cfg = audioPorts[i];
-            LOGINFO("audioPorts[%zu]: portType=%d portIndex=%d connectedVideoPortType=%d connectedVideoPortIndex=%d",
-                i,
-                static_cast<int>(cfg.audioPortType),
-                cfg.audioPortIndex,
-                cfg.connectedVideoPortType,
-                cfg.connectedVideoPortIndex);
-        }
-
-        LOGINFO("=============== Dump DeviceSettings Audio Cached Config done ===============\n");
-    }
-}
+#include "DeviceSettingsHALConfig.h"
 
 namespace WPEFramework {
 namespace Plugin {
@@ -234,8 +46,8 @@ namespace Plugin {
     void DeviceSettingsAudioImpl::InitializeAudioConfigCache()
     {
         _configLock.Lock();
-        PopulateAudioConfig(_cachedAudioTypeConfigs, _cachedAudioPortConfigs);
-        dumpConfig(_cachedAudioTypeConfigs, _cachedAudioPortConfigs);
+        DeviceSettingsHAL::PopulateAudioConfig(_cachedAudioTypeConfigs, _cachedAudioPortConfigs);
+        DeviceSettingsHAL::DumpAudioConfig(_cachedAudioTypeConfigs, _cachedAudioPortConfigs);
         _configLock.Unlock();
 
         LOGINFO("InitializeAudioConfigCache: audioTypes=%zu audioPorts=%zu",
@@ -395,7 +207,7 @@ namespace Plugin {
         portConfigs = _cachedAudioPortConfigs;
         _configLock.Unlock();
 
-        dumpConfig(typeConfigs, portConfigs);
+        DeviceSettingsHAL::DumpAudioConfig(typeConfigs, portConfigs);
 
         using AudioTypeIterator = RPC::IteratorType<IAudioTypeConfigIterator>;
         using AudioPortIterator = RPC::IteratorType<IAudioPortConfigIterator>;
