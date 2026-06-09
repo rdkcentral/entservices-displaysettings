@@ -46,7 +46,6 @@
 #include "UtilsJsonRpc.h"
 #include "UtilsString.h"
 #include "UtilsisValidInt.h"
-#include "UtilsSearchRDKProfile.h"
 
 using namespace std;
 
@@ -3907,13 +3906,6 @@ namespace WPEFramework {
         {
             LOGINFOMETHOD();
 
-            if (searchRdkProfile() == TV)
-            {
-                LOGWARN("getVideoCodecInfo: Feature Not Supported on TV/Panel profile");
-                response["message"] = "Feature Not Supported";
-                returnResponse(false);
-            }
-
             string codec = "MPEGH-Part2"; // default keeps TR-069 behavior
             if (parameters.HasLabel("codec")) {
                 codec = parameters["codec"].String();
@@ -4107,13 +4099,6 @@ namespace WPEFramework {
         uint32_t DisplaySettings::getDisplayAspectRatio(const JsonObject& parameters, JsonObject& response)
         {
             LOGINFOMETHOD();
-
-            if (searchRdkProfile() == TV)
-            {
-                LOGWARN("getDisplayAspectRatio: Feature Not Supported on TV/Panel profile");
-                response["message"] = "Feature Not Supported";
-                returnResponse(false);
-            }
 
             bool success = false;
             std::string defaultVideoPort = device::Host::getInstance().getDefaultVideoPortName();
