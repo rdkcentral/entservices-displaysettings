@@ -46,6 +46,9 @@
 #include "UtilsJsonRpc.h"
 #include "UtilsString.h"
 #include "UtilsisValidInt.h"
+#include <cerrno>
+#include <climits>
+#include <cstdlib>
 
 using namespace std;
 
@@ -209,6 +212,61 @@ namespace WPEFramework {
                     interface->Release();
                 }
                 return result;
+            }
+
+            bool TryParseIntInRange(const string& value, const int minValue, const int maxValue, int& parsedValue)
+            {
+                try {
+                    if (value.empty()) {
+                        return false;
+                    }
+
+                    char* endPtr = nullptr;
+                    errno = 0;
+                    const long longValue = strtol(value.c_str(), &endPtr, 10);
+                    if ((errno == ERANGE) || (endPtr == value.c_str()) || (*endPtr != '\0')) {
+                        return false;
+                    }
+                    if ((longValue < minValue) || (longValue > maxValue)) {
+                        return false;
+                    }
+
+                    parsedValue = static_cast<int>(longValue);
+                    return true;
+                } catch (const std::exception& err) {
+                    LOGERR("Exception in TryParseIntInRange: %s", err.what());
+                    return false;
+                } catch (...) {
+                    LOGERR("Unknown exception in TryParseIntInRange");
+                    return false;
+                }
+            }
+
+            bool TryGetBoolParam(const JsonObject& parameters, const char* label, bool& value)
+            {
+                try {
+                    if (!parameters.HasLabel(label)) {
+                        return false;
+                    }
+
+                    const string rawValue = parameters[label].String();
+                    if ((rawValue == "true") || (rawValue == "TRUE") || (rawValue == "True") || (rawValue == "1")) {
+                        value = true;
+                        return true;
+                    }
+                    if ((rawValue == "false") || (rawValue == "FALSE") || (rawValue == "False") || (rawValue == "0")) {
+                        value = false;
+                        return true;
+                    }
+
+                    return false;
+                } catch (const std::exception& err) {
+                    LOGERR("Exception in TryGetBoolParam for label '%s': %s", label, err.what());
+                    return false;
+                } catch (...) {
+                    LOGERR("Unknown exception in TryGetBoolParam for label '%s'", label);
+                    return false;
+                }
             }
         }
 
@@ -2311,23 +2369,16 @@ namespace WPEFramework {
                 returnIfParamNotFound(parameters, "level");
                 string sVolumeLeveller = parameters["level"].String();
                 dsVolumeLeveller_t VolumeLeveller;
-                bool isIntiger = Utils::isValidUnsignedInt ((char*)sVolumeLeveller.c_str());
-                if (false == isIntiger) {
-                    LOGWARN("level should be an unsigned integer");
+                if (!TryParseIntInRange(sVolumeLeveller, 0, 10, VolumeLeveller.level)) {
+                    LOGWARN("level invalid: '%s' (expected range [0, 10])", sVolumeLeveller.c_str());
                     returnResponse(false);
                 }
 
-                try {
-                    VolumeLeveller.level = stoi(sVolumeLeveller);
-                    if(VolumeLeveller.level == 0) {
-                        VolumeLeveller.mode = 0; //Off
-                    }
-                    else {
-                        VolumeLeveller.mode = 1; //On
-                    }
-                }catch (const device::Exception& err) {
-                        LOG_DEVICE_EXCEPTION1(sVolumeLeveller);
-                        returnResponse(false);
+                if(VolumeLeveller.level == 0) {
+                    VolumeLeveller.mode = 0; //Off
+                }
+                else {
+                    VolumeLeveller.mode = 1; //On
                 }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
@@ -2348,36 +2399,36 @@ namespace WPEFramework {
         {
                 LOGINFOMETHOD();
                 returnIfParamNotFound(parameters, "mode");
-		string sMode = parameters["mode"].String();
+            returnIfParamNotFound(parameters, "level");
+    		string sMode = parameters["mode"].String();
                 string sLevel = parameters["level"].String();
                 dsVolumeLeveller_t volumeLeveller;
-                if ((Utils::isValidUnsignedInt ((char*)sMode.c_str()) == false) || (Utils::isValidUnsignedInt ((char*)sMode.c_str()) == false)) {
-                    LOGWARN("mode and level should be an unsigned integer");
-                    returnResponse(false);
-                }
 
-                try {
-                        int mode = stoi(sMode);
-                        if (mode == 0) {
-                                volumeLeveller.mode = 0; //Off
+            int mode = 0;
+            if (!TryParseIntInRange(sMode, 0, 2, mode)) {
+                LOGWARN("mode invalid: '%s' (expected range [0, 2])", sMode.c_str());
+                returnResponse(false);
+            }
+            if ((mode == 1) && !TryParseIntInRange(sLevel, 0, 10, volumeLeveller.level)) {
+                    LOGWARN("level invalid: '%s' (expected range [0, 10] when mode is 1)", sLevel.c_str());
+                    returnResponse(false);
+            }
+
+            if (mode == 0) {
+                volumeLeveller.mode = 0; //Off
 				volumeLeveller.level = 0;
-                        }
-                        else if (mode == 1){
-                                volumeLeveller.mode = 1; //On
-				volumeLeveller.level = stoi(sLevel);
-                        }
+            }
+            else if (mode == 1){
+                volumeLeveller.mode = 1; //On
+            }
 			else if (mode == 2) {
 				volumeLeveller.mode = 2; //Auto
 				volumeLeveller.level = 0;
-			}
-			else {
-				LOGERR("Invalid volume leveller mode \n");
-				returnResponse(false);
-			}
-                }catch (const device::Exception& err) {
-                        LOG_DEVICE_EXCEPTION1(sMode);
-                        returnResponse(false);
-                }
+            }
+            else {
+                LOGERR("Invalid volume leveller mode \n");
+                returnResponse(false);
+            }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
                 try
@@ -2400,11 +2451,9 @@ namespace WPEFramework {
                 returnIfParamNotFound(parameters, "surroundDecoderEnable");
                 string sEnableSurroundDecoder = parameters["surroundDecoderEnable"].String();
                 bool enableSurroundDecoder = false;
-                try {
-                        enableSurroundDecoder= parameters["surroundDecoderEnable"].Boolean();
-                }catch (const device::Exception& err) {
-                        LOG_DEVICE_EXCEPTION1(sEnableSurroundDecoder);
-                        returnResponse(false);
+                if (!TryGetBoolParam(parameters, "surroundDecoderEnable", enableSurroundDecoder)) {
+                    LOGWARN("surroundDecoderEnable invalid: '%s' (expected true/false)", sEnableSurroundDecoder.c_str());
+                    returnResponse(false);
                 }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
@@ -2427,16 +2476,9 @@ namespace WPEFramework {
                 returnIfParamNotFound(parameters, "bassBoost");
                 string sBassBoost = parameters["bassBoost"].String();
                 int bassBoost = 0;
-                bool isIntiger = Utils::isValidUnsignedInt ((char*)sBassBoost.c_str());
-                if (false == isIntiger) {
-                    LOGWARN("bassBoost should be an unsigned integer");
+                if (!TryParseIntInRange(sBassBoost, 0, 100, bassBoost)) {
+                    LOGWARN("bassBoost invalid: '%s' (expected range [0, 100])", sBassBoost.c_str());
                     returnResponse(false);
-                }
-                try {
-                        bassBoost = stoi(sBassBoost);
-                }catch (const device::Exception& err) {
-                        LOG_DEVICE_EXCEPTION1(sBassBoost);
-                        returnResponse(false);
                 }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
@@ -2459,23 +2501,16 @@ namespace WPEFramework {
                returnIfParamNotFound(parameters, "boost");
                string sSurroundVirtualizer = parameters["boost"].String();
                dsSurroundVirtualizer_t surroundVirtualizer;
-               bool isIntiger = Utils::isValidUnsignedInt ((char*)sSurroundVirtualizer.c_str());
-               if (false == isIntiger) {
-                   LOGWARN("boost should be an unsigned integer");
+               if (!TryParseIntInRange(sSurroundVirtualizer, 0, 96, surroundVirtualizer.boost)) {
+                   LOGWARN("boost invalid: '%s' (expected range [0, 96])", sSurroundVirtualizer.c_str());
                    returnResponse(false);
                }
 
-               try {
-                  surroundVirtualizer.boost = stoi(sSurroundVirtualizer);
-		  if(surroundVirtualizer.boost == 0) {
-			  surroundVirtualizer.mode = 0; //Off
-		  }
+               if(surroundVirtualizer.boost == 0) {
+		  surroundVirtualizer.mode = 0; //Off
+               }
 		  else {
 			  surroundVirtualizer.mode = 1; //On
-		  }
-               }catch (const device::Exception& err) {
-                  LOG_DEVICE_EXCEPTION1(sSurroundVirtualizer);
-                              returnResponse(false);
                }
                bool success = true;
                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
@@ -2496,37 +2531,36 @@ namespace WPEFramework {
         {
                 LOGINFOMETHOD();
                 returnIfParamNotFound(parameters, "mode");
+            returnIfParamNotFound(parameters, "boost");
                 string sMode = parameters["mode"].String();
                 string sBoost = parameters["boost"].String();
                 dsSurroundVirtualizer_t surroundVirtualizer;
 
-                if ((Utils::isValidUnsignedInt ((char*)sMode.c_str()) == false) || (Utils::isValidUnsignedInt ((char*)sBoost.c_str()) == false)) {
-                    LOGWARN("mode and boost value should be an unsigned integer");
-                    returnResponse(false);
-                }
+            int mode = 0;
+            if (!TryParseIntInRange(sMode, 0, 2, mode)) {
+                LOGWARN("mode invalid: '%s' (expected range [0, 2])", sMode.c_str());
+                returnResponse(false);
+            }
+            if ((mode == 1) && !TryParseIntInRange(sBoost, 0, 96, surroundVirtualizer.boost)) {
+                LOGWARN("boost invalid: '%s' (expected range [0, 96] when mode is 1)", sBoost.c_str());
+                returnResponse(false);
+            }
 
-                try {
-                        int mode = stoi(sMode);
-                        if (mode == 0) {
-                                surroundVirtualizer.mode = 0; //Off
-                                surroundVirtualizer.boost = 0;
-                        }
-                        else if (mode == 1){
-                                surroundVirtualizer.mode = 1; //On
-                                surroundVirtualizer.boost = stoi(sBoost);
-                        }
-                        else if (mode == 2) {
-                                surroundVirtualizer.mode = 2; //Auto
-                                surroundVirtualizer.boost = 0;
-                        }
-                        else {
-                                LOGERR("Invalid surround virtualizer mode \n");
-                                returnResponse(false);
-                        }
-                }catch (const device::Exception& err) {
-                        LOG_DEVICE_EXCEPTION1(sMode);
-                        returnResponse(false);
-                }
+            if (mode == 0) {
+                surroundVirtualizer.mode = 0; //Off
+                surroundVirtualizer.boost = 0;
+            }
+            else if (mode == 1){
+                surroundVirtualizer.mode = 1; //On
+            }
+            else if (mode == 2) {
+                surroundVirtualizer.mode = 2; //Auto
+                surroundVirtualizer.boost = 0;
+            }
+            else {
+                LOGERR("Invalid surround virtualizer mode \n");
+                returnResponse(false);
+            }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
                 try
@@ -2546,14 +2580,12 @@ namespace WPEFramework {
         {
                 LOGINFOMETHOD();
                 returnIfParamNotFound(parameters, "MISteeringEnable");
-                string sMISteering = parameters["MISteeringEbnable"].String();
+            string sMISteering = parameters["MISteeringEnable"].String();
                 bool MISteering = false;
-                try {
-                        MISteering = parameters["MISteeringEnable"].Boolean();
-                }catch (const device::Exception& err) {
-                        LOG_DEVICE_EXCEPTION1(sMISteering);
-                        returnResponse(false);
-                }
+            if (!TryGetBoolParam(parameters, "MISteeringEnable", MISteering)) {
+                LOGWARN("MISteeringEnable invalid: '%s' (expected true/false)", sMISteering.c_str());
+                returnResponse(false);
+            }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
                 try
@@ -2581,8 +2613,11 @@ namespace WPEFramework {
                             LOGERR("Gain value being set to an invalid value newGain: %f \n",newGain);
                             returnResponse(false);
                         }
-                }catch (const device::Exception& err) {
-                        LOG_DEVICE_EXCEPTION1(sGain);
+            }catch (const std::exception& err) {
+                LOGERR("Failed to parse gain '%s': %s", sGain.c_str(), err.what());
+                returnResponse(false);
+            }catch (...) {
+                LOGERR("Failed to parse gain '%s'", sGain.c_str());
                         returnResponse(false);
                 }
                 bool success = true;
@@ -2608,34 +2643,31 @@ namespace WPEFramework {
                 string sMuted = parameters["muted"].String();
                 bool muted = false;
                 static bool cache_muted = false;
-                try {
-                        muted = parameters["muted"].Boolean();
-                }catch (const device::Exception& err) {
-                        LOG_DEVICE_EXCEPTION1(sMuted);
-                        returnResponse(false);
-                }
-
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                LOGWARN("DisplaySettings::setMuted called Audio Port :%s muted:%d\n", audioPort.c_str(), muted);
-                try
+            if (!TryGetBoolParam(parameters, "muted", muted)) {
+                LOGWARN("muted invalid: '%s' (expected true/false)", sMuted.c_str());
+                returnResponse(false);
+            }
+            bool success = true;
+            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+            LOGWARN("DisplaySettings::setMuted called Audio Port :%s muted:%d\n", audioPort.c_str(), muted);
+            try
+            {
+                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+                aPort.setMuted(muted);
+                if(cache_muted != muted)
                 {
-                    device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                    aPort.setMuted(muted);
-                    if(cache_muted != muted)
-                    {
-                        cache_muted = muted;
-                        JsonObject params;
-                        params["muted"] = muted;
-                        sendNotify("muteStatusChanged", params);
-                    }
+                    cache_muted = muted;
+                    JsonObject params;
+                    params["muted"] = muted;
+                    sendNotify("muteStatusChanged", params);
                 }
-                catch (const device::Exception& err)
-                {
-                    LOG_DEVICE_EXCEPTION2(audioPort, sMuted);
-                    success = false;
-                }
-                returnResponse(success);
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION2(audioPort, sMuted);
+                success = false;
+            }
+            returnResponse(success);
         }
 
         uint32_t DisplaySettings::setVolumeLevel(const JsonObject& parameters, JsonObject& response)
@@ -2643,14 +2675,12 @@ namespace WPEFramework {
                 //LOGINFOMETHOD();
                 returnIfParamNotFound(parameters, "volumeLevel");
                 string sLevel = parameters["volumeLevel"].String();
-                float level = 0;
+            int level = 0;
                 int current_volumelevel = 0;
-                try {
-                        level = stof(sLevel);
-                }catch (const device::Exception& err) {
-                        LOG_DEVICE_EXCEPTION1(sLevel);
-                        returnResponse(false);
-                }
+            if (!TryParseIntInRange(sLevel, 0, 100, level)) {
+                LOGWARN("volumeLevel invalid: '%s' (expected range [0, 100])", sLevel.c_str());
+                returnResponse(false);
+            }
 
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
@@ -2681,16 +2711,9 @@ namespace WPEFramework {
                 returnIfParamNotFound(parameters, "DRCMode");
                 string sDRCMode = parameters["DRCMode"].String();
                 int DRCMode = 0;
-                bool isIntiger = Utils::isValidUnsignedInt ((char*)sDRCMode.c_str());
-                if (false == isIntiger) {
-                    LOGWARN("DRCMode should be an unsigned integer");
+                if (!TryParseIntInRange(sDRCMode, 0, 1, DRCMode)) {
+                    LOGWARN("DRCMode invalid: '%s' (expected 0 for Line or 1 for RF)", sDRCMode.c_str());
                     returnResponse(false);
-                }
-                try {
-                        DRCMode = stoi(sDRCMode);
-                }catch (const device::Exception& err) {
-                        LOG_DEVICE_EXCEPTION1(sDRCMode);
-                        returnResponse(false);
                 }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
@@ -2713,12 +2736,10 @@ namespace WPEFramework {
             returnIfParamNotFound(parameters, "compresionLevel");
 
             string sCompresionLevel = parameters["compresionLevel"].String();
-                       int compresionLevel = 0;
-            try {
-                compresionLevel = stoi(sCompresionLevel);
-            }catch (const std::exception &err) {
-               LOGERR("Failed to parse compresionLevel '%s'", sCompresionLevel.c_str());
-                          returnResponse(false);
+            int compresionLevel = 0;
+            if (!TryParseIntInRange(sCompresionLevel, 0, 10, compresionLevel)) {
+                LOGWARN("compresionLevel invalid: '%s' (expected range [0, 10])", sCompresionLevel.c_str());
+                returnResponse(false);
             }
 
             bool success = true;
@@ -2818,12 +2839,10 @@ namespace WPEFramework {
             returnIfParamNotFound(parameters, "enhancerlevel");
 
             string sEnhancerlevel = parameters["enhancerlevel"].String();
-                       int enhancerlevel = 0;
-            try {
-                enhancerlevel = stoi(sEnhancerlevel);
-            }catch (const std::exception &err) {
-               LOGERR("Failed to parse enhancerlevel '%s'", sEnhancerlevel.c_str());
-                          returnResponse(false);
+            int enhancerlevel = 0;
+            if (!TryParseIntInRange(sEnhancerlevel, 0, 16, enhancerlevel)) {
+                LOGWARN("enhancerlevel invalid: '%s' (expected range [0, 16])", sEnhancerlevel.c_str());
+                returnResponse(false);
             }
 
             bool success = true;
@@ -3082,12 +3101,10 @@ namespace WPEFramework {
                 returnIfParamNotFound(parameters, "mixing");
                 string sMixing = parameters["mixing"].String();
                 bool mixing = false;
-                try {
-                        mixing = parameters["mixing"].Boolean();
-                }catch (const device::Exception& err) {
-                        LOG_DEVICE_EXCEPTION1(sMixing);
-                        returnResponse(false);
-                }
+            if (!TryGetBoolParam(parameters, "mixing", mixing)) {
+                LOGWARN("mixing invalid: '%s' (expected true/false)", sMixing.c_str());
+                returnResponse(false);
+            }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
                 try
@@ -3143,16 +3160,9 @@ namespace WPEFramework {
                 returnIfParamNotFound(parameters, "mixerBalance");
                 string sMixerBalance = parameters["mixerBalance"].String();
                 int mixerBalance = 0;
-                bool isIntiger = Utils::isValidInt ((char*)sMixerBalance.c_str());
-                if (false == isIntiger) {
-                    LOGWARN("mixerBalance should be an integer");
+                if (!TryParseIntInRange(sMixerBalance, -32, 32, mixerBalance)) {
+                    LOGWARN("mixerBalance invalid: '%s' (expected range [-32, 32])", sMixerBalance.c_str());
                     returnResponse(false);
-                }
-                try {
-                        mixerBalance = stoi(sMixerBalance);
-                }catch (const device::Exception& err) {
-                        LOG_DEVICE_EXCEPTION1(sMixerBalance);
-                        returnResponse(false);
                 }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
@@ -3517,7 +3527,11 @@ namespace WPEFramework {
             returnIfParamNotFound(parameters, "enable");
 
             string sEnable = parameters["enable"].String();
-            int enable = parameters["enable"].Boolean();
+            bool enable = false;
+            if (!TryGetBoolParam(parameters, "enable", enable)) {
+                LOGWARN("enable invalid: '%s' (expected true/false)", sEnable.c_str());
+                returnResponse(false);
+            }
 
             bool success = true;
             try
@@ -4477,11 +4491,9 @@ namespace WPEFramework {
             returnIfParamNotFound(parameters, "enable");
             string spEnable = parameters["enable"].String();
             bool pEnable = false;
-            try {
-                    pEnable = parameters["enable"].Boolean();
-            }catch (const device::Exception& err) {
-                    LOG_DEVICE_EXCEPTION1(spEnable);
-                    returnResponse(false);
+            if (!TryGetBoolParam(parameters, "enable", pEnable)) {
+                LOGWARN("enable invalid: '%s' (expected true/false)", spEnable.c_str());
+                returnResponse(false);
             }
 
             if (true == pEnable && WPEFramework::Exchange::IPowerManager::POWER_STATE_STANDBY == getSystemPowerState()) {
@@ -5382,7 +5394,12 @@ void DisplaySettings::sendMsgThread()
             LOGINFO("[ARC Audio Status Event], %s : %s", __FUNCTION__, C_STR(message));
 
             if (parameters.HasLabel("muteStatus") && parameters.HasLabel("volumeLevel")) {
-                int iArcVolumeLevel =  stoi(parameters["volumeLevel"].String());
+                int iArcVolumeLevel = 0;
+                const string volumeLevelStr = parameters["volumeLevel"].String();
+                if (!TryParseIntInRange(volumeLevelStr, 0, 100, iArcVolumeLevel)) {
+                    LOGWARN("Invalid volumeLevel in ARC Audio Status Event");
+                    return;
+                }
                 if(iArcVolumeLevel != hdmiArcVolumeLevel)
 		{
 		    hdmiArcVolumeLevel = iArcVolumeLevel;
@@ -5391,7 +5408,13 @@ void DisplaySettings::sendMsgThread()
                     sendNotify("volumeLevelChanged", volParams);
 		}
 
-		bool bMuteStatus = stoi(parameters["muteStatus"].String());
+		int muteStatusInt = 0;
+                const string muteStatusStr = parameters["muteStatus"].String();
+                if (!TryParseIntInRange(muteStatusStr, 0, 1, muteStatusInt)) {
+                    LOGWARN("Invalid muteStatus in ARC Audio Status Event");
+                    return;
+                }
+		bool bMuteStatus = (muteStatusInt != 0);
                 if( bMuteStatus != hdmiArcMuteStatus )
 		{
                     hdmiArcMuteStatus = bMuteStatus;
@@ -5464,17 +5487,10 @@ void DisplaySettings::sendMsgThread()
                 value = parameters["powerStatus"].String();
 
              int pState = 1;//STANDBY
-             bool isIntiger = Utils::isValidInt ((char*)value.c_str());
-             if (false == isIntiger) {
+             if (!TryParseIntInRange(value, INT_MIN, INT_MAX, pState)) {
                  LOGWARN("powerStatus is not a valid int\n");
                  return;
              }
-             try {
-                 pState = stoi(value);
-             }catch (const device::Exception& err) {
-                 LOG_DEVICE_EXCEPTION1(value);
-                 return;
-	     }
 
 	     LOGINFO("Audio Device Power State [%d] ... \n", pState);
 
