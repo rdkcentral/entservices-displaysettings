@@ -20,6 +20,7 @@
 //I have put several "TODO(MROLLINS)" in the code below to mark areas of concern I encountered
 //  when refactoring the servicemanager's version of displaysettings into this new thunder plugin format
 
+
 #include "DisplaySettings.h"
 #include <algorithm>
 #include <cmath>
@@ -46,6 +47,7 @@
 #include "UtilsJsonRpc.h"
 #include "UtilsString.h"
 #include "UtilsisValidInt.h"
+
 
 using namespace std;
 
