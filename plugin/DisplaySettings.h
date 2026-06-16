@@ -203,6 +203,16 @@ namespace WPEFramework {
             uint32_t getAudioEncoding(const JsonObject& parameters, JsonObject& response);
             uint32_t setAudioEncoding(const JsonObject& parameters, JsonObject& response);
             uint32_t getDisplayAspectRatio(const JsonObject& parameters, JsonObject& response);
+            uint32_t setEnableLEConfig(const JsonObject& parameters, JsonObject& response);
+            uint32_t setDB(const JsonObject& parameters, JsonObject& response);
+            uint32_t getDB(const JsonObject& parameters, JsonObject& response);
+            uint32_t getMinDB(const JsonObject& parameters, JsonObject& response);
+            uint32_t getMaxDB(const JsonObject& parameters, JsonObject& response);
+            uint32_t setLoopThru(const JsonObject& parameters, JsonObject& response);
+            uint32_t getLoopThru(const JsonObject& parameters, JsonObject& response);
+            uint32_t getOptimalLevel(const JsonObject& parameters, JsonObject& response);
+            uint32_t getSupportedVideoOutputPorts(const JsonObject& parameters, JsonObject& response);
+            uint32_t getSupportedAudioOutputPorts(const JsonObject& parameters, JsonObject& response);
 
             void InitAudioPorts();
             void AudioPortsReInitialize();

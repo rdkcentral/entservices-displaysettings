@@ -331,6 +331,16 @@ namespace WPEFramework {
             registerMethodLockedApi("getAudioEncoding", &DisplaySettings::getAudioEncoding, this);
             registerMethodLockedApi("setAudioEncoding", &DisplaySettings::setAudioEncoding, this);
             registerMethodLockedApi("getDisplayAspectRatio", &DisplaySettings::getDisplayAspectRatio, this);
+            registerMethodLockedApi("setEnableLEConfig", &DisplaySettings::setEnableLEConfig, this);
+            registerMethodLockedApi("setDB", &DisplaySettings::setDB, this);
+            registerMethodLockedApi("getDB", &DisplaySettings::getDB, this);
+            registerMethodLockedApi("getMinDB", &DisplaySettings::getMinDB, this);
+            registerMethodLockedApi("getMaxDB", &DisplaySettings::getMaxDB, this);
+            registerMethodLockedApi("setLoopThru", &DisplaySettings::setLoopThru, this);
+            registerMethodLockedApi("getLoopThru", &DisplaySettings::getLoopThru, this);
+            registerMethodLockedApi("getOptimalLevel", &DisplaySettings::getOptimalLevel, this);
+            registerMethodLockedApi("getSupportedVideoOutputPorts", &DisplaySettings::getSupportedVideoOutputPorts, this);
+            registerMethodLockedApi("getSupportedAudioOutputPorts", &DisplaySettings::getSupportedAudioOutputPorts, this);
            
 
 	    m_subscribed = false; //HdmiCecSink event subscription
@@ -4131,6 +4141,393 @@ namespace WPEFramework {
             catch (...)
             {
                 LOGWARN("Unknown exception occurred");
+            }
+
+            returnResponse(success);
+        }
+
+        uint32_t DisplaySettings::setEnableLEConfig(const JsonObject& parameters, JsonObject& response)
+        {
+            LOGINFOMETHOD();
+            returnIfBooleanParamNotFound(parameters, "enable");
+
+            bool enable = parameters["enable"].Boolean();
+            bool success = true;
+            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+
+            try
+            {
+                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+                dsError_t ret = aPort.enableLEConfig(enable);
+                if (ret != dsERR_NONE)
+                {
+                    LOGERR("enableLEConfig failed for audioPort:%s enable:%d ret:%d",
+                           audioPort.c_str(), enable, ret);
+                    success = false;
+                }
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION2(audioPort, enable ? "true" : "false");
+                success = false;
+            }
+            catch (const std::exception& err)
+            {
+                LOGERR("std::exception: %s", err.what());
+                success = false;
+            }
+            catch (...)
+            {
+                LOGWARN("Unknown exception occurred");
+                success = false;
+            }
+
+            returnResponse(success);
+        }
+
+        uint32_t DisplaySettings::setDB(const JsonObject& parameters, JsonObject& response)
+        {
+            LOGINFOMETHOD();
+            returnIfNumberParamNotFound(parameters, "db");
+
+            double requestedDb = parameters["db"].Number();
+            if (!std::isfinite(requestedDb))
+            {
+                LOGERR("Invalid db value");
+                returnResponse(false);
+            }
+
+            bool success = true;
+            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+
+            try
+            {
+                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+
+                float minDb = aPort.getMinDB();
+                float maxDb = aPort.getMaxDB();
+                float newDb = static_cast<float>(requestedDb);
+
+                if ((newDb < minDb) || (newDb > maxDb))
+                {
+                    LOGERR("Requested db %f is out of range for audioPort:%s min:%f max:%f",
+                           newDb, audioPort.c_str(), minDb, maxDb);
+                    returnResponse(false);
+                }
+
+                aPort.setDB(newDb);
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION2(audioPort, std::to_string(requestedDb));
+                success = false;
+            }
+            catch (const std::exception& err)
+            {
+                LOGERR("std::exception: %s", err.what());
+                success = false;
+            }
+            catch (...)
+            {
+                LOGWARN("Unknown exception occurred");
+                success = false;
+            }
+
+            returnResponse(success);
+        }
+
+        uint32_t DisplaySettings::getDB(const JsonObject& parameters, JsonObject& response)
+        {
+            LOGINFOMETHOD();
+            bool success = true;
+            float db = 0.0f;
+            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+
+            try
+            {
+                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+                db = aPort.getDB();
+                response["db"] = std::to_string(db);
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION1(audioPort);
+                success = false;
+            }
+            catch (const std::exception& err)
+            {
+                LOGERR("std::exception: %s", err.what());
+                success = false;
+            }
+            catch (...)
+            {
+                LOGWARN("Unknown exception occurred");
+                success = false;
+            }
+
+            returnResponse(success);
+        }
+
+        uint32_t DisplaySettings::getMinDB(const JsonObject& parameters, JsonObject& response)
+        {
+            LOGINFOMETHOD();
+            bool success = true;
+            float minDb = 0.0f;
+            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+
+            try
+            {
+                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+                minDb = aPort.getMinDB();
+                response["minDB"] = std::to_string(minDb);
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION1(audioPort);
+                success = false;
+            }
+            catch (const std::exception& err)
+            {
+                LOGERR("std::exception: %s", err.what());
+                success = false;
+            }
+            catch (...)
+            {
+                LOGWARN("Unknown exception occurred");
+                success = false;
+            }
+
+            returnResponse(success);
+        }
+
+        uint32_t DisplaySettings::getMaxDB(const JsonObject& parameters, JsonObject& response)
+        {
+            LOGINFOMETHOD();
+            bool success = true;
+            float maxDb = 0.0f;
+            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+
+            try
+            {
+                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+                maxDb = aPort.getMaxDB();
+                response["maxDB"] = std::to_string(maxDb);
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION1(audioPort);
+                success = false;
+            }
+            catch (const std::exception& err)
+            {
+                LOGERR("std::exception: %s", err.what());
+                success = false;
+            }
+            catch (...)
+            {
+                LOGWARN("Unknown exception occurred");
+                success = false;
+            }
+
+            returnResponse(success);
+        }
+
+        uint32_t DisplaySettings::setLoopThru(const JsonObject& parameters, JsonObject& response)
+        {
+            LOGINFOMETHOD();
+            returnIfBooleanParamNotFound(parameters, "loopThru");
+
+            bool loopThru = parameters["loopThru"].Boolean();
+            bool success = true;
+            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+
+            try
+            {
+                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+                aPort.setLoopThru(loopThru);
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION2(audioPort, loopThru ? "true" : "false");
+                success = false;
+            }
+            catch (const std::exception& err)
+            {
+                LOGERR("std::exception: %s", err.what());
+                success = false;
+            }
+            catch (...)
+            {
+                LOGWARN("Unknown exception occurred");
+                success = false;
+            }
+
+            returnResponse(success);
+        }
+
+        uint32_t DisplaySettings::getLoopThru(const JsonObject& parameters, JsonObject& response)
+        {
+            LOGINFOMETHOD();
+            bool success = true;
+            bool loopThru = false;
+            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+
+            try
+            {
+                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+                loopThru = aPort.isLoopThru();
+                response["loopThru"] = loopThru;
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION1(audioPort);
+                success = false;
+            }
+            catch (const std::exception& err)
+            {
+                LOGERR("std::exception: %s", err.what());
+                success = false;
+            }
+            catch (...)
+            {
+                LOGWARN("Unknown exception occurred");
+                success = false;
+            }
+
+            returnResponse(success);
+        }
+
+        uint32_t DisplaySettings::getOptimalLevel(const JsonObject& parameters, JsonObject& response)
+        {
+            LOGINFOMETHOD();
+            bool success = true;
+            float optimalLevel = 0.0f;
+            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+
+            try
+            {
+                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+                optimalLevel = aPort.getOptimalLevel();
+                response["optimalLevel"] = std::to_string(optimalLevel);
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION1(audioPort);
+                success = false;
+            }
+            catch (const std::exception& err)
+            {
+                LOGERR("std::exception: %s", err.what());
+                success = false;
+            }
+            catch (...)
+            {
+                LOGWARN("Unknown exception occurred");
+                success = false;
+            }
+
+            returnResponse(success);
+        }
+
+        uint32_t DisplaySettings::getSupportedVideoOutputPorts(const JsonObject& parameters, JsonObject& response)
+        {   
+            LOGINFOMETHOD();
+
+            bool success = true;
+            JsonArray videoPorts;
+            uint32_t count = 0;
+
+            try
+            {
+                device::List<device::VideoOutputPort> vPorts = device::Host::getInstance().getVideoOutputPorts();
+
+                for (size_t i = 0; i < vPorts.size(); ++i)
+                {
+                    device::VideoOutputPort& vPort = vPorts.at(i);
+
+                    JsonObject portObj;
+                    portObj["name"] = vPort.getName();
+                    portObj["portType"] = vPort.getType().getId();
+
+                    videoPorts.Add(portObj);
+                    ++count;
+                }
+
+                response["numberOfVideoOutputPorts"] = count;
+                response["supportedVideoOutputPorts"] = videoPorts;
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION0();
+                success = false;
+                response["numberOfVideoOutputPorts"] = 0;
+                response["supportedVideoOutputPorts"] = JsonArray();
+            }
+            catch (const std::exception& err)
+            {
+                LOGERR("std::exception: %s", err.what());
+                success = false;
+                response["numberOfVideoOutputPorts"] = 0;
+                response["supportedVideoOutputPorts"] = JsonArray();
+            }
+            catch (...)
+            {
+                LOGWARN("Unknown exception occurred");
+                success = false;
+                response["numberOfVideoOutputPorts"] = 0;
+                response["supportedVideoOutputPorts"] = JsonArray();
+            }
+
+            returnResponse(success);
+        }
+
+        uint32_t DisplaySettings::getSupportedAudioOutputPorts(const JsonObject& parameters, JsonObject& response)
+        {   
+            LOGINFOMETHOD();
+
+            bool success = true;
+            JsonArray audioPorts;
+            uint32_t count = 0;
+
+            try
+            {
+                device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
+
+                for (size_t i = 0; i < aPorts.size(); ++i)
+                {
+                    device::AudioOutputPort& aPort = aPorts.at(i);
+
+                    JsonObject portObj;
+                    portObj["name"] = aPort.getName();
+                    portObj["portType"] = aPort.getType().getId();
+
+                    audioPorts.Add(portObj);
+                    ++count;
+                }
+
+                response["numberOfAudioOutputPorts"] = count;
+                response["supportedAudioOutputPorts"] = audioPorts;
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION0();
+                success = false;
+                response["numberOfAudioOutputPorts"] = 0;
+                response["supportedAudioOutputPorts"] = JsonArray();
+            }
+            catch (const std::exception& err)
+            {
+                LOGERR("std::exception: %s", err.what());
+                success = false;
+                response["numberOfAudioOutputPorts"] = 0;
+                response["supportedAudioOutputPorts"] = JsonArray();
+            }
+            catch (...)
+            {
+                LOGWARN("Unknown exception occurred");
+                success = false;
+                response["numberOfAudioOutputPorts"] = 0;
+                response["supportedAudioOutputPorts"] = JsonArray();
             }
 
             returnResponse(success);
