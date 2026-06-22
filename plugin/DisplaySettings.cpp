@@ -5783,6 +5783,9 @@ void DisplaySettings::sendMsgThread()
                 if (isDisplayConnected(vPort.getName())) {
                     vPort.getTVHDRCapabilities(&capabilities);
                     response["capabilities"] = capabilities;
+					if (capabilities & dsHDRSTANDARD_HDR10PLUS) {
+						LOGERR("preeja hdr10plus is supported");
+					}
                 }
                 else {
 					LOGERR("getTVHDRCapabilities failure: HDMI0 not connected!\n");
