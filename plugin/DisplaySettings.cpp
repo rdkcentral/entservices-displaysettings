@@ -2598,7 +2598,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION2(audioPort, sMISteering);
                         success = false;
                 }
-                returnResponse(success)
+                returnResponse(success);
         }
 
         uint32_t DisplaySettings::setGain(const JsonObject& parameters, JsonObject& response)
@@ -3123,7 +3123,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION2(audioPort, sMixing);
                         success = false;
                 }
-                returnResponse(success)
+                returnResponse(success);
         }
 
 
