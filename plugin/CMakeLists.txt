@@ -43,8 +43,6 @@ endif (RDK_SERVICES_L2_TEST)
 
 target_compile_definitions(${MODULE_NAME} PRIVATE MODULE_NAME=Plugin_${PLUGIN_NAME})
 
-target_include_directories(${MODULE_NAME} PRIVATE ../helpers)
-
 find_package(DS)
 if (DS_FOUND)
     find_package(IARMBus)
@@ -52,12 +50,12 @@ if (DS_FOUND)
     target_include_directories(${MODULE_NAME} PRIVATE ${IARMBUS_INCLUDE_DIRS})
     target_include_directories(${MODULE_NAME} PRIVATE ${DS_INCLUDE_DIRS})
     if (RDK_SERVICE_L2_TEST)
-    target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${IARMBUS_LIBRARIES} ${DS_LIBRARIES})
+    target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${IARMBUS_LIBRARIES} ${DS_LIBRARIES} ${NAMESPACE}::${NAMESPACE}Helpers)
     else()
-    target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${IARMBUS_LIBRARIES} ${DS_LIBRARIES} "-ltr181api")
+    target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${IARMBUS_LIBRARIES} ${DS_LIBRARIES} "-ltr181api" ${NAMESPACE}::${NAMESPACE}Helpers)
     endif(RDK_SERVICE_L2_TEST)
 else (DS_FOUND)
-    target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins)
+    target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${NAMESPACE}::${NAMESPACE}Helpers)
 endif(DS_FOUND)
 
 install(TARGETS ${MODULE_NAME}
