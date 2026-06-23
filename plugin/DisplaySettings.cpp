@@ -2531,9 +2531,8 @@ namespace WPEFramework {
         {
                 LOGINFOMETHOD();
                 returnIfParamNotFound(parameters, "mode");
-            returnIfParamNotFound(parameters, "boost");
                 string sMode = parameters["mode"].String();
-                string sBoost = parameters["boost"].String();
+                string sBoost = parameters.HasLabel("boost") ? parameters["boost"].String() : "";
                 dsSurroundVirtualizer_t surroundVirtualizer;
 
             int mode = 0;
