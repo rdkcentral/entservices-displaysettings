@@ -2227,7 +2227,7 @@ namespace WPEFramework {
                                 if (aPort.isConnected())
                                 {
                                         virtualizer = aPort.getSurroundVirtualizer();
-                                        response["enable"] = virtualizer.mode ? true : false ;
+                                        response["mode"] = virtualizer.mode;
                                         response["boost"] = virtualizer.boost;
                                 }
                                 else
@@ -2240,6 +2240,9 @@ namespace WPEFramework {
                 {
                         LOG_DEVICE_EXCEPTION1(audioPort);
                         success = false;
+                        response["mode"] = 0; //Off
+                        response["boost"] = 0;
+
                 }
                 returnResponse(success);
         }
