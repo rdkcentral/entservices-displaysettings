@@ -1865,8 +1865,32 @@ namespace WPEFramework {
 
         uint32_t DisplaySettings::getVolumeLeveller(const JsonObject& parameters, JsonObject& response)
         {
-                LOGINFOMETHOD();
+                // LOGINFOMETHOD();
 
+                // bool success = true;
+                // string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+                // dsVolumeLeveller_t leveller;
+
+                // try
+                // {
+                //         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+                //                 if (aPort.isConnected())
+                //                 {
+                //                         leveller= aPort.getVolumeLeveller();
+                //                         response["enable"] = (leveller.mode ? true : false);
+                //                         response["level"] = leveller.level;
+                //                 }
+                // }
+                // catch (const device::Exception& err)
+                // {
+                //         LOG_DEVICE_EXCEPTION1(audioPort);
+                //         success = false;
+                //         response["enable"] = false;
+                //         response["level"] = 0;
+                // }
+                // returnResponse(success);
+				LOGINFOMETHOD();
+				LOGWARN("faiz:commented out previous implementation handler 2 implementation is called");
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
                 dsVolumeLeveller_t leveller;
@@ -1877,7 +1901,7 @@ namespace WPEFramework {
                                 if (aPort.isConnected())
                                 {
                                         leveller= aPort.getVolumeLeveller();
-                                        response["enable"] = (leveller.mode ? true : false);
+                                        response["mode"] = leveller.mode;
                                         response["level"] = leveller.level;
                                 }
                 }
@@ -1885,7 +1909,7 @@ namespace WPEFramework {
                 {
                         LOG_DEVICE_EXCEPTION1(audioPort);
                         success = false;
-                        response["enable"] = false;
+                        response["mode"] = 0; //Off
                         response["level"] = 0;
                 }
                 returnResponse(success);
@@ -2307,26 +2331,72 @@ namespace WPEFramework {
 
         uint32_t DisplaySettings::setVolumeLeveller(const JsonObject& parameters, JsonObject& response)
         {
-                LOGINFOMETHOD();
-                returnIfParamNotFound(parameters, "level");
-                string sVolumeLeveller = parameters["level"].String();
-                dsVolumeLeveller_t VolumeLeveller;
-                bool isIntiger = Utils::isValidUnsignedInt ((char*)sVolumeLeveller.c_str());
-                if (false == isIntiger) {
-                    LOGWARN("level should be an unsigned integer");
+                // LOGINFOMETHOD();
+                // returnIfParamNotFound(parameters, "level");
+                // string sVolumeLeveller = parameters["level"].String();
+                // dsVolumeLeveller_t VolumeLeveller;
+                // bool isIntiger = Utils::isValidUnsignedInt ((char*)sVolumeLeveller.c_str());
+                // if (false == isIntiger) {
+                //     LOGWARN("level should be an unsigned integer");
+                //     returnResponse(false);
+                // }
+
+                // try {
+                //     VolumeLeveller.level = stoi(sVolumeLeveller);
+                //     if(VolumeLeveller.level == 0) {
+                //         VolumeLeveller.mode = 0; //Off
+                //     }
+                //     else {
+                //         VolumeLeveller.mode = 1; //On
+                //     }
+                // }catch (const device::Exception& err) {
+                //         LOG_DEVICE_EXCEPTION1(sVolumeLeveller);
+                //         returnResponse(false);
+                // }
+                // bool success = true;
+                // string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+                // try
+                // {
+                //         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
+                //         aPort.setVolumeLeveller(VolumeLeveller);
+                // }
+                // catch (const device::Exception& err)
+                // {
+                //         LOG_DEVICE_EXCEPTION2(audioPort, sVolumeLeveller);
+                //         success = false;
+                // }
+                // returnResponse(success);
+			    LOGINFOMETHOD();
+				LOGWARN("faiz:Commented out previous implementation and handler 2 implementation is called");
+                returnIfParamNotFound(parameters, "mode");
+				string sMode = parameters["mode"].String();
+                string sLevel = parameters["level"].String();
+                dsVolumeLeveller_t volumeLeveller;
+                if ((Utils::isValidUnsignedInt ((char*)sMode.c_str()) == false) || (Utils::isValidUnsignedInt ((char*)sMode.c_str()) == false)) {
+                    LOGWARN("mode and level should be an unsigned integer");
                     returnResponse(false);
                 }
 
                 try {
-                    VolumeLeveller.level = stoi(sVolumeLeveller);
-                    if(VolumeLeveller.level == 0) {
-                        VolumeLeveller.mode = 0; //Off
-                    }
-                    else {
-                        VolumeLeveller.mode = 1; //On
-                    }
+                        int mode = stoi(sMode);
+                        if (mode == 0) {
+                                volumeLeveller.mode = 0; //Off
+				volumeLeveller.level = 0;
+                        }
+                        else if (mode == 1){
+                                volumeLeveller.mode = 1; //On
+				volumeLeveller.level = stoi(sLevel);
+                        }
+			else if (mode == 2) {
+				volumeLeveller.mode = 2; //Auto
+				volumeLeveller.level = 0;
+			}
+			else {
+				LOGERR("Invalid volume leveller mode \n");
+				returnResponse(false);
+			}
                 }catch (const device::Exception& err) {
-                        LOG_DEVICE_EXCEPTION1(sVolumeLeveller);
+                        LOG_DEVICE_EXCEPTION1(sMode);
                         returnResponse(false);
                 }
                 bool success = true;
@@ -2334,11 +2404,11 @@ namespace WPEFramework {
                 try
                 {
                         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                        aPort.setVolumeLeveller(VolumeLeveller);
+                        aPort.setVolumeLeveller(volumeLeveller);
                 }
                 catch (const device::Exception& err)
                 {
-                        LOG_DEVICE_EXCEPTION2(audioPort, sVolumeLeveller);
+                        LOG_DEVICE_EXCEPTION2(audioPort, sMode);
                         success = false;
                 }
                 returnResponse(success);
