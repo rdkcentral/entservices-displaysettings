@@ -23,6 +23,19 @@
 #include "DisplaySettings.h"
 #include <algorithm>
 #include <cmath>
+#include "UtilsSynchro.hpp"
+#include <map>
+#include "tr181api.h"
+
+#include "tracing/Logging.h"
+#include <syscall.h>
+#include "UtilsCStr.h"
+#include "UtilsJsonRpc.h"
+#include "UtilsString.h"
+#include "UtilsisValidInt.h"
+
+#ifndef USE_DEVICESETTING_PLUGIN
+// libds / IARM path — only included when building without the DeviceSettings plugin
 #include "exception.hpp"
 #include "videoOutputPort.hpp"
 #include "videoOutputPortType.hpp"
@@ -36,16 +49,7 @@
 #include "dsError.h"
 #include "list.hpp"
 #include "dsDisplay.h"
-#include "UtilsSynchro.hpp"
-#include <map>
-#include "tr181api.h"
-
-#include "tracing/Logging.h"
-#include <syscall.h>
-#include "UtilsCStr.h"
-#include "UtilsJsonRpc.h"
-#include "UtilsString.h"
-#include "UtilsisValidInt.h"
+#endif // !USE_DEVICESETTING_PLUGIN
 
 using namespace std;
 
@@ -210,6 +214,34 @@ namespace WPEFramework {
                 }
                 return result;
             }
+
+            bool TryParseIntInRange(const string& value, const int minValue, const int maxValue, int& parsedValue)
+            {
+                try {
+                    if (value.empty()) {
+                        return false;
+                    }
+
+                    char* endPtr = nullptr;
+                    errno = 0;
+                    const long longValue = strtol(value.c_str(), &endPtr, 10);
+                    if ((errno == ERANGE) || (endPtr == value.c_str()) || (*endPtr != '\0')) {
+                        return false;
+                    }
+                    if ((longValue < minValue) || (longValue > maxValue)) {
+                        return false;
+                    }
+
+                    parsedValue = static_cast<int>(longValue);
+                    return true;
+                } catch (const std::exception& err) {
+                    LOGERR("Exception in TryParseIntInRange: %s", err.what());
+                    return false;
+                } catch (...) {
+                    LOGERR("Unknown exception in TryParseIntInRange");
+                    return false;
+                }
+            }
         }
 
         SERVICE_REGISTRATION(DisplaySettings, API_VERSION_NUMBER_MAJOR, API_VERSION_NUMBER_MINOR, API_VERSION_NUMBER_PATCH);
@@ -222,6 +254,13 @@ namespace WPEFramework {
             , _pwrMgrNotification(*this)
             , _registeredEventHandlers(false)
             , _registeredDsEventHandlers(false)
+#ifdef USE_DEVICESETTING_PLUGIN
+            , _DSVideoPortNotification(*this)
+            , _DSAudioNotification(*this)
+            , _DSDisplayHotPlugNotification(*this)
+            , _DSDisplayNotification(*this)
+            , _DSVideoDeviceNotification(*this)
+#endif // USE_DEVICESETTING_PLUGIN
         {
             LOGINFO("constructor");
             DisplaySettings::_instance = this;
@@ -341,7 +380,7 @@ namespace WPEFramework {
             m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;// Power state of AVR
 	    m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED; // Maintains the ARC state
 	    m_requestSadRetrigger = false;
-	    m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;// Maintains the Audio device type whether Arc/eArc ocnnected
+	    m_hdmiInAudioDeviceType = 0; // dsAUDIOARCSUPPORT_NONE// Maintains the Audio device type whether Arc/eArc ocnnected
 	    m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UNKNOWN;// maintains the SAD state
 	    m_sendMsgThreadExit = false;
 	    isResCacheUpdated = false;
@@ -369,6 +408,26 @@ namespace WPEFramework {
         void DisplaySettings::AudioPortsReInitialize()
         {
             LOGINFO("Entering DisplaySettings::AudioPortsReInitialize");
+#ifdef USE_DEVICESETTING_PLUGIN
+            // COM-RPC path: re-acquire audio port handles
+            _audioPortHandles.clear();
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    // Re-use the cached config store — no reload needed
+                    std::vector<AudioPortEntry> entries;
+                    if (_audioConfigStore.BuildAudioPortEntries(entries)) {
+                        for (const AudioPortEntry& e : entries) {
+                            int32_t handle = -1;
+                            if (audio->GetAudioPort(e.type, e.index, handle) == Core::ERROR_NONE) {
+                                _audioPortHandles[e.name] = handle;
+                            }
+                        }
+                    }
+                    audio->Release();
+                }
+            }
+#else
             try
             {
                 device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
@@ -383,6 +442,7 @@ namespace WPEFramework {
                 LOGWARN("Audio Port : AudioPortsReInitialize failed\n");
                 LOG_DEVICE_EXCEPTION0();
             }
+#endif // USE_DEVICESETTING_PLUGIN
         }
      
         void DisplaySettings::InitAudioPorts() 
@@ -391,6 +451,29 @@ namespace WPEFramework {
             LOGINFO("Entering DisplaySettings::InitAudioPorts");
             uint32_t ret = Core::ERROR_NONE;
 	    m_systemAudioMode_Power_RequestedAndReceived = true; //resetting this variable for bootup for AVR case
+#ifdef USE_DEVICESETTING_PLUGIN
+            // COM-RPC path: restore persisted audio port enable state via DeviceSettings plugin.
+            // HDMI CEC / ARC timer setup is not performed via DS plugin path.
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    for (const auto& kv : _audioPortHandles) {
+                        bool enabled = false;
+                        std::string portName;
+                        if (audio->GetAudioEnablePersist(kv.second, enabled, portName) == Core::ERROR_NONE) {
+                            LOGWARN("Audio Port (COM-RPC): [%s] persist=%d\n", kv.first.c_str(), enabled);
+                            if (enabled) {
+                                if (audio->EnableAudioPort(kv.second, true) != Core::ERROR_NONE) {
+                                    LOGWARN("Audio Port (COM-RPC): [%s] EnableAudioPort failed\n", kv.first.c_str());
+                                }
+                            }
+                        }
+                    }
+                    audio->Release();
+                }
+            }
+            return;
+#else
             try
             {
                 device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
@@ -522,6 +605,7 @@ namespace WPEFramework {
                 LOGWARN("Audio Port : InitAudioPorts failed\n");
                 LOG_DEVICE_EXCEPTION0();
             }
+#endif // USE_DEVICESETTING_PLUGIN
         }
 
         const string DisplaySettings::Initialize(PluginHost::IShell* service)
@@ -545,6 +629,13 @@ namespace WPEFramework {
 	    m_AudioDevicePowerOnStatusTimer.connect(std::bind(&DisplaySettings::checkAudioDevicePowerStatusTimer, this));
 
             InitializePowerManager();
+#ifdef USE_DEVICESETTING_PLUGIN
+            // COM-RPC path: open the DeviceSettings plugin COM-RPC link.
+            // Sub-interface acquisition and notification registration happen in
+            // OnDeviceSettingsActivated() when the DeviceSettings plugin is ready.
+            DeviceSettingsClientHelper::Open(service);
+            LOGINFO("DisplaySettings: DeviceSettingsClientHelper::Open() called — awaiting OnDeviceSettingsActivated()");
+#else
             try
             {
                 device::Manager::Initialize();
@@ -556,6 +647,7 @@ namespace WPEFramework {
                 LOGINFO("device::Manager::Initialize failed");
                 LOG_DEVICE_EXCEPTION0();
             }
+#endif // USE_DEVICESETTING_PLUGIN
 
             if (WPEFramework::Exchange::IPowerManager::POWER_STATE_ON == getSystemPowerState())
             {
@@ -649,6 +741,44 @@ namespace WPEFramework {
 
             stopCecTimeAndUnsubscribeEvent();
 
+#ifdef USE_DEVICESETTING_PLUGIN
+            // COM-RPC path: unregister notifications from all DS sub-interfaces then close the link.
+            {
+                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    vp->Unregister(&_DSVideoPortNotification);
+                    vp->Release();
+                }
+            }
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    audio->Unregister(&_DSAudioNotification);
+                    audio->Release();
+                }
+            }
+            {
+                auto* disp = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+                if (disp != nullptr) {
+                    disp->Unregister(&_DSDisplayHotPlugNotification);
+                    disp->Unregister(&_DSDisplayNotification);
+                    disp->Release();
+                }
+            }
+            {
+                auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+                if (vd != nullptr) {
+                    vd->Unregister(&_DSVideoDeviceNotification);
+                    vd->Release();
+                }
+            }
+            DeviceSettingsClientHelper::Close();
+            _videoPortHandles.clear();
+            _audioPortHandles.clear();
+            _displayHandles.clear();
+            _videoDeviceHandle = -1;
+            _registeredDsEventHandlers = false;
+#else
             device::Host::getInstance().UnRegister(baseInterface<device::Host::IDisplayEvents>());
             device::Host::getInstance().UnRegister(baseInterface<device::Host::IAudioOutputPortEvents>());
             device::Host::getInstance().UnRegister(baseInterface<device::Host::IDisplayDeviceEvents>());
@@ -667,6 +797,7 @@ namespace WPEFramework {
                 LOGINFO("device::Manager::DeInitialize failed");
                 LOG_DEVICE_EXCEPTION0();
             }
+#endif // USE_DEVICESETTING_PLUGIN
 
             DisplaySettings::_instance = nullptr;
 
@@ -731,6 +862,24 @@ namespace WPEFramework {
 
         bool DisplaySettings::isDisplayConnected (std::string port){
             bool isConnected = isHdmiDisplayConnected;
+#ifdef USE_DEVICESETTING_PLUGIN
+            if (!isDisplayConnectedCacheUpdated || !(Utils::String::stringContains(port, "HDMI0"))) {
+                const auto it = _videoPortHandles.find(port);
+                if (it != _videoPortHandles.end()) {
+                    auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                    if (vp != nullptr) {
+                        bool connected = false;
+                        vp->IsVideoPortDisplayConnected(it->second, connected);
+                        vp->Release();
+                        isHdmiDisplayConnected = connected;
+                        isConnected = connected;
+                        isDisplayConnectedCacheUpdated = true;
+                    }
+                }
+            } else {
+                LOGINFO("Using isDisplayConnected cache \n");
+            }
+#else
             if (!isDisplayConnectedCacheUpdated || !(Utils::String::stringContains(port, "HDMI0"))) {
                 device::VideoOutputPort vPort = device::VideoOutputPortConfig::getInstance().getPort(port.c_str());
                 isHdmiDisplayConnected = vPort.isDisplayConnected();
@@ -739,8 +888,266 @@ namespace WPEFramework {
 	    } else {
                 LOGINFO("Using isDisplayConnected cache \n");
             }
+#endif // USE_DEVICESETTING_PLUGIN
             return isConnected;
 	}
+
+#ifdef USE_DEVICESETTING_PLUGIN
+        // ====================================================================
+        // COM-RPC: DeviceSettingsClientHelper overrides
+        // Called by the framework when the DeviceSettings plugin activates or
+        // deactivates (including after a restart).
+        // ====================================================================
+
+        void DisplaySettings::OnDeviceSettingsActivated()
+        {
+            LOGINFO("DisplaySettings: OnDeviceSettingsActivated — acquiring DS sub-interface handles");
+
+            // --- VideoPort sub-interface ---
+            {
+                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    // Load port config once; cache for all per-method use
+                    VideoPortConfigStore vpStore;
+                    LoadVideoPortConfig(vp, vpStore);
+                    _vpConfigStore = vpStore;
+
+                    _videoPortHandles.clear();
+                    std::vector<VideoPortEntry> entries;
+                    if (vpStore.BuildVideoPortEntries(entries)) {
+                        for (const VideoPortEntry& e : entries) {
+                            int32_t handle = -1;
+                            Core::hresult rc = vp->GetVideoPort(e.type, e.index, handle);
+                            if (rc == Core::ERROR_NONE) {
+                                _videoPortHandles[e.name] = handle;
+                                LOGINFO("VideoPort '%s' → handle=%d", e.name.c_str(), handle);
+                            }
+                        }
+                    }
+                    vp->Register(&_DSVideoPortNotification);
+                    vp->Release();
+                }
+            }
+
+            // --- Audio sub-interface ---
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    AudioConfigStore audioStore;
+                    LoadAudioConfig(audio, audioStore);
+                    _audioConfigStore = audioStore;
+
+                    _audioPortHandles.clear();
+                    std::vector<AudioPortEntry> entries;
+                    if (audioStore.BuildAudioPortEntries(entries)) {
+                        for (const AudioPortEntry& e : entries) {
+                            int32_t handle = -1;
+                            Core::hresult rc = audio->GetAudioPort(e.type, e.index, handle);
+                            if (rc == Core::ERROR_NONE) {
+                                _audioPortHandles[e.name] = handle;
+                                LOGINFO("AudioPort '%s' → handle=%d", e.name.c_str(), handle);
+                            }
+                        }
+                    }
+                    audio->Register(&_DSAudioNotification);
+                    audio->Release();
+                }
+            }
+
+            // --- Display sub-interface ---
+            {
+                auto* disp = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+                if (disp != nullptr) {
+                    disp->Register(&_DSDisplayHotPlugNotification);
+                    disp->Register(&_DSDisplayNotification);
+                    disp->Release();
+                }
+            }
+
+            // --- VideoDevice sub-interface ---
+            {
+                auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+                if (vd != nullptr) {
+                    vd->GetVideoDeviceHandle(0, _videoDeviceHandle);
+                    vd->Register(&_DSVideoDeviceNotification);
+                    vd->Release();
+                }
+            }
+
+            _registeredDsEventHandlers = true;
+            isDisplayConnectedCacheUpdated = false;
+            isResCacheUpdated = false;
+            isStbHDRcapabilitiesCache = false;
+
+            // Trigger audio port initialization on (re-)activation
+            if (WPEFramework::Exchange::IPowerManager::POWER_STATE_ON == getSystemPowerState()) {
+                InitAudioPorts();
+            }
+        }
+
+        void DisplaySettings::OnDeviceSettingsDeactivated()
+        {
+            LOGINFO("DisplaySettings: OnDeviceSettingsDeactivated — invalidating cached handles");
+            _videoPortHandles.clear();
+            _audioPortHandles.clear();
+            _displayHandles.clear();
+            _videoDeviceHandle = -1;
+            _vpConfigStore.Clear();
+            _audioConfigStore.Clear();
+            _registeredDsEventHandlers = false;
+            isDisplayConnectedCacheUpdated = false;
+            isResCacheUpdated = false;
+            isStbHDRcapabilitiesCache = false;
+        }
+
+        // ====================================================================
+        // COM-RPC: private event forwarders called from notification delegates
+        // These bridge COM-RPC notification calls to the existing notification
+        // dispatchers (resolutionPreChange, notifyAudioFormatChange, etc.)
+        // ====================================================================
+
+        void DisplaySettings::OnDSResolutionPreChange()
+        {
+            LOGINFO("Received COM-RPC OnResolutionPreChange");
+            if (DisplaySettings::_instance) {
+                DisplaySettings::_instance->resolutionPreChange();
+            }
+            isResCacheUpdated = false;
+        }
+
+        void DisplaySettings::OnDSResolutionPostChange(uint32_t width, uint32_t height)
+        {
+            LOGINFO("Received COM-RPC OnResolutionPostChange %ux%u", width, height);
+            if (DisplaySettings::_instance) {
+                DisplaySettings::_instance->resolutionChanged(static_cast<int>(width), static_cast<int>(height));
+            }
+        }
+
+        void DisplaySettings::OnDSVideoFormatUpdate(uint32_t videoFormatHDR)
+        {
+            LOGINFO("Received COM-RPC OnVideoFormatUpdate hdr=%u", videoFormatHDR);
+            if (DisplaySettings::_instance) {
+                DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
+            }
+        }
+
+        void DisplaySettings::OnDSAudioOutHotPlug(int portType, uint32_t portNumber, bool isPortConnected)
+        {
+            LOGINFO("Received COM-RPC OnAudioOutHotPlug portType=%d connected=%d", portType, isPortConnected);
+            if (DisplaySettings::_instance) {
+                DisplaySettings::_instance->connectedAudioPortUpdated(portType, isPortConnected);
+                if (portType == static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HDMIARC)) {
+                    if (isPortConnected) {
+                        DisplaySettings::_instance->m_arcEarcConnectionNotifiedToUI = ARC_EARC_CONNECTED;
+                    } else {
+                        DisplaySettings::_instance->m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
+                    }
+                }
+            }
+        }
+
+        void DisplaySettings::OnDSAudioFormatUpdate(uint32_t audioFormat)
+        {
+            LOGINFO("Received COM-RPC OnAudioFormatUpdate format=%u", audioFormat);
+            if (DisplaySettings::_instance) {
+                DisplaySettings::_instance->notifyAudioFormatChange(audioFormat);
+            }
+        }
+
+        void DisplaySettings::OnDSDolbyAtmosCapabilitiesChanged(uint32_t atmosCapability, bool status)
+        {
+            LOGINFO("Received COM-RPC OnDolbyAtmosCapabilitiesChanged cap=%u status=%d", atmosCapability, status);
+            if (DisplaySettings::_instance && status) {
+                DisplaySettings::_instance->notifyAtmosCapabilityChange(atmosCapability);
+            }
+        }
+
+        void DisplaySettings::OnDSAudioPortStateChanged(uint32_t audioPortState)
+        {
+            LOGINFO("Received COM-RPC OnAudioPortStateChanged state=%u", audioPortState);
+            if (audioPortState == static_cast<uint32_t>(Exchange::IDeviceSettingsAudio::AudioPortState::AUDIO_PORT_STATE_INITIALIZED)) {
+                if (DisplaySettings::_instance) {
+                    DisplaySettings::_instance->AudioPortsReInitialize();
+                    DisplaySettings::_instance->InitAudioPorts();
+                }
+            }
+        }
+
+        void DisplaySettings::OnDSAssociatedAudioMixingChanged(bool mixing)
+        {
+            LOGINFO("Received COM-RPC OnAssociatedAudioMixingChanged mixing=%d", mixing);
+            if (DisplaySettings::_instance) {
+                DisplaySettings::_instance->notifyAssociatedAudioMixingChange(mixing);
+            }
+        }
+
+        void DisplaySettings::OnDSAudioFaderControlChanged(int32_t mixerBalance)
+        {
+            LOGINFO("Received COM-RPC OnAudioFaderControlChanged balance=%d", mixerBalance);
+            if (DisplaySettings::_instance) {
+                DisplaySettings::_instance->notifyFaderControlChange(static_cast<bool>(mixerBalance));
+            }
+        }
+
+        void DisplaySettings::OnDSAudioPrimaryLanguageChanged(const string& primaryLanguage)
+        {
+            LOGINFO("Received COM-RPC OnAudioPrimaryLanguageChanged lang=%s", primaryLanguage.c_str());
+            if (DisplaySettings::_instance) {
+                DisplaySettings::_instance->notifyPrimaryLanguageChange(primaryLanguage);
+            }
+        }
+
+        void DisplaySettings::OnDSAudioSecondaryLanguageChanged(const string& secondaryLanguage)
+        {
+            LOGINFO("Received COM-RPC OnAudioSecondaryLanguageChanged lang=%s", secondaryLanguage.c_str());
+            if (DisplaySettings::_instance) {
+                DisplaySettings::_instance->notifySecondaryLanguageChange(secondaryLanguage);
+            }
+        }
+
+        void DisplaySettings::OnDSDisplayHDMIHotPlug(uint32_t displayEvent)
+        {
+            LOGINFO("Received COM-RPC OnDisplayHDMIHotPlug event=%u", displayEvent);
+            isResCacheUpdated = false;
+            isDisplayConnectedCacheUpdated = false;
+            isStbHDRcapabilitiesCache = false;
+            if (DisplaySettings::_instance) {
+                // DS_DISPLAY_EVENT_CONNECTED = 0 maps to HDMI_HOT_PLUG_EVENT_CONNECTED (0)
+                DisplaySettings::_instance->connectedVideoDisplaysUpdated(static_cast<int>(displayEvent));
+            }
+        }
+
+        void DisplaySettings::OnDSDisplayRxSense(uint32_t displayEvent)
+        {
+            LOGINFO("Received COM-RPC OnDisplayRxSense event=%u", displayEvent);
+            if (DisplaySettings::_instance) {
+                if (displayEvent == static_cast<uint32_t>(Exchange::IDeviceSettingsDisplay::DisplayEvent::DS_DISPLAY_RXSENSE_ON)) {
+                    DisplaySettings::_instance->activeInputChanged(true);
+                } else if (displayEvent == static_cast<uint32_t>(Exchange::IDeviceSettingsDisplay::DisplayEvent::DS_DISPLAY_RXSENSE_OFF)) {
+                    DisplaySettings::_instance->activeInputChanged(false);
+                }
+            }
+        }
+
+        void DisplaySettings::OnDSZoomSettingChanged(int32_t zoomSetting)
+        {
+            LOGINFO("Received COM-RPC OnZoomSettingChanged zoom=%d", zoomSetting);
+            // Map zoom integer to named string (0=NONE, 1=FULL per dsVideoZoom_t equivalent)
+            if (DisplaySettings::_instance) {
+                if (zoomSetting == 0) {
+                    DisplaySettings::_instance->zoomSettingUpdated("NONE");
+                } else if (zoomSetting == 1) {
+                    DisplaySettings::_instance->zoomSettingUpdated("FULL");
+                }
+            }
+        }
+
+        // COM-RPC stub for registerDsEventHandlers() — actual registration is in OnDeviceSettingsActivated()
+        void DisplaySettings::registerDsEventHandlers()
+        {
+            LOGINFO("DisplaySettings (USE_DEVICESETTING_PLUGIN): DS notifications registered via OnDeviceSettingsActivated()");
+        }
+#endif // USE_DEVICESETTING_PLUGIN
 
         void setResponseArray(JsonObject& response, const char* key, const vector<string>& items)
         {
@@ -769,6 +1176,25 @@ namespace WPEFramework {
         {   //sample servicemanager response: {"success":true,"connectedAudioPorts":["HDMI0"]}
             LOGINFOMETHOD();
             vector<string> connectedAudioPorts;
+#ifdef USE_DEVICESETTING_PLUGIN
+            // COM-RPC path: iterate cached audio port handles
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    for (const auto& kv : _audioPortHandles) {
+                        bool enabled = false;
+                        if (audio->IsAudioPortEnabled(kv.second, enabled) == Core::ERROR_NONE && enabled) {
+                            const std::string& portName = kv.first;
+                            if ((portName == "HDMI_ARC0") && (m_hdmiInAudioDeviceConnected != true)) {
+                                continue;
+                            }
+                            vectorSet(connectedAudioPorts, portName);
+                        }
+                    }
+                    audio->Release();
+                }
+            }
+#else
             try
             {
                 device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
@@ -803,6 +1229,7 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION0();
             }
+#endif // USE_DEVICESETTING_PLUGIN
             setResponseArray(response, "connectedAudioPorts", connectedAudioPorts);
             returnResponse(true);
         }
@@ -810,9 +1237,36 @@ namespace WPEFramework {
         uint32_t DisplaySettings::getSupportedResolutions(const JsonObject& parameters, JsonObject& response)
         {   //sample servicemanager response:{"success":true,"supportedResolutions":["720p","1080i","1080p60"]}
             LOGINFOMETHOD();
+            vector<string> supportedResolutions;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                // Use cached config store — no COM-RPC config reload per request
+                const std::string defaultPort = _vpConfigStore.GetDefaultVideoPortName();
+                string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : defaultPort;
+                VideoPortEntry entry;
+                if (_vpConfigStore.ResolveByName(videoDisplay, entry)) {
+                    const auto hIt = _videoPortHandles.find(entry.name);
+                    if (hIt != _videoPortHandles.end()) {
+                        auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                        if (vp != nullptr) {
+                            bool connected = false;
+                            vp->IsVideoPortDisplayConnected(hIt->second, connected);
+                            if (connected) {
+                                std::vector<VideoPortResolution> resolutions;
+                                if (_vpConfigStore.GetResolutionsForType(entry.type, resolutions)) {
+                                    for (const auto& res : resolutions) {
+                                        vectorSet(supportedResolutions, res.name);
+                                    }
+                                }
+                            }
+                            vp->Release();
+                        }
+                    }
+                }
+            }
+#else
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
             string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
-            vector<string> supportedResolutions;
             try
             {
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
@@ -831,6 +1285,7 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION1(videoDisplay);
             }
+#endif // USE_DEVICESETTING_PLUGIN
             setResponseArray(response, "supportedResolutions", supportedResolutions);
             returnResponse(true);
         }
@@ -839,6 +1294,17 @@ namespace WPEFramework {
         {   //sample servicemanager response: {"supportedVideoDisplays":["HDMI0"],"success":true}
             LOGINFOMETHOD();
             vector<string> supportedVideoDisplays;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                // Use cached config store — no COM-RPC config reload per request
+                std::vector<VideoPortEntry> entries;
+                if (_vpConfigStore.BuildVideoPortEntries(entries)) {
+                    for (const VideoPortEntry& e : entries) {
+                        vectorSet(supportedVideoDisplays, e.name);
+                    }
+                }
+            }
+#else
             try
             {
                 device::List<device::VideoOutputPort> vPorts = device::Host::getInstance().getVideoOutputPorts();
@@ -853,6 +1319,7 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION0();
             }
+#endif // USE_DEVICESETTING_PLUGIN
             setResponseArray(response, "supportedVideoDisplays", supportedVideoDisplays);
             returnResponse(true);
         }
@@ -860,9 +1327,48 @@ namespace WPEFramework {
         uint32_t DisplaySettings::getSupportedTvResolutions(const JsonObject& parameters, JsonObject& response)
         {   //sample servicemanager response:{"success":true,"supportedTvResolutions":["480i","480p","576i","720p","1080i","1080p"]}
             LOGINFOMETHOD();
+#ifdef USE_DEVICESETTING_PLUGIN
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : "HDMI0";
+#else
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
             string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+#endif
             vector<string> supportedTvResolutions;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    const auto it = _videoPortHandles.find(videoDisplay);
+                    if (it != _videoPortHandles.end()) {
+                        int32_t tvResolutions = 0;
+                        if (vp->GetTVSupportedResolutions(it->second, tvResolutions) == Core::ERROR_NONE) {
+                            using TVR = Exchange::IDeviceSettingsVideoPort::TVResolution;
+                            if (!tvResolutions) supportedTvResolutions.emplace_back("none");
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_480I))  { supportedTvResolutions.emplace_back("480i"); supportedTvResolutions.emplace_back("480i60"); }
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_480P))  { supportedTvResolutions.emplace_back("480p"); supportedTvResolutions.emplace_back("480p60"); }
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_576I))  supportedTvResolutions.emplace_back("576i50");
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_576P))  supportedTvResolutions.emplace_back("576p50");
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_720P50)) supportedTvResolutions.emplace_back("720p50");
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_720P))  { supportedTvResolutions.emplace_back("720p"); supportedTvResolutions.emplace_back("720p60"); }
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_1080P24)) supportedTvResolutions.emplace_back("1080p24");
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_1080I25)) supportedTvResolutions.emplace_back("1080p25");
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_1080P30)) supportedTvResolutions.emplace_back("1080p30");
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_1080I50)) supportedTvResolutions.emplace_back("1080i50");
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_1080P50)) supportedTvResolutions.emplace_back("1080p50");
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_1080I))  { supportedTvResolutions.emplace_back("1080i"); supportedTvResolutions.emplace_back("1080i60"); }
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_1080P))  { supportedTvResolutions.emplace_back("1080p"); supportedTvResolutions.emplace_back("1080p60"); }
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_1080P60)) supportedTvResolutions.emplace_back("1080p60");
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_2160P24)) supportedTvResolutions.emplace_back("2160p24");
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_2160P25)) supportedTvResolutions.emplace_back("2160p25");
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_2160P30)) supportedTvResolutions.emplace_back("2160p30");
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_2160P50)) supportedTvResolutions.emplace_back("2160p50");
+                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_2160P60)) supportedTvResolutions.emplace_back("2160p60");
+                        }
+                    }
+                    vp->Release();
+                }
+            }
+#else
             try
             {
                 int tvResolutions = 0;
@@ -898,6 +1404,7 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION1(videoDisplay);
             }
+#endif // USE_DEVICESETTING_PLUGIN
             setResponseArray(response, "supportedTvResolutions", supportedTvResolutions);
             returnResponse(true);
         }
@@ -906,6 +1413,34 @@ namespace WPEFramework {
         {   //sample servicemanager response:{"success":true,"supportedSettopResolutions":["720p","1080i","1080p60"]}
             LOGINFOMETHOD();
             vector<string> supportedSettopResolutions;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+                if (vd != nullptr) {
+                    Exchange::IDeviceSettingsVideoDevice::IVideoDeviceConfigIterator* cfgIt = nullptr;
+                    if (vd->GetVideoDeviceConfig(cfgIt) == Core::ERROR_NONE && cfgIt != nullptr) {
+                        Exchange::IDeviceSettingsVideoDevice::VideoDeviceConfigInfo cfg;
+                        if (cfgIt->Next(cfg)) {
+                            using VZ = Exchange::IDeviceSettingsVideoDevice::VideoZoom;
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_NONE))              vectorSet(supportedSettopResolutions, "NONE");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_FULL))              vectorSet(supportedSettopResolutions, "FULL");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_LB_16_9))           vectorSet(supportedSettopResolutions, "LB_16_9");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_LB_14_9))           vectorSet(supportedSettopResolutions, "LB_14_9");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_CCO))               vectorSet(supportedSettopResolutions, "CCO");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_PAN_SCAN))          vectorSet(supportedSettopResolutions, "PAN_SCAN");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_LB_2_21_1_ON_4_3))  vectorSet(supportedSettopResolutions, "LB_2_21_1_ON_4_3");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_LB_2_21_1_ON_16_9)) vectorSet(supportedSettopResolutions, "LB_2_21_1_ON_16_9");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_PLATFORM))          vectorSet(supportedSettopResolutions, "PLATFORM");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_16_9_ZOOM))         vectorSet(supportedSettopResolutions, "16_9_ZOOM");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_PILLARBOX_4_3))     vectorSet(supportedSettopResolutions, "PILLARBOX_4_3");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_WIDE_4_3))          vectorSet(supportedSettopResolutions, "WIDE_4_3");
+                        }
+                        cfgIt->Release();
+                    }
+                    vd->Release();
+                }
+            }
+#else
             try
             {
                 if (device::Host::getInstance().getVideoDevices().size() < 1)
@@ -935,6 +1470,7 @@ namespace WPEFramework {
             {
                 LOGWARN("Unknown exception occurred");
             }
+#endif // USE_DEVICESETTING_PLUGIN
             setResponseArray(response, "supportedSettopResolutions", supportedSettopResolutions);
             returnResponse(true);
         }
@@ -943,6 +1479,17 @@ namespace WPEFramework {
         {   //sample servicemanager response: {"success":true,"supportedAudioPorts":["HDMI0"]}
             LOGINFOMETHOD();
             vector<string> supportedAudioPorts;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    for (const auto& kv : _audioPortHandles) {
+                        vectorSet(supportedAudioPorts, kv.first);
+                    }
+                    audio->Release();
+                }
+            }
+#else
             try
             {
                 device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
@@ -957,6 +1504,7 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION0();
             }
+#endif // USE_DEVICESETTING_PLUGIN
             setResponseArray(response, "supportedAudioPorts", supportedAudioPorts);
             returnResponse(true);
         }
@@ -966,6 +1514,34 @@ namespace WPEFramework {
             LOGINFOMETHOD();
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "";
             vector<string> supportedAudioModes;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Exchange::IDeviceSettingsAudio::IAudioTypeConfigIterator* typeIt = nullptr;
+                    Exchange::IDeviceSettingsAudio::IAudioPortConfigIterator* portIt = nullptr;
+                    if (audio->GetAudioConfig(typeIt, portIt) == Core::ERROR_NONE) {
+                        if (typeIt != nullptr) {
+                            Exchange::IDeviceSettingsAudio::AudioTypeConfigInfo typeInfo;
+                            while (typeIt->Next(typeInfo)) {
+                                if (audioPort.empty() || Utils::String::stringContains(typeInfo.name, audioPort)) {
+                                    uint32_t modeMask = typeInfo.supportedStereoModeMask;
+                                    using SM = Exchange::IDeviceSettingsAudio::StereoMode;
+                                    if (modeMask & (1u << static_cast<uint32_t>(SM::AUDIO_STEREO_MONO)))        vectorSet(supportedAudioModes, "MONO");
+                                    if (modeMask & (1u << static_cast<uint32_t>(SM::AUDIO_STEREO_STEREO)))      vectorSet(supportedAudioModes, "STEREO");
+                                    if (modeMask & (1u << static_cast<uint32_t>(SM::AUDIO_STEREO_PASSTHROUGH))) vectorSet(supportedAudioModes, "PASSTHRU");
+                                    if (modeMask & (1u << static_cast<uint32_t>(SM::AUDIO_STEREO_DD)))          vectorSet(supportedAudioModes, "DOLBYDIGITAL");
+                                    if (modeMask & (1u << static_cast<uint32_t>(SM::AUDIO_STEREO_DDPLUS)))      vectorSet(supportedAudioModes, "DOLBYDIGITALPLUS");
+                                }
+                            }
+                            typeIt->Release();
+                        }
+                        if (portIt != nullptr) portIt->Release();
+                    }
+                    audio->Release();
+                }
+            }
+#else
             try
             {
                 bool HAL_hasSurround = false;
@@ -1032,6 +1608,7 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION1(audioPort);
             }
+#endif // USE_DEVICESETTING_PLUGIN
             setResponseArray(response, "supportedAudioModes", supportedAudioModes);
             returnResponse(true);
         }
@@ -1042,6 +1619,34 @@ namespace WPEFramework {
             string zoomSetting = "unknown";
 
             bool success = true;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+                if (vd != nullptr) {
+                    Exchange::IDeviceSettingsVideoDevice::VideoZoom dfcZoom = Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_UNKNOWN;
+                    if (vd->GetVideoDeviceDFC(_videoDeviceHandle, dfcZoom) == Core::ERROR_NONE) {
+                        switch (dfcZoom) {
+                            case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_NONE:             zoomSetting = "NONE"; break;
+                            case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_FULL:             zoomSetting = "FULL"; break;
+                            case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_LB_16_9:          zoomSetting = "LB_16_9"; break;
+                            case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_LB_14_9:          zoomSetting = "LB_14_9"; break;
+                            case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_CCO:              zoomSetting = "CCO"; break;
+                            case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_PAN_SCAN:         zoomSetting = "PAN_SCAN"; break;
+                            case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_PLATFORM:         zoomSetting = "PLATFORM"; break;
+                            case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_16_9_ZOOM:        zoomSetting = "16_9_ZOOM"; break;
+                            case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_PILLARBOX_4_3:    zoomSetting = "PILLARBOX_4_3"; break;
+                            case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_WIDE_4_3:         zoomSetting = "WIDE_4_3"; break;
+                            default: success = false; break;
+                        }
+                    } else {
+                        success = false;
+                    }
+                    vd->Release();
+                } else {
+                    success = false;
+                }
+            }
+#else
             try
             {
                 if (device::Host::getInstance().getVideoDevices().size() < 1)
@@ -1069,6 +1674,7 @@ namespace WPEFramework {
                 LOGWARN("Unknown exception occurred");
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
 #ifdef USE_IARM
             zoomSetting = iarm2svc(zoomSetting);
 #endif
@@ -1084,6 +1690,34 @@ namespace WPEFramework {
             string zoomSetting = parameters["zoomSetting"].String();
 
             bool success = true;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+                if (vd != nullptr) {
+                    using VZ = Exchange::IDeviceSettingsVideoDevice::VideoZoom;
+                    VZ dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_UNKNOWN;
+                    string zs = zoomSetting;
+                    std::transform(zs.begin(), zs.end(), zs.begin(), ::toupper);
+                    if (zs == "NONE")               dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_NONE;
+                    else if (zs == "FULL")          dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_FULL;
+                    else if (zs == "LB_16_9")       dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_LB_16_9;
+                    else if (zs == "LB_14_9")       dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_LB_14_9;
+                    else if (zs == "CCO")           dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_CCO;
+                    else if (zs == "PAN_SCAN")      dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_PAN_SCAN;
+                    else if (zs == "PLATFORM")      dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_PLATFORM;
+                    else if (zs == "16_9_ZOOM")     dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_16_9_ZOOM;
+                    else if (zs == "PILLARBOX_4_3") dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_PILLARBOX_4_3;
+                    else if (zs == "WIDE_4_3")      dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_WIDE_4_3;
+                    else { LOGERR("Unknown zoom setting: %s", zoomSetting.c_str()); success = false; }
+                    if (success && vd->SetVideoDeviceDFC(_videoDeviceHandle, dfcZoom) != Core::ERROR_NONE) {
+                        success = false;
+                    }
+                    vd->Release();
+                } else {
+                    success = false;
+                }
+            }
+#else
             try
             {
 #ifdef USE_IARM
@@ -1114,15 +1748,66 @@ namespace WPEFramework {
                 LOGWARN("Unknown exception occurred");
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
         uint32_t DisplaySettings::getCurrentResolution(const JsonObject& parameters, JsonObject& response)
         {   //sample servicemanager response:{"success":true,"resolution":"720p"}
             LOGINFOMETHOD();
+            bool success = true;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                // Use cached config store and handles — no COM-RPC config reload per request
+                const std::string defaultPort = _vpConfigStore.GetDefaultVideoPortName();
+                string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : defaultPort;
+                VideoPortEntry entry;
+                if (_vpConfigStore.ResolveByName(videoDisplay, entry)) {
+                    const auto hIt = _videoPortHandles.find(entry.name);
+                    if (hIt != _videoPortHandles.end()) {
+                        if (!isResCacheUpdated) {
+                            auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                            if (vp != nullptr) {
+                                Exchange::IDeviceSettingsVideoPort::VideoPortResolution vpRes;
+                                if (vp->GetVideoPortResolution(hIt->second, vpRes) == Core::ERROR_NONE) {
+                                    currentResolutionCache = vpRes.name;
+                                    isResCacheUpdated = true;
+                                } else {
+                                    success = false;
+                                }
+                                vp->Release();
+                            } else {
+                                success = false;
+                            }
+                        }
+                    } else {
+                        success = false;
+                    }
+                } else {
+                    success = false;
+                }
+            }
+            if (success) {
+                const string& res = currentResolutionCache;
+                int width = 0, height = 0;
+                bool progressive = false;
+                if(res.rfind("480", 0) == 0) { width = 720; height = 480; }
+                else if(res.rfind("576", 0) == 0) { width = 720; height = 576; }
+                else if(res.rfind("720", 0) == 0) { width = 1280; height = 720; }
+                else if(res.rfind("768", 0) == 0) { width = 1366; height = 768; }
+                else if(res.rfind("1080", 0) == 0) { width = 1920; height = 1080; }
+                else if(res.rfind("2160", 0) == 0) { width = 3840; height = 2160; }
+                else if(res.rfind("4096x2160", 0) == 0) { width = 4096; height = 2160; }
+                else { width = 1280; height = 720; }
+                if(res.find('p') != std::string::npos) { progressive = true; }
+                response["resolution"] = res;
+                response["w"] = width;
+                response["h"] = height;
+                response["progressive"] = progressive;
+            }
+#else
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
             string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
-            bool success = true;
             try
             {
                 int width = 0;
@@ -1193,6 +1878,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION1(videoDisplay);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -1214,6 +1900,32 @@ namespace WPEFramework {
             if (!isIgnoreEdidArg) LOGINFO("isIgnoreEdid: false"); else LOGINFO("isIgnoreEdid: %d", isIgnoreEdid);
 
             bool success = true;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    const auto it = _videoPortHandles.find(videoDisplay);
+                    if (it != _videoPortHandles.end()) {
+                        Exchange::IDeviceSettingsVideoPort::VideoPortResolution vpRes;
+                        vpRes.name = resolution;
+                        // pixelResolution/aspectRatio/etc. will be resolved by DeviceSettings implementation
+                        Core::hresult rc = vp->SetVideoPortResolution(it->second, vpRes, persist, isIgnoreEdid);
+                        if (rc != Core::ERROR_NONE) {
+                            LOGERR("SetVideoPortResolution failed for '%s': %u", videoDisplay.c_str(), rc);
+                            success = false;
+                        } else {
+                            isResCacheUpdated = false; // invalidate cache
+                        }
+                    } else {
+                        LOGERR("No handle found for videoDisplay '%s'", videoDisplay.c_str());
+                        success = false;
+                    }
+                    vp->Release();
+                } else {
+                    success = false;
+                }
+            }
+#else
             try
             {
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
@@ -1224,9 +1936,9 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION2(videoDisplay, resolution);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
-
         uint32_t DisplaySettings::getSoundMode(const JsonObject& parameters, JsonObject& response)
         {   //sample servicemanager response:{"success":true,"soundMode":"AUTO (Dolby Digital 5.1)"}
             LOGINFOMETHOD();
@@ -1235,6 +1947,34 @@ namespace WPEFramework {
             if (!checkPortName(audioPort))
                 audioPort = "HDMI0";
 
+            bool success = true;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        Exchange::IDeviceSettingsAudio::StereoMode stereoMode;
+                        if (audio->GetStereoMode(it->second, stereoMode) == Core::ERROR_NONE) {
+                            switch (stereoMode) {
+                                case Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO:      response["soundMode"] = "STEREO"; break;
+                                case Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_MONO:        response["soundMode"] = "MONO"; break;
+                                case Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND:    response["soundMode"] = "SURROUND"; break;
+                                case Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH: response["soundMode"] = "PASSTHRU"; break;
+                                default: response["soundMode"] = "AUTO"; break;
+                            }
+                        } else {
+                            success = false;
+                        }
+                    } else {
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    success = false;
+                }
+            }
+#else
             string modeString("");
             device::AudioStereoMode mode = device::AudioStereoMode::kStereo;  //default to stereo
 
@@ -1376,7 +2116,8 @@ namespace WPEFramework {
             modeString = iarm2svc(modeString);
 #endif
             response["soundMode"] = modeString;
-            returnResponse(true);
+#endif // USE_DEVICESETTING_PLUGIN
+            returnResponse(success);
         }
 
         uint32_t DisplaySettings::setSoundMode(const JsonObject& parameters, JsonObject& response)
@@ -1436,6 +2177,45 @@ namespace WPEFramework {
 
             LOGWARN("display = %s, mode = %s!", audioPort.c_str(), soundMode.c_str());
 
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    if (!audioPort.empty()) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            using SM = Exchange::IDeviceSettingsAudio::StereoMode;
+                            SM comMode = SM::AUDIO_STEREO_STEREO;
+                            if (soundMode == "mono")                  comMode = SM::AUDIO_STEREO_MONO;
+                            else if (soundMode == "stereo")           comMode = SM::AUDIO_STEREO_STEREO;
+                            else if (soundMode == "surround")         comMode = SM::AUDIO_STEREO_SURROUND;
+                            else if (soundMode.substr(0, 4) == "auto") comMode = SM::AUDIO_STEREO_SURROUND;
+                            else if (soundMode == "passthru")         comMode = SM::AUDIO_STEREO_PASSTHROUGH;
+                            else if (soundMode == "dolbydigital")     comMode = SM::AUDIO_STEREO_DD;
+                            else if (soundMode == "dolbydigitalplus")  comMode = SM::AUDIO_STEREO_DDPLUS;
+                            else if (soundMode == "dolby digital 5.1") comMode = SM::AUDIO_STEREO_SURROUND;
+                            if (audio->SetStereoMode(it->second, comMode, persist) != Core::ERROR_NONE) {
+                                success = false;
+                            }
+                        } else {
+                            success = false;
+                        }
+                    } else {
+                        /* No audioPort specified, set mode to all connected ports */
+                        JsonObject params;
+                        params["videoDisplay"] = "HDMI0";
+                        params["soundMode"] = soundMode;
+                        JsonObject unusedResponse;
+                        setSoundMode(params, response);
+                        params["videoDisplay"] = "SPDIF0";
+                        setSoundMode(params, unusedResponse);
+                    }
+                    audio->Release();
+                } else {
+                    success = false;
+                }
+            }
+#else
             try
             {
                 //now setting the sound mode for specified video display types
@@ -1564,6 +2344,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION0();
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             //TODO(MROLLINS) -- so this is interesting.  ServiceManager had a settingChanged event that I guess handled settings from many services.
             //Does that mean we need to save our setting back to another plugin that would own settings (and this settingsChanged event) ?
             //ServiceManager::getInstance()->saveSetting(this, SETTING_DISPLAY_SERVICE_SOUND_MODE, soundMode);
@@ -1576,8 +2357,24 @@ namespace WPEFramework {
             //sample this thunder plugin    : {"EDID":"AP///////wBSYgYCAQEBAQEXAQOAoFp4CvCdo1VJmyYPR0ovzgCBgIvAAQEBAQEBAQEBAQEBAjqAGHE4LUBYLEUAQIRjAAAeZiFQsFEAGzBAcDYAQIRjAAAeAAAA/ABUT1NISUJBLVRWCiAgAAAA/QAXSw9EDwAKICAgICAgAbECAytxSpABAgMEBQYHICImCQcHEQcYgwEAAGwDDAAQADgtwBUVHx/jBQMBAR2AGHEcFiBYLCUAQIRjAACeAR0AclHQHiBuKFUAQIRjAAAejArQiiDgLRAQPpYAsIRDAAAYjAqgFFHwFgAmfEMAsIRDAACYAAAAAAAAAAAAAAAA9w"}
             LOGINFOMETHOD();
 
+            string edidbase64 = "";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* disp = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+                if (disp != nullptr) {
+                    int32_t displayHandle = -1;
+                    if (disp->GetDisplay(Exchange::IDeviceSettingsDisplay::DS_DISPLAY_PORT_TYPE_HDMI, 0, displayHandle) == Core::ERROR_NONE && displayHandle >= 0) {
+                        constexpr uint16_t kEdidMaxLen = 256;
+                        uint8_t edidBuf[kEdidMaxLen] = {};
+                        if (disp->GetDisplayEdidBytes(displayHandle, edidBuf, kEdidMaxLen) == Core::ERROR_NONE) {
+                            Core::ToString(edidBuf, kEdidMaxLen, true, edidbase64);
+                        }
+                    }
+                    disp->Release();
+                }
+            }
+#else
             vector<uint8_t> edidVec({'u','n','k','n','o','w','n' });
-			string edidbase64 = "";
             try
             {
                 vector<uint8_t> edidVec2;
@@ -1604,6 +2401,7 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION0();
             }
+#endif // USE_DEVICESETTING_PLUGIN
             response["EDID"] = edidbase64;
             returnResponse(true);
         }
@@ -1612,6 +2410,20 @@ namespace WPEFramework {
         {   //sample servicemanager response:
             LOGINFOMETHOD();
 
+            string base64String;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* host = AcquireSubInterface<Exchange::IDeviceSettingsHost>();
+                if (host != nullptr) {
+                    constexpr uint16_t kEdidMaxLen = 256;
+                    uint8_t edidBuf[kEdidMaxLen] = {};
+                    if (host->GetEDID(edidBuf, kEdidMaxLen) == Core::ERROR_NONE) {
+                        Core::ToString(edidBuf, kEdidMaxLen, true, base64String);
+                    }
+                    host->Release();
+                }
+            }
+#else
             vector<uint8_t> edidVec({'u','n','k','n','o','w','n' });
             try
             {
@@ -1625,12 +2437,12 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION0();
             }
             //convert to base64
-            string base64String;
             uint16_t size = min(edidVec.size(), (size_t)numeric_limits<uint16_t>::max());
             if(edidVec.size() > (size_t)numeric_limits<uint16_t>::max())
                 LOGINFO("size too large to use ToString base64 wpe api");
 
             Core::ToString((uint8_t*)&edidVec[0], size, true, base64String);
+#endif // USE_DEVICESETTING_PLUGIN
             response["EDID"] = base64String;
             returnResponse(true);
         }
@@ -1639,9 +2451,28 @@ namespace WPEFramework {
         {   //sample servicemanager response:
             LOGINFOMETHOD();
 
+#ifdef USE_DEVICESETTING_PLUGIN
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : "HDMI0";
+#else
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
             string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+#endif // USE_DEVICESETTING_PLUGIN
             bool active = true;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    const auto it = _videoPortHandles.find(videoDisplay);
+                    if (it != _videoPortHandles.end()) {
+                        bool portActive = false;
+                        if (vp->IsVideoPortActive(it->second, portActive) == Core::ERROR_NONE) {
+                            active = portActive;
+                        }
+                    }
+                    vp->Release();
+                }
+            }
+#else
             try
             {
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
@@ -1653,6 +2484,7 @@ namespace WPEFramework {
                 response["activeInput"] = JsonValue(false);
                 returnResponse(false);
             }
+#endif // USE_DEVICESETTING_PLUGIN
             response["activeInput"] = JsonValue(active);
             returnResponse(true);
         }
@@ -1662,8 +2494,24 @@ namespace WPEFramework {
             LOGINFOMETHOD();
 
             JsonArray hdrCapabilities;
-            int capabilities = dsHDRSTANDARD_NONE;
+            int capabilities = 0;
 
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : "HDMI0";
+                    const auto it = _videoPortHandles.find(videoDisplay);
+                    if (it != _videoPortHandles.end()) {
+                        int32_t tvCapabilities = 0;
+                        if (vp->GetTVHDRCapabilities(it->second, tvCapabilities) == Core::ERROR_NONE) {
+                            capabilities = tvCapabilities;
+                        }
+                    }
+                    vp->Release();
+                }
+            }
+#else
             try
             {
                 std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
@@ -1676,14 +2524,25 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION0();
             }
+#endif // USE_DEVICESETTING_PLUGIN
 
             if(!capabilities)hdrCapabilities.Add("none");
+#ifdef USE_DEVICESETTING_PLUGIN
+            using HS3 = Exchange::IDeviceSettingsVideoPort::HDRStandard;
+            if(capabilities & static_cast<int32_t>(HS3::DS_HDRSTANDARD_HDR10))         hdrCapabilities.Add("HDR10");
+            if(capabilities & static_cast<int32_t>(HS3::DS_HDRSTANDARD_HDR10PLUS))     hdrCapabilities.Add("HDR10PLUS");
+            if(capabilities & static_cast<int32_t>(HS3::DS_HDRSTANDARD_HLG))           hdrCapabilities.Add("HLG");
+            if(capabilities & static_cast<int32_t>(HS3::DS_HDRSTANDARD_DOLBYVISION))   hdrCapabilities.Add("Dolby Vision");
+            if(capabilities & static_cast<int32_t>(HS3::DS_HDRSTANDARD_TECHNICOLORPRIME)) hdrCapabilities.Add("Technicolor Prime");
+            if(capabilities & static_cast<int32_t>(HS3::DS_HDRSTANDARD_SDR))           hdrCapabilities.Add("SDR");
+#else
             if(capabilities & dsHDRSTANDARD_HDR10)hdrCapabilities.Add("HDR10");
             if(capabilities & dsHDRSTANDARD_HDR10PLUS)hdrCapabilities.Add("HDR10PLUS");
 	    if(capabilities & dsHDRSTANDARD_HLG)hdrCapabilities.Add("HLG");
             if(capabilities & dsHDRSTANDARD_DolbyVision)hdrCapabilities.Add("Dolby Vision");
             if(capabilities & dsHDRSTANDARD_TechnicolorPrime)hdrCapabilities.Add("Technicolor Prime");
             if(capabilities & dsHDRSTANDARD_SDR)hdrCapabilities.Add("SDR");
+#endif // USE_DEVICESETTING_PLUGIN
 
             if(capabilities)
             {
@@ -1708,8 +2567,19 @@ namespace WPEFramework {
             JsonArray hdrCapabilities;
 	    int capabilities = stbHDRcapabilitiesCache;
             if (!isStbHDRcapabilitiesCache) {
-                capabilities = dsHDRSTANDARD_NONE;
-
+                capabilities = 0; // dsHDRSTANDARD_NONE = 0
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+                    if (vd != nullptr) {
+                        int32_t caps = 0;
+                        if (vd->GetHDRCapabilities(_videoDeviceHandle, caps) == Core::ERROR_NONE) {
+                            capabilities = caps;
+                        }
+                        vd->Release();
+                    }
+                }
+#else
                 try
                 {
                     if (device::Host::getInstance().getVideoDevices().size() < 1)
@@ -1733,6 +2603,7 @@ namespace WPEFramework {
                 {
                     LOGWARN("Unknown exception occurred");
                 }
+#endif // USE_DEVICESETTING_PLUGIN
 		stbHDRcapabilitiesCache = capabilities;
 		isStbHDRcapabilitiesCache = true;
             } else {
@@ -1741,12 +2612,22 @@ namespace WPEFramework {
 
 
             if(!capabilities)hdrCapabilities.Add("none");
+#ifdef USE_DEVICESETTING_PLUGIN
+            using HS2 = Exchange::IDeviceSettingsVideoPort::HDRStandard;
+            if(capabilities & static_cast<int32_t>(HS2::DS_HDRSTANDARD_HDR10))         hdrCapabilities.Add("HDR10");
+            if(capabilities & static_cast<int32_t>(HS2::DS_HDRSTANDARD_HDR10PLUS))     hdrCapabilities.Add("HDR10PLUS");
+            if(capabilities & static_cast<int32_t>(HS2::DS_HDRSTANDARD_HLG))           hdrCapabilities.Add("HLG");
+            if(capabilities & static_cast<int32_t>(HS2::DS_HDRSTANDARD_DOLBYVISION))   hdrCapabilities.Add("Dolby Vision");
+            if(capabilities & static_cast<int32_t>(HS2::DS_HDRSTANDARD_TECHNICOLORPRIME)) hdrCapabilities.Add("Technicolor Prime");
+            if(capabilities & static_cast<int32_t>(HS2::DS_HDRSTANDARD_SDR))           hdrCapabilities.Add("SDR");
+#else
             if(capabilities & dsHDRSTANDARD_HDR10)hdrCapabilities.Add("HDR10");
             if(capabilities & dsHDRSTANDARD_HDR10PLUS)hdrCapabilities.Add("HDR10PLUS");
 	    if(capabilities & dsHDRSTANDARD_HLG)hdrCapabilities.Add("HLG");
             if(capabilities & dsHDRSTANDARD_DolbyVision)hdrCapabilities.Add("Dolby Vision");
             if(capabilities & dsHDRSTANDARD_TechnicolorPrime)hdrCapabilities.Add("Technicolor Prime");
             if(capabilities & dsHDRSTANDARD_SDR)hdrCapabilities.Add("SDR");
+#endif // USE_DEVICESETTING_PLUGIN
 
             if(capabilities)
             {
@@ -1763,14 +2644,28 @@ namespace WPEFramework {
             }
             returnResponse(true);
         }
+
         uint32_t DisplaySettings::getSettopAudioCapabilities(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:{"AudioCapabilities":["ATMOS","DOLBY DIGITAL","DOLBYDIGITAL PLUS","MS12"]}
-            LOGINFOMETHOD();
 
             JsonArray audioCapabilities;
             int capabilities = dsAUDIOSUPPORT_NONE;
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        int32_t caps = 0;
+                        if (audio->GetAudioCapabilities(it->second, caps) == Core::ERROR_NONE) {
+                            capabilities = caps;
+                        }
+                    }
+                    audio->Release();
+                }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -1780,14 +2675,25 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION0();
             }
+#endif // USE_DEVICESETTING_PLUGIN
 
             if(!capabilities)audioCapabilities.Add("none");
+#ifdef USE_DEVICESETTING_PLUGIN
+            using AC = Exchange::IDeviceSettingsAudio::AudioCaps;
+            if(capabilities & static_cast<int32_t>(AC::AUDIO_CAPS_ATMOS))                   audioCapabilities.Add("ATMOS");
+            if(capabilities & static_cast<int32_t>(AC::AUDIO_CAPS_DOLBY_DIGITAL))           audioCapabilities.Add("DOLBY DIGITAL");
+            if(capabilities & static_cast<int32_t>(AC::AUDIO_CAPS_DOLBY_DIGITAL_PLUS))      audioCapabilities.Add("DOLBY DIGITAL PLUS");
+            if(capabilities & static_cast<int32_t>(AC::AUDIO_CAPS_DIGITAL_AUDIO_DELIVERY))  audioCapabilities.Add("Dual Audio Decode");
+            if(capabilities & static_cast<int32_t>(AC::AUDIO_CAPS_DIGITAL_AUDIO_PROCESS_V2)) audioCapabilities.Add("DAPv2");
+            if(capabilities & static_cast<int32_t>(AC::AUDIO_CAPS_MS12))                    audioCapabilities.Add("MS12");
+#else
             if(capabilities & dsAUDIOSUPPORT_ATMOS)audioCapabilities.Add("ATMOS");
             if(capabilities & dsAUDIOSUPPORT_DD)audioCapabilities.Add("DOLBY DIGITAL");
             if(capabilities & dsAUDIOSUPPORT_DDPLUS)audioCapabilities.Add("DOLBY DIGITAL PLUS");
             if(capabilities & dsAUDIOSUPPORT_DAD)audioCapabilities.Add("Dual Audio Decode");
             if(capabilities & dsAUDIOSUPPORT_DAPv2)audioCapabilities.Add("DAPv2");
             if(capabilities & dsAUDIOSUPPORT_MS12)audioCapabilities.Add("MS12");
+#endif // USE_DEVICESETTING_PLUGIN
 
             response["AudioCapabilities"] = audioCapabilities;
             for (uint32_t i = 0; i < audioCapabilities.Length(); i++)
@@ -1804,6 +2710,21 @@ namespace WPEFramework {
             JsonArray ms12Capabilities;
             int capabilities = dsMS12SUPPORT_NONE;
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        int32_t caps = 0;
+                        if (audio->GetAudioMS12Capabilities(it->second, caps) == Core::ERROR_NONE) {
+                            capabilities = caps;
+                        }
+                    }
+                    audio->Release();
+                }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -1813,6 +2734,7 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION0();
             }
+#endif // USE_DEVICESETTING_PLUGIN
 
             if(!capabilities)ms12Capabilities.Add("none");
             if(capabilities & dsMS12SUPPORT_DolbyVolume)ms12Capabilities.Add("Dolby Volume");
@@ -1832,9 +2754,39 @@ namespace WPEFramework {
             LOGINFOMETHOD();
 
             bool success = true;
+#ifdef USE_DEVICESETTING_PLUGIN
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : "HDMI0";
+#else
+            std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+#endif // USE_DEVICESETTING_PLUGIN
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    const auto it = _videoPortHandles.find(videoDisplay);
+                    if (it != _videoPortHandles.end()) {
+                        Exchange::IDeviceSettingsVideoPort::DSOutputSettings settings;
+                        if (vp->GetCurrentOutputSettings(it->second, settings) == Core::ERROR_NONE) {
+                            response["video_eotf"] = static_cast<uint32_t>(settings.videoEotf);
+                            response["matrix_coefficients"] = static_cast<uint32_t>(settings.matrixCoefficients);
+                            response["color_depth"] = static_cast<uint32_t>(settings.colorDepth);
+                            response["color_space"] = static_cast<uint32_t>(settings.colorSpace);
+                            response["quantization_range"] = static_cast<uint32_t>(settings.quantizationRange);
+                        } else {
+                            success = false;
+                        }
+                    } else {
+                        success = false;
+                    }
+                    vp->Release();
+                } else {
+                    success = false;
+                }
+            }
+#else
             try
             {
-                std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
                 device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
                 if (isDisplayConnected(strVideoPort))
                 {
@@ -1858,6 +2810,7 @@ namespace WPEFramework {
                 LOGINFO("caught an exception: %d, %s", err.getCode(), err.what());
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
 
             LOGINFO("Leaving_ DisplaySettings::%s\n", __FUNCTION__);
             returnResponse(success);
@@ -1869,8 +2822,31 @@ namespace WPEFramework {
 
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            Exchange::IDeviceSettingsAudio::VolumeLeveller leveller{0,0};
+                            if (audio->GetAudioVolumeLeveller(it->second, leveller) == Core::ERROR_NONE) {
+                                response["enable"] = (leveller.mode ? true : false);
+                                response["level"] = leveller.level;
+                            } else {
+                                success = false;
+                                response["enable"] = false;
+                                response["level"] = 0;
+                            }
+                        } else {
+                            success = false;
+                        }
+                        audio->Release();
+                    } else {
+                        success = false;
+                    }
+                }
+#else
                 dsVolumeLeveller_t leveller;
-
                 try
                 {
                         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -1888,6 +2864,7 @@ namespace WPEFramework {
                         response["enable"] = false;
                         response["level"] = 0;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -1897,8 +2874,31 @@ namespace WPEFramework {
 
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            Exchange::IDeviceSettingsAudio::VolumeLeveller leveller{0,0};
+                            if (audio->GetAudioVolumeLeveller(it->second, leveller) == Core::ERROR_NONE) {
+                                response["mode"] = leveller.mode;
+                                response["level"] = leveller.level;
+                            } else {
+                                success = false;
+                                response["mode"] = 0;
+                                response["level"] = 0;
+                            }
+                        } else {
+                            success = false;
+                        }
+                        audio->Release();
+                    } else {
+                        success = false;
+                    }
+                }
+#else
                 dsVolumeLeveller_t leveller;
-
                 try
                 {
                         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -1916,15 +2916,23 @@ namespace WPEFramework {
                         response["mode"] = 0; //Off
                         response["level"] = 0;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
-        void DisplaySettings::audioFormatToString(dsAudioFormat_t audioFormat, JsonObject & response)
+        void DisplaySettings::audioFormatToString(
+#ifndef USE_DEVICESETTING_PLUGIN
+            dsAudioFormat_t audioFormat,
+#else
+            uint32_t audioFormat,
+#endif
+            JsonObject & response)
         {
             std::vector<string> supportedAudioFormat = {"NONE", "PCM", "AAC","VORBIS","WMA", "DOLBY AC3", "DOLBY EAC3",
                                                          "DOLBY AC4", "DOLBY MAT", "DOLBY TRUEHD",
                                                          "DOLBY EAC3 ATMOS","DOLBY TRUEHD ATMOS",
                                                          "DOLBY MAT ATMOS","DOLBY AC4 ATMOS","UNKNOWN"};
+#ifndef USE_DEVICESETTING_PLUGIN
             switch (audioFormat)
             {
                    case dsAUDIO_FORMAT_NONE:
@@ -1973,6 +2981,27 @@ namespace WPEFramework {
                        response["currentAudioFormat"] = "UNKNOWN";
                        break;
             }
+#else
+            // COM-RPC path: Exchange::IDeviceSettingsAudio::AudioFormat enum values
+            using AF = Exchange::IDeviceSettingsAudio::AudioFormat;
+            switch (static_cast<AF>(audioFormat)) {
+                case AF::AUDIO_FORMAT_NONE:           response["currentAudioFormat"] = "NONE"; break;
+                case AF::AUDIO_FORMAT_PCM:            response["currentAudioFormat"] = "PCM"; break;
+                case AF::AUDIO_FORMAT_DOLBY_AC3:      response["currentAudioFormat"] = "DOLBY AC3"; break;
+                case AF::AUDIO_FORMAT_DOLBY_EAC3:     response["currentAudioFormat"] = "DOLBY EAC3"; break;
+                case AF::AUDIO_FORMAT_DOLBY_AC4:      response["currentAudioFormat"] = "DOLBY AC4"; break;
+                case AF::AUDIO_FORMAT_DOLBY_MAT:      response["currentAudioFormat"] = "DOLBY MAT"; break;
+                case AF::AUDIO_FORMAT_DOLBY_TRUEHD:   response["currentAudioFormat"] = "DOLBY TRUEHD"; break;
+                case AF::AUDIO_FORMAT_DOLBY_EAC3_ATMOS:   response["currentAudioFormat"] = "DOLBY EAC3 ATMOS"; break;
+                case AF::AUDIO_FORMAT_DOLBY_TRUEHD_ATMOS: response["currentAudioFormat"] = "DOLBY TRUEHD ATMOS"; break;
+                case AF::AUDIO_FORMAT_DOLBY_MAT_ATMOS:    response["currentAudioFormat"] = "DOLBY MAT ATMOS"; break;
+                case AF::AUDIO_FORMAT_DOLBY_AC4_ATMOS:    response["currentAudioFormat"] = "DOLBY AC4 ATMOS"; break;
+                case AF::AUDIO_FORMAT_AAC:            response["currentAudioFormat"] = "AAC"; break;
+                case AF::AUDIO_FORMAT_VORBIS:         response["currentAudioFormat"] = "VORBIS"; break;
+                case AF::AUDIO_FORMAT_WMA:            response["currentAudioFormat"] = "WMA"; break;
+                default:                              response["currentAudioFormat"] = "UNKNOWN"; break;
+            }
+#endif // !USE_DEVICESETTING_PLUGIN
             setResponseArray(response, "supportedAudioFormat", supportedAudioFormat);
 	}
 
@@ -1980,6 +3009,32 @@ namespace WPEFramework {
         {
              LOGINFOMETHOD();
 	     bool success = true;
+#ifdef USE_DEVICESETTING_PLUGIN
+             {
+                 // COM-RPC path: get audio format from first available audio port handle
+                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                 if (audio != nullptr) {
+                     const auto it = _audioPortHandles.find(audioPort);
+                     if (it != _audioPortHandles.end()) {
+                         Exchange::IDeviceSettingsAudio::AudioFormat fmt = Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_NONE;
+                         if (audio->GetAudioFormat(it->second, fmt) == Core::ERROR_NONE) {
+                             audioFormatToString(static_cast<uint32_t>(fmt), response);
+                         } else {
+                             audioFormatToString(static_cast<uint32_t>(Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_NONE), response);
+                             success = false;
+                         }
+                     } else {
+                         audioFormatToString(static_cast<uint32_t>(Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_NONE), response);
+                         success = false;
+                     }
+                     audio->Release();
+                 } else {
+                     audioFormatToString(static_cast<uint32_t>(Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_NONE), response);
+                     success = false;
+                 }
+             }
+#else
              dsAudioFormat_t audioFormat = dsAUDIO_FORMAT_NONE;
              try
              {
@@ -1994,19 +3049,33 @@ namespace WPEFramework {
 		 success = false;
 		 audioFormatToString(dsAUDIO_FORMAT_NONE, response);
              }
+#endif // USE_DEVICESETTING_PLUGIN
 	     returnResponse(success);
         }
 
-	void DisplaySettings::notifyAudioFormatChange(dsAudioFormat_t audioFormat)
+	void DisplaySettings::notifyAudioFormatChange(
+#ifndef USE_DEVICESETTING_PLUGIN
+            dsAudioFormat_t audioFormat
+#else
+            uint32_t audioFormat
+#endif
+            )
 	{
 	     JsonObject params;
 	     audioFormatToString(audioFormat, params);
              sendNotify("audioFormatChanged", params);
 	}
 
-    void DisplaySettings::notifyAtmosCapabilityChange(dsATMOSCapability_t atmosCaps)
+    void DisplaySettings::notifyAtmosCapabilityChange(
+#ifndef USE_DEVICESETTING_PLUGIN
+            dsATMOSCapability_t atmosCaps
+#else
+            uint32_t atmosCaps
+#endif
+            )
     {
          JsonObject params;
+#ifndef USE_DEVICESETTING_PLUGIN
          switch (atmosCaps) {
         case dsAUDIO_ATMOS_ATMOSMETADATA:
             params["currentAtmosCapability"] = "ATMOS_SUPPORTED";
@@ -2018,13 +3087,31 @@ namespace WPEFramework {
             LOGINFO("Atmos capability unknown, not notifying");
             break;
          }
+#else
+         switch (static_cast<Exchange::IDeviceSettingsAudio::DolbyAtmosCapability>(atmosCaps)) {
+        case Exchange::IDeviceSettingsAudio::DolbyAtmosCapability::AUDIO_DOLBY_ATMOS_METADATA:
+            params["currentAtmosCapability"] = "ATMOS_SUPPORTED";
+            break;
+        case Exchange::IDeviceSettingsAudio::DolbyAtmosCapability::AUDIO_DOLBY_ATMOS_NOT_SUPPORTED:
+            params["currentAtmosCapability"] = "ATMOS_NOT_SUPPORTED";
+            break;
+        default:
+            LOGINFO("Atmos capability unknown, not notifying");
+            break;
+         }
+#endif // !USE_DEVICESETTING_PLUGIN
              sendNotify("AtmosCapabilityChanged", params);
     }
-	void DisplaySettings::notifyVideoFormatChange(dsHDRStandard_t videoFormat)
+	void DisplaySettings::notifyVideoFormatChange(
+#ifndef USE_DEVICESETTING_PLUGIN
+            dsHDRStandard_t videoFormat
+#else
+            uint32_t videoFormat
+#endif
+            )
 	{
             JsonObject params;
             params["currentVideoFormat"] = getVideoFormatTypeToString(videoFormat);
-
             params["supportedVideoFormat"] = getSupportedVideoFormats();
             sendNotify("videoFormatChanged", params);
         }
@@ -2063,6 +3150,23 @@ namespace WPEFramework {
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
                 int boost = 0;
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            int32_t bassBoost = 0;
+                            if (audio->GetAudioBassEnhancer(it->second, bassBoost) == Core::ERROR_NONE) {
+                                boost = bassBoost;
+                                response["enable"] = boost ? true : false;
+                                response["bassBoost"] = boost;
+                            } else { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2084,6 +3188,7 @@ namespace WPEFramework {
                         success = false;
                         response["enable"] = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -2093,7 +3198,20 @@ namespace WPEFramework {
                 bool success = true;
                 bool surroundDecoderEnable = false;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            if (audio->IsAudioSurroundDecoderEnabled(it->second, surroundDecoderEnable) == Core::ERROR_NONE) {
+                                response["surroundDecoderEnable"] = surroundDecoderEnable;
+                            } else { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2113,6 +3231,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION1(audioPort);
                         success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -2123,6 +3242,20 @@ namespace WPEFramework {
             float gain = 0;
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->GetAudioGain(it->second, gain) == Core::ERROR_NONE) {
+                            response["gain"] = to_string(gain);
+                        } else { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2134,6 +3267,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION1(audioPort);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -2144,6 +3278,20 @@ namespace WPEFramework {
             bool muted = false;
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->IsAudioMuted(it->second, muted) == Core::ERROR_NONE) {
+                            response["muted"] = muted;
+                        } else { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2155,6 +3303,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION1(string(audioPort));
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -2165,6 +3314,22 @@ namespace WPEFramework {
             float level = 0;
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        float vol = 0;
+                        if (audio->GetAudioLevel(it->second, vol) == Core::ERROR_NONE) {
+                            level = vol;
+                            response["volumeLevel"] = to_string(level);
+                        } else { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 if( audioPort != "HDMI_ARC0")
@@ -2183,6 +3348,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION1(audioPort);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -2192,6 +3358,22 @@ namespace WPEFramework {
                 bool success = true;
                 int mode = 0;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            int32_t drcMode = 0;
+                            if (audio->GetAudioDRCMode(it->second, drcMode) == Core::ERROR_NONE) {
+                                mode = drcMode;
+                                response["DRCMode"] = mode ? "RF" : "line";
+                            } else { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2211,6 +3393,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION1(audioPort);
                         success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -2219,8 +3402,23 @@ namespace WPEFramework {
                 LOGINFOMETHOD();
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            Exchange::IDeviceSettingsAudio::SurroundVirtualizer sv{0,0};
+                            if (audio->GetAudioSurroundVirtualizer(it->second, sv) == Core::ERROR_NONE) {
+                                response["enable"] = sv.mode ? true : false;
+                                response["boost"] = sv.boost;
+                            } else { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 dsSurroundVirtualizer_t virtualizer;
-
                 try
                 {
                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2241,6 +3439,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION1(audioPort);
                         success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -2249,8 +3448,27 @@ namespace WPEFramework {
                 LOGINFOMETHOD();
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            Exchange::IDeviceSettingsAudio::SurroundVirtualizer sv{0,0};
+                            if (audio->GetAudioSurroundVirtualizer(it->second, sv) == Core::ERROR_NONE) {
+                                response["mode"] = sv.mode;
+                                response["boost"] = sv.boost;
+                            } else {
+                                success = false;
+                                response["mode"] = 0;
+                                response["boost"] = 0;
+                            }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 dsSurroundVirtualizer_t virtualizer;
-
                 try
                 {
                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2274,6 +3492,7 @@ namespace WPEFramework {
                         response["boost"] = 0;
 
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 	
@@ -2283,6 +3502,20 @@ namespace WPEFramework {
                 bool success = true;
                 bool enable = false;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            if (audio->GetAudioMISteering(it->second, enable) == Core::ERROR_NONE) {
+                                response["MISteeringEnable"] = enable;
+                            } else { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2302,6 +3535,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION1(audioPort);
                         success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -2331,6 +3565,21 @@ namespace WPEFramework {
                 }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            Exchange::IDeviceSettingsAudio::VolumeLeveller vl;
+                            vl.level = static_cast<uint8_t>(VolumeLeveller.level);
+                            vl.mode  = static_cast<uint8_t>(VolumeLeveller.mode);
+                            if (audio->SetAudioVolumeLeveller(it->second, vl) != Core::ERROR_NONE) { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2341,6 +3590,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION2(audioPort, sVolumeLeveller);
                         success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -2380,6 +3630,21 @@ namespace WPEFramework {
                 }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            Exchange::IDeviceSettingsAudio::VolumeLeveller vl;
+                            vl.level = static_cast<uint8_t>(volumeLeveller.level);
+                            vl.mode  = static_cast<uint8_t>(volumeLeveller.mode);
+                            if (audio->SetAudioVolumeLeveller(it->second, vl) != Core::ERROR_NONE) { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2390,6 +3655,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION2(audioPort, sMode);
                         success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -2408,6 +3674,18 @@ namespace WPEFramework {
                 }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            if (audio->EnableAudioSurroundDecoder(it->second, enableSurroundDecoder) != Core::ERROR_NONE) { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2418,6 +3696,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION2(audioPort, sEnableSurroundDecoder);
                         success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -2440,6 +3719,18 @@ namespace WPEFramework {
                 }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            if (audio->SetAudioBassEnhancer(it->second, bassBoost) != Core::ERROR_NONE) { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2450,6 +3741,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION2(audioPort, sBassBoost);
                         success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -2479,6 +3771,21 @@ namespace WPEFramework {
                }
                bool success = true;
                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+               {
+                   auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                   if (audio != nullptr) {
+                       const auto it = _audioPortHandles.find(audioPort);
+                       if (it != _audioPortHandles.end()) {
+                           Exchange::IDeviceSettingsAudio::SurroundVirtualizer sv;
+                           sv.mode = static_cast<uint8_t>(surroundVirtualizer.mode);
+                           sv.boost = static_cast<uint8_t>(surroundVirtualizer.boost);
+                           if (audio->SetAudioSurroundVirtualizer(it->second, sv) != Core::ERROR_NONE) { success = false; }
+                       } else { success = false; }
+                       audio->Release();
+                   } else { success = false; }
+               }
+#else
                try
                {
                    device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2489,6 +3796,7 @@ namespace WPEFramework {
                    LOG_DEVICE_EXCEPTION2(audioPort, sSurroundVirtualizer);
                    success = false;
                }
+#endif // USE_DEVICESETTING_PLUGIN
                returnResponse(success);
         }
 
@@ -2529,6 +3837,21 @@ namespace WPEFramework {
                 }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            Exchange::IDeviceSettingsAudio::SurroundVirtualizer sv;
+                            sv.mode = static_cast<uint8_t>(surroundVirtualizer.mode);
+                            sv.boost = static_cast<uint8_t>(surroundVirtualizer.boost);
+                            if (audio->SetAudioSurroundVirtualizer(it->second, sv) != Core::ERROR_NONE) { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2539,6 +3862,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION2(audioPort, sMode);
                         success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -2556,6 +3880,18 @@ namespace WPEFramework {
                 }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            if (audio->SetAudioMISteering(it->second, MISteering) != Core::ERROR_NONE) { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2566,6 +3902,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION2(audioPort, sMISteering);
                         success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success)
         }
 
@@ -2587,6 +3924,18 @@ namespace WPEFramework {
                 }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            if (audio->SetAudioGain(it->second, newGain) != Core::ERROR_NONE) { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2598,6 +3947,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION2(audioPort, sGain);
                         success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -2618,6 +3968,27 @@ namespace WPEFramework {
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
                 LOGWARN("DisplaySettings::setMuted called Audio Port :%s muted:%d\n", audioPort.c_str(), muted);
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            if (audio->SetAudioMute(it->second, muted) == Core::ERROR_NONE) {
+                                static bool cache_muted = false;
+                                if (cache_muted != muted) {
+                                    cache_muted = muted;
+                                    JsonObject params;
+                                    params["muted"] = muted;
+                                    sendNotify("muteStatusChanged", params);
+                                }
+                            } else { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
+                static bool cache_muted = false;
                 try
                 {
                     device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2635,6 +4006,7 @@ namespace WPEFramework {
                     LOG_DEVICE_EXCEPTION2(audioPort, sMuted);
                     success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -2654,6 +4026,26 @@ namespace WPEFramework {
 
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            if (audio->SetAudioLevel(it->second, level) == Core::ERROR_NONE) {
+                                static float cache_level = -1;
+                                if (static_cast<int>(cache_level) != static_cast<int>(level)) {
+                                    cache_level = level;
+                                    JsonObject params;
+                                    params["volumeLevel"] = static_cast<int>(level);
+                                    sendNotify("volumeLevelChanged", params);
+                                }
+                            } else { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2672,6 +4064,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION2(audioPort, sLevel);
                         success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -2694,6 +4087,18 @@ namespace WPEFramework {
                 }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            if (audio->SetAudioDRCMode(it->second, DRCMode) != Core::ERROR_NONE) { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2704,6 +4109,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION2(audioPort, sDRCMode);
                         success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -2723,6 +4129,18 @@ namespace WPEFramework {
 
             bool success = true;
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->SetAudioCompression(it->second, compresionLevel) != Core::ERROR_NONE) { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2733,6 +4151,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION2(audioPort, sCompresionLevel);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -2743,6 +4162,23 @@ namespace WPEFramework {
                        int compressionlevel = 0;
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        int32_t level = 0;
+                        if (audio->GetAudioCompression(it->second, level) == Core::ERROR_NONE) {
+                            compressionlevel = level;
+                            response["compressionlevel"] = compressionlevel;
+                            response["enable"] = (compressionlevel ? true : false);
+                        } else { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2757,6 +4193,7 @@ namespace WPEFramework {
                                response["enable"] = false;
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -2780,6 +4217,18 @@ namespace WPEFramework {
 
             bool success = true;
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->SetAudioDolbyVolumeMode(it->second, dolbyVolumeMode) != Core::ERROR_NONE) { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2790,6 +4239,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION2(audioPort, sDolbyVolumeMode);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -2799,6 +4249,21 @@ namespace WPEFramework {
                        bool success = true;
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        bool enabled = false;
+                        if (audio->GetAudioDolbyVolumeMode(it->second, enabled) == Core::ERROR_NONE) {
+                            response["dolbyVolumeMode"] = enabled;
+                        } else { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2809,6 +4274,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION1(audioPort);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -2828,6 +4294,18 @@ namespace WPEFramework {
 
             bool success = true;
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->SetAudioDialogEnhancement(it->second, enhancerlevel) != Core::ERROR_NONE) { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2838,6 +4316,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION2(audioPort, sEnhancerlevel);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -2848,6 +4327,23 @@ namespace WPEFramework {
                        int enhancerlevel = 0;
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        int32_t level = 0;
+                        if (audio->GetAudioDialogEnhancement(it->second, level) == Core::ERROR_NONE) {
+                            enhancerlevel = level;
+                            response["enable"] = (enhancerlevel ? true : false);
+                            response["enhancerlevel"] = enhancerlevel;
+                        } else { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2862,6 +4358,7 @@ namespace WPEFramework {
                 response["enhancerlevel"] = 0;
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -2881,6 +4378,18 @@ namespace WPEFramework {
 
             bool success = true;
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->SetAudioIntelligentEqualizerMode(it->second, intelligentEqualizerMode) != Core::ERROR_NONE) { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2891,6 +4400,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION2(audioPort, sIntelligentEqualizerMode);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -2901,6 +4411,23 @@ namespace WPEFramework {
                        int intelligentEqualizerMode = 0;
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        int32_t mode = 0;
+                        if (audio->GetAudioIntelligentEqualizerMode(it->second, mode) == Core::ERROR_NONE) {
+                            intelligentEqualizerMode = mode;
+                            response["enable"] = (intelligentEqualizerMode ? true : false);
+                            response["mode"] = intelligentEqualizerMode;
+                        } else { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2915,6 +4442,7 @@ namespace WPEFramework {
                 response["mode"] = 0;
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -2935,6 +4463,18 @@ namespace WPEFramework {
 
             bool success = true;
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->SetAudioGraphicEqualizerMode(it->second, graphicEqualizerMode) != Core::ERROR_NONE) { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2945,6 +4485,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION2(audioPort, sGraphicEqualizerMode);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -2955,6 +4496,23 @@ namespace WPEFramework {
                        int graphicEqualizerMode = 0;
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        int32_t mode = 0;
+                        if (audio->GetAudioGraphicEqualizerMode(it->second, mode) == Core::ERROR_NONE) {
+                            graphicEqualizerMode = mode;
+                            response["enable"] = (graphicEqualizerMode ? true : false);
+                            response["mode"] = graphicEqualizerMode;
+                        } else { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2969,6 +4527,7 @@ namespace WPEFramework {
                 response["mode"] = 0;
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -2983,6 +4542,18 @@ namespace WPEFramework {
             string audioProfileName = parameters["ms12AudioProfile"].String();
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->SetAudioMS12Profile(it->second, audioProfileName) != Core::ERROR_NONE) { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -2993,6 +4564,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION2(audioPort, audioProfileName);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
 
 	    returnResponse(success);
         }
@@ -3016,6 +4588,14 @@ namespace WPEFramework {
 
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                // setMS12ProfileSettingsOverride is a libds-specific override mechanism.
+                // The COM-RPC path falls back to a no-op (not supported via IDeviceSettingsAudio).
+                LOGWARN("setMS12ProfileSettingsOverride: not supported via COM-RPC DeviceSettings plugin");
+                success = false;
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -3025,7 +4605,7 @@ namespace WPEFramework {
             {
                 success = false;
             }
-
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -3037,6 +4617,20 @@ namespace WPEFramework {
 
 	    string audioProfileName;
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->GetAudioMS12Profile(it->second, audioProfileName) == Core::ERROR_NONE) {
+                            response["ms12AudioProfile"] = audioProfileName;
+                        } else { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -3049,6 +4643,7 @@ namespace WPEFramework {
                 response["ms12AudioProfile"] = "None";
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -3058,6 +4653,25 @@ namespace WPEFramework {
             LOGINFOMETHOD();
             vector<string> supportedProfiles;
 	    string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        Exchange::IDeviceSettingsAudio::IDeviceSettingsAudioMS12AudioProfileIterator* it2 = nullptr;
+                        if (audio->GetAudioMS12ProfileList(it->second, it2) == Core::ERROR_NONE && it2 != nullptr) {
+                            Exchange::IDeviceSettingsAudio::MS12AudioProfile profile;
+                            while (it2->Next(profile)) {
+                                supportedProfiles.push_back(profile.profileName);
+                            }
+                            it2->Release();
+                        }
+                    }
+                    audio->Release();
+                }
+            }
+#else
             try
             {
 		device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -3071,6 +4685,7 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION0();
             }
+#endif // USE_DEVICESETTING_PLUGIN
             setResponseArray(response, "supportedMS12AudioProfiles", supportedProfiles);
             returnResponse(true);
         }
@@ -3090,6 +4705,18 @@ namespace WPEFramework {
                 }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            if (audio->SetAssociatedAudioMixing(it->second, mixing) != Core::ERROR_NONE) { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                     if (device::Host::getInstance().isHDMIOutPortPresent())
@@ -3106,6 +4733,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION2(audioPort, sMixing);
                         success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success)
         }
 
@@ -3117,6 +4745,20 @@ namespace WPEFramework {
                 bool success = true;
                 bool mixing = false;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            if (audio->GetAssociatedAudioMixing(it->second, mixing) == Core::ERROR_NONE) {
+                                response["mixing"] = mixing;
+                            } else { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                     if (device::Host::getInstance().isHDMIOutPortPresent())
@@ -3134,6 +4776,7 @@ namespace WPEFramework {
                     LOG_DEVICE_EXCEPTION1(audioPort);
                     success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -3156,6 +4799,18 @@ namespace WPEFramework {
                 }
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            if (audio->SetAudioFaderControl(it->second, mixerBalance) != Core::ERROR_NONE) { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                     if (device::Host::getInstance().isHDMIOutPortPresent())
@@ -3172,6 +4827,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION2(audioPort, sMixerBalance);
                         success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -3182,6 +4838,22 @@ namespace WPEFramework {
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
                 int mixerBalance = 0;
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        const auto it = _audioPortHandles.find(audioPort);
+                        if (it != _audioPortHandles.end()) {
+                            int32_t balance = 0;
+                            if (audio->GetAudioFaderControl(it->second, balance) == Core::ERROR_NONE) {
+                                mixerBalance = balance;
+                                response["mixerBalance"] = mixerBalance;
+                            } else { success = false; }
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                }
+#else
                 try
                 {
                     if (device::Host::getInstance().isHDMIOutPortPresent())
@@ -3199,6 +4871,7 @@ namespace WPEFramework {
                         LOG_DEVICE_EXCEPTION1(audioPort);
                         success = false;
                 }
+#endif // USE_DEVICESETTING_PLUGIN
                 returnResponse(success);
         }
 
@@ -3212,6 +4885,18 @@ namespace WPEFramework {
             string primaryLanguage = parameters["lang"].String();
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->SetAudioPrimaryLanguage(it->second, primaryLanguage) != Core::ERROR_NONE) { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 if (device::Host::getInstance().isHDMIOutPortPresent())
@@ -3228,6 +4913,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION2(audioPort, primaryLanguage);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
 
             returnResponse(success);
         }
@@ -3240,6 +4926,20 @@ namespace WPEFramework {
 
             string primaryLanguage;
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->GetAudioPrimaryLanguage(it->second, primaryLanguage) == Core::ERROR_NONE) {
+                            response["lang"] = primaryLanguage;
+                        } else { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 if (device::Host::getInstance().isHDMIOutPortPresent())
@@ -3258,6 +4958,7 @@ namespace WPEFramework {
                 response["lang"] = "None";
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -3271,6 +4972,18 @@ namespace WPEFramework {
             string secondaryLanguage = parameters["lang"].String();
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->SetAudioSecondaryLanguage(it->second, secondaryLanguage) != Core::ERROR_NONE) { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 if (device::Host::getInstance().isHDMIOutPortPresent())
@@ -3287,6 +5000,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION2(audioPort, secondaryLanguage);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
 
             returnResponse(success);
         }
@@ -3299,6 +5013,20 @@ namespace WPEFramework {
 
             string secondaryLanguage;
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->GetAudioSecondaryLanguage(it->second, secondaryLanguage) == Core::ERROR_NONE) {
+                            response["lang"] = secondaryLanguage;
+                        } else { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 if (device::Host::getInstance().isHDMIOutPortPresent())
@@ -3317,6 +5045,7 @@ namespace WPEFramework {
                 response["lang"] = "None";
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -3331,6 +5060,20 @@ namespace WPEFramework {
                 audioPort = "HDMI0";
 
             uint32_t audioDelayMs = 0;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->GetAudioDelay(it->second, audioDelayMs) == Core::ERROR_NONE) {
+                            response["audioDelay"] = std::to_string(audioDelayMs);
+                        } else { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 /* Return the sound mode of the audio ouput connected to the specified audioPort */
@@ -3344,10 +5087,6 @@ namespace WPEFramework {
                     }
                     else
                     {
-                        /*  * If HDMI is not connected
-                            * Get the SPDIF if it is supported by platform
-                            * If Platform does not have connected ports. Default to HDMI.
-                        */
                         audioPort = "HDMI0";
                         device::List<device::VideoOutputPort> vPorts = device::Host::getInstance().getVideoOutputPorts();
                         for (size_t i = 0; i < vPorts.size(); i++)
@@ -3371,6 +5110,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION1(audioPort);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
 
             returnResponse(success);
         }
@@ -3402,6 +5142,18 @@ namespace WPEFramework {
             if (!checkPortName(audioPort))
                 audioPort = "HDMI0";
 
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->SetAudioDelay(it->second, static_cast<uint32_t>(audioDelayMs)) != Core::ERROR_NONE) { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 /* Return the sound mode of the audio ouput connected to the specified audioPort */
@@ -3414,10 +5166,6 @@ namespace WPEFramework {
                     }
                     else
                     {
-                        /*  * If HDMI is not connected
-                            * Get the SPDIF if it is supported by platform
-                            * If Platform does not have connected ports. Default to HDMI.
-                        */
                         audioPort = "HDMI0";
                         device::List<device::VideoOutputPort> vPorts = device::Host::getInstance().getVideoOutputPorts();
                         for (size_t i = 0; i < vPorts.size(); i++)
@@ -3440,6 +5188,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION2(audioPort, sAudioDelayMs);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -3448,8 +5197,27 @@ namespace WPEFramework {
             LOGINFOMETHOD();
             bool success = true;
             bool isValidAudioPort =  false;
-            dsATMOSCapability_t atmosCapability = dsAUDIO_ATMOS_NOTSUPPORTED;
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "NULL";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                const string usePort = (audioPort != "NULL") ? audioPort : "HDMI0";
+                const auto it = _audioPortHandles.find(usePort);
+                if (it != _audioPortHandles.end()) {
+                    auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        Exchange::IDeviceSettingsAudio::DolbyAtmosCapability caps = Exchange::IDeviceSettingsAudio::DolbyAtmosCapability::AUDIO_DOLBY_ATMOS_NOT_SUPPORTED;
+                        if (audio->GetAudioSinkDeviceAtmosCapability(it->second, caps) == Core::ERROR_NONE) {
+                            response["atmos_capability"] = static_cast<int>(caps);
+                        } else { success = false; }
+                        audio->Release();
+                    } else { success = false; }
+                } else {
+                    LOGERR("getSinkAtmosCapability: port %s not found", usePort.c_str());
+                    success = false;
+                }
+            }
+#else
+            dsATMOSCapability_t atmosCapability = dsAUDIO_ATMOS_NOTSUPPORTED;
             try
             {
                 if(audioPort != "NULL") {
@@ -3508,6 +5276,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION1(audioPort);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -3520,6 +5289,19 @@ namespace WPEFramework {
             int enable = parameters["enable"].Boolean();
 
             bool success = true;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                const string audioPort2 = "HDMI0";
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort2);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->SetAudioAtmosOutputMode(it->second, static_cast<bool>(enable)) != Core::ERROR_NONE) { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 if (device::Host::getInstance().isHDMIOutPortPresent())
@@ -3542,6 +5324,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION2(string("HDMI0"), sEnable);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -3551,10 +5334,28 @@ namespace WPEFramework {
             returnIfParamNotFound(parameters, "hdr_mode");
 
             string sMode = parameters["hdr_mode"].String();
+            bool success = false;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                uint32_t mode = getVideoFormatTypeFromString(sMode.c_str());
+                string videoPort = parameters.HasLabel("videoPort") ? parameters["videoPort"].String() : "HDMI0";
+                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    const auto it = _videoPortHandles.find(videoPort);
+                    if (it != _videoPortHandles.end()) {
+                        if (vp->SetForceHDRMode(it->second, static_cast<Exchange::IDeviceSettingsVideoPort::HDRStandard>(mode)) == Core::ERROR_NONE) {
+                            success = true;
+                            LOGINFO("setForceHDRMode set successfully \n");
+                        }
+                    } else {
+                        LOGERR("setForceHDRMode failure: port %s not found!\n", videoPort.c_str());
+                    }
+                    vp->Release();
+                }
+            }
+#else
             dsHDRStandard_t mode = getVideoFormatTypeFromString(sMode.c_str());
             LOGINFO("setForceHDRMode entry hdr_mode :%s mode:%d  !\n",sMode.c_str(),mode);
-
-            bool success = false;
             try
             {
 		std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
@@ -3574,17 +5375,44 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION2(string("HDMI0"), sMode);
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
         uint32_t DisplaySettings::getPreferredColorDepth(const JsonObject& parameters, JsonObject& response)
         {   //sample servicemanager response:{"colorDepth":"10 Bit","success":true}
             LOGINFOMETHOD();
+#ifdef USE_DEVICESETTING_PLUGIN
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : "HDMI0";
+            bool persist = parameters.HasLabel("persist") ? parameters["persist"].Boolean() : true;
+#else
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
             string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
             bool persist = parameters.HasLabel("persist") ? parameters["persist"].Boolean() : true;
-
+#endif
             bool success = true;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    const auto it = _videoPortHandles.find(videoDisplay);
+                    if (it != _videoPortHandles.end()) {
+                        uint32_t colorDepth = 0;
+                        if (vp->GetColorDepth(it->second, colorDepth) == Core::ERROR_NONE) {
+                            using CD = Exchange::IDeviceSettingsVideoPort::DisplayColorDepth;
+                            switch (static_cast<CD>(colorDepth)) {
+                                case CD::DS_DISPLAY_COLORDEPTH_8BIT:  response["colorDepth"] = "8 Bit"; break;
+                                case CD::DS_DISPLAY_COLORDEPTH_10BIT: response["colorDepth"] = "10 Bit"; break;
+                                case CD::DS_DISPLAY_COLORDEPTH_12BIT: response["colorDepth"] = "12 Bit"; break;
+                                case CD::DS_DISPLAY_COLORDEPTH_AUTO:  response["colorDepth"] = "Auto"; break;
+                                default: success = false; break;
+                            }
+                        } else { success = false; }
+                    } else { success = false; }
+                    vp->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
@@ -3612,6 +5440,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION1(videoDisplay);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -3629,6 +5458,26 @@ namespace WPEFramework {
             bool success = true;
             try
             {
+#ifdef USE_DEVICESETTING_PLUGIN
+                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    const auto it = _videoPortHandles.find(videoDisplay);
+                    if (it != _videoPortHandles.end()) {
+                        Exchange::IDeviceSettingsVideoPort::DisplayColorDepth cd = Exchange::IDeviceSettingsVideoPort::DisplayColorDepth::DS_DISPLAY_COLORDEPTH_UNKNOWN;
+                        if (strColorDepth == "8 Bit") cd = Exchange::IDeviceSettingsVideoPort::DisplayColorDepth::DS_DISPLAY_COLORDEPTH_8BIT;
+                        else if (strColorDepth == "10 Bit") cd = Exchange::IDeviceSettingsVideoPort::DisplayColorDepth::DS_DISPLAY_COLORDEPTH_10BIT;
+                        else if (strColorDepth == "12 Bit") cd = Exchange::IDeviceSettingsVideoPort::DisplayColorDepth::DS_DISPLAY_COLORDEPTH_12BIT;
+                        else if (strColorDepth == "Auto") cd = Exchange::IDeviceSettingsVideoPort::DisplayColorDepth::DS_DISPLAY_COLORDEPTH_AUTO;
+                        if (cd != Exchange::IDeviceSettingsVideoPort::DisplayColorDepth::DS_DISPLAY_COLORDEPTH_UNKNOWN) {
+                            if (vp->SetColorDepth(it->second, static_cast<uint32_t>(cd)) != Core::ERROR_NONE) { success = false; }
+                        } else {
+                            LOGERR("UNKNOWN color depth: %s", strColorDepth.c_str());
+                            success = false;
+                        }
+                    } else { success = false; }
+                    vp->Release();
+                } else { success = false; }
+#else
                 dsDisplayColorDepth_t colorDepth = dsDISPLAY_COLORDEPTH_UNKNOWN;
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
 		if (0==strncmp(strColorDepth.c_str(), "8 Bit", 5)){
@@ -3647,6 +5496,7 @@ namespace WPEFramework {
                 if (dsDISPLAY_COLORDEPTH_UNKNOWN!=colorDepth) {
                     vPort.setPreferredColorDepth(colorDepth, persist);
                 }
+#endif // USE_DEVICESETTING_PLUGIN
             }
             catch (const device::Exception& err)
             {
@@ -3664,8 +5514,13 @@ namespace WPEFramework {
             std::string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
             std::string mode = parameters["mode"].String();
 
+#ifdef USE_DEVICESETTING_PLUGIN
+            uint32_t action = 0; // STOP
+            uint32_t type = 0;   // ABSOLUTE
+#else
             dsAudioDuckingAction_t action = dsAUDIO_DUCKINGACTION_STOP;
             dsAudioDuckingType_t type = dsAUDIO_DUCKINGTYPE_ABSOLUTE;
+#endif
             uint8_t level = 100;
 
             if (mode == "mute")
@@ -3673,8 +5528,13 @@ namespace WPEFramework {
                 returnIfBooleanParamNotFound(parameters, "mute");
                 bool mute = parameters["mute"].Boolean();
 
+#ifdef USE_DEVICESETTING_PLUGIN
+                action = mute ? 1 : 0; // START : STOP
+                type = 0;              // ABSOLUTE
+#else
                 action = mute ? dsAUDIO_DUCKINGACTION_START : dsAUDIO_DUCKINGACTION_STOP;
                 type = dsAUDIO_DUCKINGTYPE_ABSOLUTE;
+#endif
                 level = mute ? 0 : 100;
             }
             else if (mode == "attenuate")
@@ -3693,8 +5553,13 @@ namespace WPEFramework {
                     returnResponse(false);
                 }
 
+#ifdef USE_DEVICESETTING_PLUGIN
+                action = enable ? 1 : 0; // START : STOP
+                type = relative ? 1 : 0; // RELATIVE : ABSOLUTE
+#else
                 action = enable ? dsAUDIO_DUCKINGACTION_START : dsAUDIO_DUCKINGACTION_STOP;
                 type = relative ? dsAUDIO_DUCKINGTYPE_RELATIVE : dsAUDIO_DUCKINGTYPE_ABSOLUTE;
+#endif
                 level = static_cast<uint8_t>((volume * 100.0) + 0.5);
             }
             else if (mode == "raw")
@@ -3729,18 +5594,34 @@ namespace WPEFramework {
                 }
 
                 if (actionStr == "start") {
+#ifdef USE_DEVICESETTING_PLUGIN
+                    action = 1; // START
+#else
                     action = dsAUDIO_DUCKINGACTION_START;
+#endif
                 } else if (actionStr == "stop") {
+#ifdef USE_DEVICESETTING_PLUGIN
+                    action = 0; // STOP
+#else
                     action = dsAUDIO_DUCKINGACTION_STOP;
+#endif
                 } else {
                     LOGERR("Invalid action %s", actionStr.c_str());
                     returnResponse(false);
                 }
 
                 if (typeStr == "absolute") {
+#ifdef USE_DEVICESETTING_PLUGIN
+                    type = 0; // ABSOLUTE
+#else
                     type = dsAUDIO_DUCKINGTYPE_ABSOLUTE;
+#endif
                 } else if (typeStr == "relative") {
+#ifdef USE_DEVICESETTING_PLUGIN
+                    type = 1; // RELATIVE
+#else
                     type = dsAUDIO_DUCKINGTYPE_RELATIVE;
+#endif
                 } else {
                     LOGERR("Invalid duckingType %s", typeStr.c_str());
                     returnResponse(false);
@@ -3755,6 +5636,23 @@ namespace WPEFramework {
             }
 
             bool success = true;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                using DT = Exchange::IDeviceSettingsAudio::DuckingType;
+                using DA = Exchange::IDeviceSettingsAudio::DuckingAction;
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->SetAudioDucking(it->second,
+                                static_cast<uint32_t>(type),
+                                static_cast<uint32_t>(action),
+                                level) != Core::ERROR_NONE) { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -3765,6 +5663,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION1(audioPort);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -3779,6 +5678,18 @@ namespace WPEFramework {
             bool enable = parameters["enable"].Boolean();
 
             bool success = false;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    const auto it = _videoPortHandles.find(videoDisplay);
+                    if (it != _videoPortHandles.end()) {
+                        if (vp->EnableVideoPort(it->second, enable) == Core::ERROR_NONE) { success = true; }
+                    }
+                    vp->Release();
+                }
+            }
+#else
             try
             {
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
@@ -3803,6 +5714,7 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION1(videoDisplay);
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -3813,6 +5725,22 @@ namespace WPEFramework {
 
             string videoDisplay = parameters["videoDisplay"].String();
             bool success = false;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    const auto it = _videoPortHandles.find(videoDisplay);
+                    if (it != _videoPortHandles.end()) {
+                        bool enabled = false;
+                        if (vp->IsVideoPortEnabled(it->second, enabled) == Core::ERROR_NONE) {
+                            response["enable"] = enabled;
+                            success = true;
+                        }
+                    }
+                    vp->Release();
+                }
+            }
+#else
             try
             {
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
@@ -3823,6 +5751,7 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION1(videoDisplay);
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -3831,6 +5760,22 @@ namespace WPEFramework {
             LOGINFOMETHOD();
             JsonArray supportedFormats;
             bool success = false;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+                if (vd != nullptr) {
+                    uint32_t formats = 0;
+                    if (vd->GetSupportedVideoCodingFormats(_videoDeviceHandle, formats) == Core::ERROR_NONE) {
+                        using VCF = Exchange::IDeviceSettingsVideoDevice::VideoCodingFormat;
+                        if (formats & static_cast<uint32_t>(VCF::DS_VIDEO_CODEC_MPEGHPART2)) supportedFormats.Add("HEVC");
+                        if (formats & static_cast<uint32_t>(VCF::DS_VIDEO_CODEC_MPEG4PART10)) supportedFormats.Add("H264");
+                        if (formats & static_cast<uint32_t>(VCF::DS_VIDEO_CODEC_MPEG2)) supportedFormats.Add("MPEG2");
+                        success = true;
+                    }
+                    vd->Release();
+                }
+            }
+#else
             try
             {
                 auto videoDevices = device::Host::getInstance().getVideoDevices();
@@ -3865,10 +5810,12 @@ namespace WPEFramework {
             {
                 LOGWARN("Unknown exception occurred");
             }
+#endif // USE_DEVICESETTING_PLUGIN
             response["supportedFormats"] = supportedFormats;
             returnResponse(success);
         }
 
+#ifndef USE_DEVICESETTING_PLUGIN
         static bool codecStringToEnum(const string& codec, dsVideoCodingFormat_t& out)
         {
             if (codec == "MPEGH-Part2" || codec == "HEVC") {
@@ -3901,6 +5848,7 @@ namespace WPEFramework {
                     return "UNKNOWN";
             }
         }
+#endif // !USE_DEVICESETTING_PLUGIN
 
         uint32_t DisplaySettings::getVideoCodecInfo(const JsonObject& parameters, JsonObject& response)
         {
@@ -3912,12 +5860,37 @@ namespace WPEFramework {
             }
 
             bool success = false;
+#ifdef USE_DEVICESETTING_PLUGIN
+            // Under COM-RPC, translate codec string to a numeric format index
+            uint32_t codecFmt = 1; // DS_VIDEO_CODEC_MPEGHPART2 default
+            if (codec == "MPEG4-Part10" || codec == "H264") codecFmt = 2;
+            else if (codec == "MPEG2") codecFmt = 4;
+            {
+                auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+                if (vd != nullptr) {
+                    Exchange::IDeviceSettingsVideoDevice::VideoCodecInfo info{};
+                    if (vd->GetVideoCodecInfo(_videoDeviceHandle, codecFmt, info) == Core::ERROR_NONE) {
+                        JsonArray entries;
+                        for (uint32_t i = 0; i < info.numEntries; ++i) {
+                            JsonObject item;
+                            item["index"] = i + 1;
+                            item["profile"] = std::to_string(info.entries[i].profile);
+                            item["level"] = info.entries[i].level;
+                            entries.Add(item);
+                        }
+                        response["numberOfEntries"] = info.numEntries;
+                        response["entries"] = entries;
+                        success = true;
+                    }
+                    vd->Release();
+                }
+            }
+#else
             dsVideoCodingFormat_t codecFmt = dsVIDEO_CODEC_MPEGHPART2;
             if (!codecStringToEnum(codec, codecFmt)) {
                 LOGERR("Unsupported codec: %s. Allowed: MPEGH-Part2, HEVC, MPEG4-Part10, H264, MPEG2", codec.c_str());
                 returnResponse(success);
             }
-
             try
             {
                 device::List<device::VideoDevice> videoDevices = device::Host::getInstance().getVideoDevices();
@@ -3937,17 +5910,13 @@ namespace WPEFramework {
                     if (codecFmt == dsVIDEO_CODEC_MPEGHPART2) {
                         return hevcProfileToString(profile);
                     }
-
-                    // Do not apply HEVC-specific profile mapping to non-HEVC codecs.
-                    // Until dedicated per-codec profile mappers are available, expose the
-                    // raw profile value so callers still receive accurate codec information.
                     return std::to_string(static_cast<int>(profile));
                 };
 
                 for (unsigned int i = 0; i < count; ++i)
                 {
                     JsonObject item;
-                    item["index"] = i + 1; // 1-based index to match TR-069 usage
+                    item["index"] = i + 1;
                     item["profile"] = profileToString(info.entries[i].profile);
                     item["level"] = info.entries[i].level;
                     entries.Add(item);
@@ -3969,9 +5938,11 @@ namespace WPEFramework {
             {
                 LOGWARN("Unknown exception occurred");
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
+#ifndef USE_DEVICESETTING_PLUGIN
         static const char* encodingToString(int enc)
         {
             switch (enc)
@@ -3983,9 +5954,11 @@ namespace WPEFramework {
                 default:                  return "UNKNOWN";
             }
         }
+#endif // !USE_DEVICESETTING_PLUGIN (encodingToString)
 
         static bool isValidAudioPort(const string& audioPort)
         {
+#ifndef USE_DEVICESETTING_PLUGIN
             bool returnValue = false;
             try
             {
@@ -4003,6 +5976,10 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION1(audioPort);
             }
             return returnValue;
+#else
+            (void)audioPort;
+            return true; // port validity checked via handle lookup under COM-RPC
+#endif
         }
 
         uint32_t DisplaySettings::getAudioEncoding(const JsonObject& parameters, JsonObject& response)
@@ -4017,6 +5994,24 @@ namespace WPEFramework {
             }
 
             bool success = false;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        Exchange::IDeviceSettingsAudio::AudioEncoding enc = Exchange::IDeviceSettingsAudio::AudioEncoding::AUDIO_ENCODING_NONE;
+                        if (audio->GetAudioEncoding(it->second, enc) == Core::ERROR_NONE) {
+                            response["audioPort"] = audioPort;
+                            response["encoding"] = encodingToString(static_cast<int>(enc));
+                            response["encodingId"] = static_cast<int>(enc);
+                            success = true;
+                        }
+                    }
+                    audio->Release();
+                }
+            }
+#else
             try
             {
                 if (!isValidAudioPort(audioPort))
@@ -4046,6 +6041,7 @@ namespace WPEFramework {
             {
                 LOGWARN("Unknown exception occurred");
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -4063,6 +6059,30 @@ namespace WPEFramework {
                 returnResponse(success);
             }
 
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        Exchange::IDeviceSettingsAudio::AudioEncoding enc = Exchange::IDeviceSettingsAudio::AudioEncoding::AUDIO_ENCODING_NONE;
+                        if (encoding == "DISPLAY") enc = Exchange::IDeviceSettingsAudio::AudioEncoding::AUDIO_ENCODING_DISPLAY;
+                        else if (encoding == "PCM")     enc = Exchange::IDeviceSettingsAudio::AudioEncoding::AUDIO_ENCODING_PCM;
+                        else if (encoding == "AC3")     enc = Exchange::IDeviceSettingsAudio::AudioEncoding::AUDIO_ENCODING_AC3;
+                        if (audio->SetAudioEncoding(it->second, enc, true) == Core::ERROR_NONE) {
+                            // reflect the set value back
+                            Exchange::IDeviceSettingsAudio::AudioEncoding setEnc = Exchange::IDeviceSettingsAudio::AudioEncoding::AUDIO_ENCODING_NONE;
+                            audio->GetAudioEncoding(it->second, setEnc);
+                            response["audioPort"] = audioPort;
+                            response["encoding"] = encodingToString(static_cast<int>(setEnc));
+                            response["encodingId"] = static_cast<int>(setEnc);
+                            success = true;
+                        }
+                    }
+                    audio->Release();
+                }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -4092,6 +6112,7 @@ namespace WPEFramework {
             {
                 LOGWARN("Unknown exception occurred");
             }
+#endif // USE_DEVICESETTING_PLUGIN
 
             returnResponse(success);
         }
@@ -4101,9 +6122,30 @@ namespace WPEFramework {
             LOGINFOMETHOD();
 
             bool success = false;
+#ifdef USE_DEVICESETTING_PLUGIN
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : "HDMI0";
+#else
             std::string defaultVideoPort = device::Host::getInstance().getDefaultVideoPortName();
             std::string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(defaultVideoPort);
-
+#endif
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* disp = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+                if (disp != nullptr) {
+                    const auto it = _displayHandles.find(videoDisplay);
+                    if (it != _displayHandles.end()) {
+                        uint32_t aspectRatioVal = 0;
+                        string aspectRatioName;
+                        if (disp->GetDisplayAspectRatio(it->second, aspectRatioVal, aspectRatioName) == Core::ERROR_NONE) {
+                            response["aspectRatio"] = aspectRatioName;
+                            response["aspectRatioValue"] = aspectRatioVal;
+                            success = true;
+                        }
+                    }
+                    disp->Release();
+                }
+            }
+#else
             try
             {
                 device::VideoOutputPort &vPort = device::VideoOutputPortConfig::getInstance().getPort(videoDisplay.c_str());
@@ -4115,8 +6157,8 @@ namespace WPEFramework {
                 else
                 {
                     const device::AspectRatio aspectRatio = vPort.getDisplay().getAspectRatio();
-                    response["aspectRatio"] = aspectRatio.getName();   // e.g. "16x9", "4x3"
-                    response["aspectRatioValue"] = aspectRatio.getId(); // numeric enum value
+                    response["aspectRatio"] = aspectRatio.getName();
+                    response["aspectRatioValue"] = aspectRatio.getId();
                     success = true;
                 }
             }
@@ -4132,6 +6174,7 @@ namespace WPEFramework {
             {
                 LOGWARN("Unknown exception occurred");
             }
+#endif // USE_DEVICESETTING_PLUGIN
 
             returnResponse(success);
         }
@@ -4139,9 +6182,33 @@ namespace WPEFramework {
         uint32_t DisplaySettings::getColorDepthCapabilities(const JsonObject& parameters, JsonObject& response)
         {   //sample servicemanager response:{"success":true,"capabilities":["8 Bit","10 Bit","12 Bit","Auto"]}
             LOGINFOMETHOD();
+#ifdef USE_DEVICESETTING_PLUGIN
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : "HDMI0";
+#else
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
             string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+#endif
             vector<string> colorDepthCapabilities;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    const auto it = _videoPortHandles.find(videoDisplay);
+                    if (it != _videoPortHandles.end()) {
+                        uint32_t capabilities = 0;
+                        if (vp->GetColorDepthCapabilities(it->second, capabilities) == Core::ERROR_NONE) {
+                            using CD = Exchange::IDeviceSettingsVideoPort::DisplayColorDepth;
+                            if (!capabilities) colorDepthCapabilities.emplace_back("none");
+                            if (capabilities & static_cast<uint32_t>(CD::DS_DISPLAY_COLORDEPTH_8BIT))  colorDepthCapabilities.emplace_back("8 Bit");
+                            if (capabilities & static_cast<uint32_t>(CD::DS_DISPLAY_COLORDEPTH_10BIT)) colorDepthCapabilities.emplace_back("10 Bit");
+                            if (capabilities & static_cast<uint32_t>(CD::DS_DISPLAY_COLORDEPTH_12BIT)) colorDepthCapabilities.emplace_back("12 Bit");
+                            if (capabilities & static_cast<uint32_t>(CD::DS_DISPLAY_COLORDEPTH_AUTO))  colorDepthCapabilities.emplace_back("Auto");
+                        }
+                    }
+                    vp->Release();
+                }
+            }
+#else
             try
             {
                 unsigned int capabilities = 0;
@@ -4157,6 +6224,7 @@ namespace WPEFramework {
             {
                 LOG_DEVICE_EXCEPTION1(videoDisplay);
             }
+#endif // USE_DEVICESETTING_PLUGIN
             setResponseArray(response, "capabilities", colorDepthCapabilities);
             returnResponse(true);
         }
@@ -4166,6 +6234,18 @@ namespace WPEFramework {
            LOGINFOMETHOD();
            bool success = true;
            std::string type;
+#ifdef USE_DEVICESETTING_PLUGIN
+           {
+               auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+               if (audio != nullptr) {
+                   if (audio->GetAudioMS12Config(type) == Core::ERROR_NONE) {
+                       LOGINFO("Platform supports MS12 Config Z\n");
+                       response["ms12config"] = type;
+                   } else { success = false; }
+                   audio->Release();
+               } else { success = false; }
+           }
+#else
            try {
                device::Host::getInstance().getMS12ConfigDetails(type);
                LOGINFO("Platform supports MS12 Config Z\n");
@@ -4176,6 +6256,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION1(string("MS12ConfigType"));
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
            returnResponse(success);
        }
 
@@ -4489,6 +6570,19 @@ namespace WPEFramework {
                 returnResponse(false);
             }
 
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->SetAudioEnablePersist(it->second, pEnable) != Core::ERROR_NONE) { success = false; }
+                        if (success && audio->EnableAudioPort(it->second, pEnable) != Core::ERROR_NONE) { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -4660,6 +6754,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION1(audioPort);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             if(audioPortEnableStatusMap[audioPort] != pEnable)
             {
                 JsonObject params;
@@ -4670,7 +6765,12 @@ namespace WPEFramework {
             }
             returnResponse(success);
         }
-        
+
+#ifndef USE_DEVICESETTING_PLUGIN
+        // These HDMI ARC/CEC callback functions use libds directly and are not
+        // needed in the COM-RPC (USE_DEVICESETTING_PLUGIN) path.
+        // NOTE: checkSADUpdate is an exception — it has both a libds (#ifndef)
+        // and a COM-RPC (#else) implementation immediately below.
 	void  DisplaySettings::checkSADUpdate() {
 		//Timer will be invoked if SAD update is delayed
 		LOGINFO("Inside checkSADUpdate\n");
@@ -4718,6 +6818,77 @@ namespace WPEFramework {
 			}
 		}
 	}
+#else
+	void  DisplaySettings::checkSADUpdate() {
+		// COM-RPC path: replaces libds calls with IDeviceSettingsAudio COM-RPC methods
+		LOGINFO("Inside checkSADUpdate (COM-RPC)\n");
+		std::lock_guard<std::mutex> lock(m_SadMutex);
+		LOGINFO("m_AudioDeviceSADState = %d, m_arcEarcAudioEnabled = %d, m_hdmiInAudioDeviceConnected = %d\n",
+		        m_AudioDeviceSADState, m_arcEarcAudioEnabled, m_hdmiInAudioDeviceConnected);
+		if (m_SADDetectionTimer.isActive()) {
+			m_SADDetectionTimer.stop();
+		}
+		if (m_arcEarcAudioEnabled == false && m_hdmiInAudioDeviceConnected == true) {
+			if (m_AudioDeviceSADState == AUDIO_DEVICE_SAD_RECEIVED) {
+				m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UPDATED;
+				auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+				if (audio != nullptr) {
+					const auto it = _audioPortHandles.find("HDMI_ARC0");
+					if (it != _audioPortHandles.end()) {
+						// Build flat SAD array from sad_list
+						std::vector<uint8_t> sadArray(sad_list.begin(), sad_list.end());
+						audio->SetSAD(it->second,
+						              sadArray.data(),
+						              static_cast<uint8_t>(sadArray.size()));
+
+						int32_t stereoAutoMode = 0;
+						if (audio->GetStereoAuto(it->second, stereoAutoMode) == Core::ERROR_NONE
+						    && stereoAutoMode != 0) {
+							audio->SetStereoAuto(it->second, 1, true);
+						} else {
+							Exchange::IDeviceSettingsAudio::StereoMode mode =
+							        Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
+							audio->GetStereoMode(it->second, mode);
+							audio->SetStereoMode(it->second, mode, true);
+						}
+					}
+					audio->Release();
+				}
+				LOGINFO("SAD is updated m_AudioDeviceSADState = %d\n", m_AudioDeviceSADState);
+			} else {
+				if (m_requestSadRetrigger == false) {
+					LOGINFO("Not recieved SAD update after 3sec timeout, retriggering the SAD request and starting the timer for 3 seconds\n");
+					m_requestSadRetrigger = true;
+					sendMsgToQueue(REQUEST_SHORT_AUDIO_DESCRIPTOR, NULL);
+					m_AudioDeviceSADState = AUDIO_DEVICE_SAD_REQUESTED;
+					m_SADDetectionTimer.start(SAD_UPDATE_CHECK_TIME_IN_MILLISECONDS);
+				} else {
+					LOGINFO("Not recieved SAD update even after retriggering the SAD request, proceeding with default SAD\n");
+					m_requestSadRetrigger = false;
+				}
+			}
+			if (!m_requestSadRetrigger) {
+				LOGINFO("%s: Enable ARC (COM-RPC)... \n", __FUNCTION__);
+				auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+				if (audio != nullptr) {
+					const auto it = _audioPortHandles.find("HDMI_ARC0");
+					if (it != _audioPortHandles.end()) {
+						Exchange::IDeviceSettingsAudio::AudioARCStatus arcStatus{};
+						arcStatus.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
+						arcStatus.status  = true;
+						audio->EnableARC(it->second, arcStatus);
+					}
+					audio->Release();
+				}
+				m_arcEarcAudioEnabled = true;
+			}
+		}
+	}
+#endif // !USE_DEVICESETTING_PLUGIN (checkSADUpdate)
+
+#ifndef USE_DEVICESETTING_PLUGIN
+        // The following ARC/CEC callback functions and helper functions use
+        // libds directly and are not needed in the COM-RPC path.
 
         uint32_t DisplaySettings::getEnableAudioPort (const JsonObject& parameters, JsonObject& response)
         {   //sample servicemanager response:
@@ -4725,6 +6896,22 @@ namespace WPEFramework {
                        bool success = true;
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        bool isEnabled = false;
+                        if (audio->IsAudioPortEnabled(it->second, isEnabled) == Core::ERROR_NONE) {
+                            response["enable"] = isEnabled;
+                            LOGWARN("Thunder sending response to get state enable for audioPort %s is: %s", audioPort.c_str(), isEnabled ? "TRUE" : "FALSE");
+                        } else { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
 		bool isEnabled =  false;
@@ -4748,6 +6935,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION1(audioPort);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -5382,7 +7570,12 @@ void DisplaySettings::sendMsgThread()
             LOGINFO("[ARC Audio Status Event], %s : %s", __FUNCTION__, C_STR(message));
 
             if (parameters.HasLabel("muteStatus") && parameters.HasLabel("volumeLevel")) {
-                int iArcVolumeLevel =  stoi(parameters["volumeLevel"].String());
+                int iArcVolumeLevel = 0;
+                const string volumeLevelStr = parameters["volumeLevel"].String();
+                if (!TryParseIntInRange(volumeLevelStr, 0, 100, iArcVolumeLevel)) {
+                    LOGWARN("Invalid volumeLevel in ARC Audio Status Event");
+                    return;
+                }
                 if(iArcVolumeLevel != hdmiArcVolumeLevel)
 		{
 		    hdmiArcVolumeLevel = iArcVolumeLevel;
@@ -5391,7 +7584,13 @@ void DisplaySettings::sendMsgThread()
                     sendNotify("volumeLevelChanged", volParams);
 		}
 
-		bool bMuteStatus = stoi(parameters["muteStatus"].String());
+                int muteStatusInt = 0;
+                const string muteStatusStr = parameters["muteStatus"].String();
+                if (!TryParseIntInRange(muteStatusStr, 0, 1, muteStatusInt)) {
+                    LOGWARN("Invalid muteStatus in ARC Audio Status Event");
+                    return;
+                }
+		bool bMuteStatus = (muteStatusInt != 0);
                 if( bMuteStatus != hdmiArcMuteStatus )
 		{
                     hdmiArcMuteStatus = bMuteStatus;
@@ -5766,6 +7965,7 @@ void DisplaySettings::sendMsgThread()
                m_AudioDevicePowerOnStatusTimer.stop();
             }
  }
+#endif // !USE_DEVICESETTING_PLUGIN
         // Event management end
 
         // Thunder plugins communication end
@@ -5775,6 +7975,21 @@ void DisplaySettings::sendMsgThread()
         {   //sample servicemanager response:
             LOGINFOMETHOD();
 			bool success = true;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* disp = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+                if (disp != nullptr) {
+                    const auto it = _displayHandles.find("HDMI0");
+                    if (it != _displayHandles.end()) {
+                        uint32_t capabilities = 0;
+                        if (disp->GetTVHDRCapabilities(it->second, capabilities) == Core::ERROR_NONE) {
+                            response["capabilities"] = capabilities;
+                        } else { success = false; }
+                    } else { success = false; }
+                    disp->Release();
+                } else { success = false; }
+            }
+#else
 			int capabilities = dsHDRSTANDARD_NONE;
             try
             {
@@ -5794,6 +8009,7 @@ void DisplaySettings::sendMsgThread()
                 LOG_DEVICE_EXCEPTION1(string("HDMI0"));
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -5802,6 +8018,20 @@ void DisplaySettings::sendMsgThread()
             LOGINFOMETHOD();
             bool success = true;
             bool isConnectedDeviceRepeater = false;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* disp = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+                if (disp != nullptr) {
+                    const auto it = _displayHandles.find("HDMI0");
+                    if (it != _displayHandles.end()) {
+                        if (disp->IsConnectedDeviceRepeater(it->second, isConnectedDeviceRepeater) == Core::ERROR_NONE) {
+                            response["HdcpRepeater"] = isConnectedDeviceRepeater;
+                        } else { success = false; }
+                    } else { success = false; }
+                    disp->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
@@ -5820,6 +8050,7 @@ void DisplaySettings::sendMsgThread()
                 LOG_DEVICE_EXCEPTION1(string("HDMI0"));
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -5827,6 +8058,21 @@ void DisplaySettings::sendMsgThread()
         {   //sample servicemanager response:
             LOGINFOMETHOD();
 			bool success = true;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    const auto it = _videoPortHandles.find("HDMI0");
+                    if (it != _videoPortHandles.end()) {
+                        string resolution;
+                        if (vp->GetDefaultResolution(it->second, resolution) == Core::ERROR_NONE) {
+                            response["defaultResolution"] = resolution;
+                        } else { success = false; }
+                    } else { success = false; }
+                    vp->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
@@ -5844,6 +8090,7 @@ void DisplaySettings::sendMsgThread()
                 LOG_DEVICE_EXCEPTION1(string("HDMI0"));
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -5857,6 +8104,11 @@ void DisplaySettings::sendMsgThread()
             string sScartParameterData = parameters["scartParameterData"].String();
 
             bool success = true;
+#ifdef USE_DEVICESETTING_PLUGIN
+            // SCART is a legacy interface not supported via COM-RPC. Skip.
+            LOGWARN("setScartParameter: not supported in COM-RPC mode");
+            success = false;
+#else
             try
             {
                 device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort("SCART0");
@@ -5867,6 +8119,7 @@ void DisplaySettings::sendMsgThread()
                 LOG_DEVICE_EXCEPTION2(sScartParameter, sScartParameterData);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
         //End methods
@@ -5889,6 +8142,23 @@ void DisplaySettings::sendMsgThread()
             {
                 string resolution;
                 string display = connectedDisplays.at(i);
+#ifdef USE_DEVICESETTING_PLUGIN
+                {
+                    const auto it = _videoPortHandles.find(display);
+                    if (it != _videoPortHandles.end()) {
+                        auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                        if (vp != nullptr) {
+                            Exchange::IDeviceSettingsVideoPort::VideoPortResolution vpRes;
+                            if (vp->GetVideoPortResolution(it->second, vpRes) == Core::ERROR_NONE) {
+                                resolution = vpRes.name;
+                            }
+                            vp->Release();
+                        }
+                    }
+                }
+                const std::string defaultPort = _videoPortHandles.empty() ? std::string("HDMI0") : _videoPortHandles.begin()->first;
+                std::string videoPortName = defaultPort.substr(0, defaultPort.size() - 1);
+#else
                 try
                 {
                     resolution = device::Host::getInstance().getVideoOutputPort(display).getResolution().getName();
@@ -5897,10 +8167,11 @@ void DisplaySettings::sendMsgThread()
                 {
                     LOG_DEVICE_EXCEPTION1(display);
                 }
+                std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
+                std::string videoPortName = strVideoPort.substr(0, strVideoPort.size()-1);
+#endif // USE_DEVICESETTING_PLUGIN
                 if (!resolution.empty())
                 {
-                    std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                    std::string videoPortName = strVideoPort.substr(0, strVideoPort.size()-1);
                     if (Utils::String::stringContains(display, videoPortName.c_str()))
                     {
                         // only report first HDMI connected device is HDMI is connected
@@ -5987,6 +8258,7 @@ void DisplaySettings::sendMsgThread()
             JsonObject params;
             string sPortName;
             string sPortStatus;
+#ifndef USE_DEVICESETTING_PLUGIN
             switch (iAudioPortType)
             {
                 case dsAUDIOPORT_TYPE_HDMI_ARC:
@@ -6000,8 +8272,18 @@ void DisplaySettings::sendMsgThread()
 
                 default:
                     //do nothing
-                	break;
+                    break;
             }
+#else
+            // COM-RPC path: portType maps to Exchange::IDeviceSettingsAudio::AudioPortType
+            if (iAudioPortType == static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HDMIARC)) {
+                params["HotpluggedAudioPort"] = "HDMI_ARC0";
+                sPortName.assign("HDMI_ARC0");
+            } else if (iAudioPortType == static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HEADPHONE)) {
+                params["HotpluggedAudioPort"] = "HEADPHONE0";
+                sPortName.assign("HEADPHONE0");
+            }
+#endif // !USE_DEVICESETTING_PLUGIN
 
             if (1 == isPortConnected)
             {
@@ -6021,6 +8303,27 @@ void DisplaySettings::sendMsgThread()
 
         void DisplaySettings::getConnectedVideoDisplaysHelper(vector<string>& connectedDisplays)
         {
+#ifdef USE_DEVICESETTING_PLUGIN
+            // COM-RPC path: iterate over cached video port handles and check connectivity
+            auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+            if (vp != nullptr) {
+                for (const auto& kv : _videoPortHandles) {
+                    bool connected = false;
+                    if (vp->IsVideoPortDisplayConnected(kv.second, connected) == Core::ERROR_NONE && connected) {
+                        const std::string& portName = kv.first;
+                        if (Utils::String::stringContains(portName, "HDMI") &&
+                            !Utils::String::stringContains(portName, "HDMI_ARC")) {
+                            connectedDisplays.clear();
+                            connectedDisplays.emplace_back(portName);
+                            break;
+                        } else {
+                            vectorSet(connectedDisplays, portName);
+                        }
+                    }
+                }
+                vp->Release();
+            }
+#else
             try
             {
                 device::List<device::VideoOutputPort> vPorts = device::Host::getInstance().getVideoOutputPorts();
@@ -6047,6 +8350,7 @@ void DisplaySettings::sendMsgThread()
             {
                 LOG_DEVICE_EXCEPTION0();
             }
+#endif // USE_DEVICESETTING_PLUGIN
         }
 
         bool DisplaySettings::checkPortName(std::string& name) const
@@ -6076,6 +8380,18 @@ void DisplaySettings::sendMsgThread()
             LOGINFOMETHOD();
             bool success = true;
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->ResetAudioDialogEnhancement(it->second) != Core::ERROR_NONE) { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -6086,6 +8402,7 @@ void DisplaySettings::sendMsgThread()
                 LOG_DEVICE_EXCEPTION1(audioPort);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -6094,6 +8411,18 @@ void DisplaySettings::sendMsgThread()
             LOGINFOMETHOD();
             bool success = true;
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->ResetAudioBassEnhancer(it->second) != Core::ERROR_NONE) { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -6104,6 +8433,7 @@ void DisplaySettings::sendMsgThread()
                 LOG_DEVICE_EXCEPTION1(audioPort);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -6112,6 +8442,18 @@ void DisplaySettings::sendMsgThread()
             LOGINFOMETHOD();
             bool success = true;
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->ResetAudioSurroundVirtualizer(it->second) != Core::ERROR_NONE) { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -6122,6 +8464,7 @@ void DisplaySettings::sendMsgThread()
                 LOG_DEVICE_EXCEPTION1(audioPort);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
 
@@ -6130,6 +8473,18 @@ void DisplaySettings::sendMsgThread()
             LOGINFOMETHOD();
             bool success = true;
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->ResetAudioVolumeLeveller(it->second) != Core::ERROR_NONE) { success = false; }
+                    } else { success = false; }
+                    audio->Release();
+                } else { success = false; }
+            }
+#else
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -6140,12 +8495,34 @@ void DisplaySettings::sendMsgThread()
                 LOG_DEVICE_EXCEPTION1(audioPort);
                 success = false;
             }
+#endif // USE_DEVICESETTING_PLUGIN
             returnResponse(success);
         }
         uint32_t DisplaySettings::getVideoFormat(const JsonObject& parameters, JsonObject& response)
         {   //sample servicemanager response:{"currentVideoFormat":"SDR","supportedVideoFormat":["SDR","HDR10","HLG","DV","Technicolor Prime"],"success":true}
             LOGINFOMETHOD();
-
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                string videoPort = parameters.HasLabel("videoPort") ? parameters["videoPort"].String() : "HDMI0";
+                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    const auto it = _videoPortHandles.find(videoPort);
+                    if (it != _videoPortHandles.end()) {
+                        Exchange::IDeviceSettingsVideoPort::HDRStandard hdrStd = Exchange::IDeviceSettingsVideoPort::HDRStandard::DS_HDRSTANDARD_NONE;
+                        if (vp->GetVideoEOTF(it->second, hdrStd) == Core::ERROR_NONE) {
+                            response["currentVideoFormat"] = getVideoFormatTypeToString(static_cast<uint32_t>(hdrStd));
+                        } else {
+                            response["currentVideoFormat"] = "NONE";
+                        }
+                    } else {
+                        response["currentVideoFormat"] = "NONE";
+                    }
+                    vp->Release();
+                } else {
+                    response["currentVideoFormat"] = "NONE";
+                }
+            }
+#else
             try
             {
                 std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
@@ -6166,8 +8543,7 @@ void DisplaySettings::sendMsgThread()
                 LOG_DEVICE_EXCEPTION0();
                 response["currentVideoFormat"] = "NONE";
             }
-
-
+#endif // USE_DEVICESETTING_PLUGIN
             response["supportedVideoFormat"] = getSupportedVideoFormats();
             returnResponse(true);
         }
@@ -6175,6 +8551,25 @@ void DisplaySettings::sendMsgThread()
         JsonArray DisplaySettings::getSupportedVideoFormats()
         {
             JsonArray videoFormats;
+#ifdef USE_DEVICESETTING_PLUGIN
+            {
+                auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+                if (vd != nullptr) {
+                    int32_t capabilities = 0;
+                    if (vd->GetHDRCapabilities(_videoDeviceHandle, capabilities) == Core::ERROR_NONE) {
+                        using HS = Exchange::IDeviceSettingsVideoPort::HDRStandard;
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_HDR10))         videoFormats.Add("HDR10");
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_HLG))           videoFormats.Add("HLG");
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_DOLBYVISION))   videoFormats.Add("DV");
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_TECHNICOLORPRIME)) videoFormats.Add("Technicolor Prime");
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_HDR10PLUS))     videoFormats.Add("HDR10PLUS");
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_SDR))           videoFormats.Add("SDR");
+                    }
+                    vd->Release();
+                }
+            }
+            return videoFormats;
+#else
             int capabilities = dsHDRSTANDARD_NONE;
 
             try
@@ -6215,11 +8610,19 @@ void DisplaySettings::sendMsgThread()
                LOGINFO("capabilities: %s", videoFormats[i].String().c_str());
             }
             return videoFormats;
+#endif // USE_DEVICESETTING_PLUGIN
         }
 
-        const char *DisplaySettings::getVideoFormatTypeToString(dsHDRStandard_t format)
+        const char *DisplaySettings::getVideoFormatTypeToString(
+#ifndef USE_DEVICESETTING_PLUGIN
+            dsHDRStandard_t format
+#else
+            uint32_t format
+#endif
+            )
         {
             const char *strValue = "NONE";
+#ifndef USE_DEVICESETTING_PLUGIN
             switch (format)
             {
                 case dsHDRSTANDARD_SDR:
@@ -6251,11 +8654,24 @@ void DisplaySettings::sendMsgThread()
                     strValue = "NONE";
                     break;
             }
+#else
+            using HS = Exchange::IDeviceSettingsVideoPort::HDRStandard;
+            switch (static_cast<HS>(format)) {
+                case HS::DS_HDRSTANDARD_SDR:             strValue = "SDR"; break;
+                case HS::DS_HDRSTANDARD_HDR10:           strValue = "HDR10"; break;
+                case HS::DS_HDRSTANDARD_HDR10PLUS:       strValue = "HDR10PLUS"; break;
+                case HS::DS_HDRSTANDARD_HLG:             strValue = "HLG"; break;
+                case HS::DS_HDRSTANDARD_DOLBYVISION:     strValue = "DV"; break;
+                case HS::DS_HDRSTANDARD_TECHNICOLORPRIME: strValue = "TechnicolorPrime"; break;
+                default:                                  strValue = "NONE"; break;
+            }
+#endif // !USE_DEVICESETTING_PLUGIN
             return strValue;
-
         }
-	dsHDRStandard_t DisplaySettings::getVideoFormatTypeFromString(const char *strFormat)
+
+	uint32_t DisplaySettings::getVideoFormatTypeFromString(const char *strFormat)
         {
+#ifndef USE_DEVICESETTING_PLUGIN
            dsHDRStandard_t mode = dsHDRSTANDARD_NONE;
             if(strcmp(strFormat,"SDR")== 0 )
                     mode = dsHDRSTANDARD_SDR;
@@ -6273,8 +8689,17 @@ void DisplaySettings::sendMsgThread()
                     mode = dsHDRSTANDARD_NONE;
 	    else
 		    mode = dsHDRSTANDARD_Invalid;
-
 	    return mode;
+#else
+            using HS = Exchange::IDeviceSettingsVideoPort::HDRStandard;
+            if(strcmp(strFormat,"SDR")== 0 )       return static_cast<uint32_t>(HS::DS_HDRSTANDARD_SDR);
+            if(strcmp(strFormat,"HDR10")== 0)      return static_cast<uint32_t>(HS::DS_HDRSTANDARD_HDR10);
+            if(strcmp(strFormat,"HDR10PLUS")== 0)  return static_cast<uint32_t>(HS::DS_HDRSTANDARD_HDR10PLUS);
+            if(strcmp(strFormat,"DV")== 0)         return static_cast<uint32_t>(HS::DS_HDRSTANDARD_DOLBYVISION);
+            if(strcmp(strFormat,"HLG")== 0)        return static_cast<uint32_t>(HS::DS_HDRSTANDARD_HLG);
+            if(strcmp(strFormat,"TechnicolorPrime")== 0) return static_cast<uint32_t>(HS::DS_HDRSTANDARD_TECHNICOLORPRIME);
+            return static_cast<uint32_t>(HS::DS_HDRSTANDARD_NONE);
+#endif // !USE_DEVICESETTING_PLUGIN
         }
     Core::hresult DisplaySettings::Request(const string& newState)
 	{
@@ -6282,6 +8707,27 @@ void DisplaySettings::sendMsgThread()
 		getConnectedVideoDisplaysHelper(connectedDisplays);
 		for (int i = 0; i < (int)connectedDisplays.size(); i++)
 		{
+#ifdef USE_DEVICESETTING_PLUGIN
+			const std::string& strVideoPort = connectedDisplays.at(i);
+			bool enable = (newState == "GAME") ? true : false;
+			auto* disp = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+			if (disp != nullptr) {
+			    const auto it = _displayHandles.find(strVideoPort);
+			    if (it != _displayHandles.end()) {
+			        using ACT = Exchange::IDeviceSettingsDisplay::AVIContentType;
+			        using ASI = Exchange::IDeviceSettingsDisplay::AVIScanInformation;
+			        if (enable) {
+			            disp->SetAVIContentType(it->second, static_cast<uint32_t>(ACT::DS_AVI_CONTENT_TYPE_GAME));
+			            disp->SetAVIScanInformation(it->second, static_cast<uint32_t>(ASI::DS_AVI_SCAN_TYPE_UNDERSCAN));
+			        } else {
+			            disp->SetAVIContentType(it->second, static_cast<uint32_t>(ACT::DS_AVI_CONTENT_TYPE_NOT_SIGNALLED));
+			            disp->SetAVIScanInformation(it->second, static_cast<uint32_t>(ASI::DS_AVI_SCAN_TYPE_NO_DATA));
+			        }
+			        disp->SetAllmEnabled(it->second, enable);
+			    }
+			    disp->Release();
+			}
+#else
 			try
 			{
 				std::string strVideoPort = connectedDisplays.at(i);;
@@ -6307,6 +8753,7 @@ void DisplaySettings::sendMsgThread()
 			{
 				LOG_DEVICE_EXCEPTION0();
 			}
+#endif // USE_DEVICESETTING_PLUGIN
 		}
 		if( 0 == (int)connectedDisplays.size())
 		{
@@ -6317,6 +8764,7 @@ void DisplaySettings::sendMsgThread()
 	}
         void DisplaySettings::registerDsEventHandlers()
         {
+#ifndef USE_DEVICESETTING_PLUGIN
             LOGINFO("registerDsEventHandlers");
             if(!_registeredDsEventHandlers)
             {
@@ -6328,8 +8776,16 @@ void DisplaySettings::sendMsgThread()
                 device::Host::getInstance().Register(baseInterface<device::Host::IVideoDeviceEvents>(), "WPE[DisplaySettings]");
                 device::Host::getInstance().Register(baseInterface<device::Host::IVideoOutputPortEvents>(), "WPE[DisplaySettings]");
             }
+#endif // !USE_DEVICESETTING_PLUGIN
         }
-
+#ifndef USE_DEVICESETTING_PLUGIN
+        // ====================================================================
+        // libds / IARM event handlers — compiled only when NOT using the
+        // DeviceSettings Thunder plugin (i.e. !USE_DEVICESETTING_PLUGIN).
+        // Under USE_DEVICESETTING_PLUGIN these events arrive via COM-RPC
+        // notification delegates defined in the header and the On*DS* forwarders
+        // added above.
+        // ====================================================================
         void DisplaySettings::OnDisplayRxSense(dsDisplayEvent_t displayEvent)
         {
             LOGINFO("Received OnDisplayRxSense callback");
@@ -6547,6 +9003,7 @@ void DisplaySettings::sendMsgThread()
             }
 
         }
+#endif // !USE_DEVICESETTING_PLUGIN
 
     } // namespace Plugin
 } // namespace WPEFramework

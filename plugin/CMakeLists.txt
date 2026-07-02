@@ -21,6 +21,18 @@ set(MODULE_NAME ${NAMESPACE}${PLUGIN_NAME})
 set(PLUGIN_DISPLAYSETTINGS_AUTOSTART "false" CACHE STRING "Automatically start DisplaySettings plugin")
 set(PLUGIN_DISPLAYSETTINGS_STARTUPORDER "" CACHE STRING "To configure startup order of DisplaySettings plugin")
 
+# -----------------------------------------------------------------------
+# USE_DEVICESETTING_PLUGIN: connect to DeviceSettings plugin via COM-RPC
+# instead of calling libds / IARM directly.
+# Enable at configure time: cmake -DUSE_DEVICESETTING_PLUGIN=ON
+# (also passed from Yocto recipe via EXTRA_OECMAKE += "-DUSE_DEVICESETTING_PLUGIN=ON")
+# -----------------------------------------------------------------------
+option(USE_DEVICESETTING_PLUGIN
+    "Use DeviceSettings COM-RPC plugin instead of libds/IARM for DisplaySettings" OFF)
+
+set(PLUGIN_DISPLAYSETTINGS_DEVICESETTINGS_CALLSIGN "org.rdk.DeviceSettings"
+    CACHE STRING "Callsign of the DeviceSettings plugin used by DisplaySettings")
+
 find_package(${NAMESPACE}Plugins REQUIRED)
 
 add_library(${MODULE_NAME} SHARED
@@ -43,20 +55,36 @@ endif (RDK_SERVICES_L2_TEST)
 
 target_compile_definitions(${MODULE_NAME} PRIVATE MODULE_NAME=Plugin_${PLUGIN_NAME})
 
-find_package(DS)
-if (DS_FOUND)
-    find_package(IARMBus)
-    add_definitions(-DDS_FOUND)
-    target_include_directories(${MODULE_NAME} PRIVATE ${IARMBUS_INCLUDE_DIRS})
-    target_include_directories(${MODULE_NAME} PRIVATE ${DS_INCLUDE_DIRS})
-    if (RDK_SERVICE_L2_TEST)
-    target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${IARMBUS_LIBRARIES} ${DS_LIBRARIES} ${NAMESPACE}::${NAMESPACE}Helpers)
-    else()
-    target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${IARMBUS_LIBRARIES} ${DS_LIBRARIES} "-ltr181api" ${NAMESPACE}::${NAMESPACE}Helpers)
-    endif(RDK_SERVICE_L2_TEST)
-else (DS_FOUND)
-    target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${NAMESPACE}::${NAMESPACE}Helpers)
-endif(DS_FOUND)
+if (USE_DEVICESETTING_PLUGIN)
+    # COM-RPC path: use DeviceSettings Thunder plugin via DeviceSettingsClientHelper
+    add_definitions(-DUSE_DEVICESETTING_PLUGIN)
+    add_definitions(-DPLUGIN_DISPLAYSETTINGS_DEVICESETTINGS_CALLSIGN="${PLUGIN_DISPLAYSETTINGS_DEVICESETTINGS_CALLSIGN}")
+    message(STATUS "DisplaySettings: USE_DEVICESETTING_PLUGIN=ON  — callsign=${PLUGIN_DISPLAYSETTINGS_DEVICESETTINGS_CALLSIGN}")
+
+    # entservices-helpers provides DeviceSettingsClientHelper.h + DeviceSettingsInterface.h
+    find_package(${NAMESPACE}Helpers REQUIRED)
+
+    target_link_libraries(${MODULE_NAME}
+        PRIVATE
+            ${NAMESPACE}Plugins::${NAMESPACE}Plugins
+            ${NAMESPACE}::${NAMESPACE}Helpers
+            "-ltr181api")
+else()
+    find_package(DS)
+    if (DS_FOUND)
+        find_package(IARMBus)
+        add_definitions(-DDS_FOUND)
+        target_include_directories(${MODULE_NAME} PRIVATE ${IARMBUS_INCLUDE_DIRS})
+        target_include_directories(${MODULE_NAME} PRIVATE ${DS_INCLUDE_DIRS})
+        if (RDK_SERVICE_L2_TEST)
+            target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${IARMBUS_LIBRARIES} ${DS_LIBRARIES} ${NAMESPACE}::${NAMESPACE}Helpers)
+        else()
+            target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${IARMBUS_LIBRARIES} ${DS_LIBRARIES} "-ltr181api" ${NAMESPACE}::${NAMESPACE}Helpers)
+        endif(RDK_SERVICE_L2_TEST)
+    else (DS_FOUND)
+        target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${NAMESPACE}::${NAMESPACE}Helpers)
+    endif(DS_FOUND)
+endif(USE_DEVICESETTING_PLUGIN)
 
 install(TARGETS ${MODULE_NAME}
         DESTINATION lib/${STORAGE_DIRECTORY}/plugins)
