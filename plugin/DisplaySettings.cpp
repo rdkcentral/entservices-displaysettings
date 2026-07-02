@@ -252,8 +252,6 @@ namespace WPEFramework {
         DisplaySettings::DisplaySettings()
             : PluginHost::JSONRPC()
             , _pwrMgrNotification(*this)
-            , _registeredEventHandlers(false)
-            , _registeredDsEventHandlers(false)
 #ifdef USE_DEVICESETTING_PLUGIN
             , _DSVideoPortNotification(*this)
             , _DSAudioNotification(*this)
@@ -261,6 +259,8 @@ namespace WPEFramework {
             , _DSDisplayNotification(*this)
             , _DSVideoDeviceNotification(*this)
 #endif // USE_DEVICESETTING_PLUGIN
+            , _registeredEventHandlers(false)
+            , _registeredDsEventHandlers(false)
         {
             LOGINFO("constructor");
             DisplaySettings::_instance = this;
@@ -449,7 +449,6 @@ namespace WPEFramework {
         {   //sample servicemanager response: {"success":true,"supportedAudioPorts":["HDMI0"]}
             //LOGINFOMETHOD();
             LOGINFO("Entering DisplaySettings::InitAudioPorts");
-            uint32_t ret = Core::ERROR_NONE;
 	    m_systemAudioMode_Power_RequestedAndReceived = true; //resetting this variable for bootup for AVR case
 #ifdef USE_DEVICESETTING_PLUGIN
             // COM-RPC path: restore persisted audio port enable state via DeviceSettings plugin.
@@ -474,6 +473,7 @@ namespace WPEFramework {
             }
             return;
 #else
+            uint32_t ret = Core::ERROR_NONE;
             try
             {
                 device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
@@ -907,14 +907,12 @@ namespace WPEFramework {
             {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
-                    // Load port config once; cache for all per-method use
-                    VideoPortConfigStore vpStore;
-                    LoadVideoPortConfig(vp, vpStore);
-                    _vpConfigStore = vpStore;
+                    // Load port config once into cached member store (1-arg member fn)
+                    LoadVideoPortConfig(_vpConfigStore);
 
                     _videoPortHandles.clear();
                     std::vector<VideoPortEntry> entries;
-                    if (vpStore.BuildVideoPortEntries(entries)) {
+                    if (_vpConfigStore.BuildVideoPortEntries(entries)) {
                         for (const VideoPortEntry& e : entries) {
                             int32_t handle = -1;
                             Core::hresult rc = vp->GetVideoPort(e.type, e.index, handle);
@@ -933,13 +931,12 @@ namespace WPEFramework {
             {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    AudioConfigStore audioStore;
-                    LoadAudioConfig(audio, audioStore);
-                    _audioConfigStore = audioStore;
+                    // Load audio config into cached member store (1-arg member fn)
+                    LoadAudioConfig(_audioConfigStore);
 
                     _audioPortHandles.clear();
                     std::vector<AudioPortEntry> entries;
-                    if (audioStore.BuildAudioPortEntries(entries)) {
+                    if (_audioConfigStore.BuildAudioPortEntries(entries)) {
                         for (const AudioPortEntry& e : entries) {
                             int32_t handle = -1;
                             Core::hresult rc = audio->GetAudioPort(e.type, e.index, handle);
@@ -1342,27 +1339,26 @@ namespace WPEFramework {
                     if (it != _videoPortHandles.end()) {
                         int32_t tvResolutions = 0;
                         if (vp->GetTVSupportedResolutions(it->second, tvResolutions) == Core::ERROR_NONE) {
-                            using TVR = Exchange::IDeviceSettingsVideoPort::TVResolution;
                             if (!tvResolutions) supportedTvResolutions.emplace_back("none");
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_480I))  { supportedTvResolutions.emplace_back("480i"); supportedTvResolutions.emplace_back("480i60"); }
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_480P))  { supportedTvResolutions.emplace_back("480p"); supportedTvResolutions.emplace_back("480p60"); }
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_576I))  supportedTvResolutions.emplace_back("576i50");
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_576P))  supportedTvResolutions.emplace_back("576p50");
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_720P50)) supportedTvResolutions.emplace_back("720p50");
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_720P))  { supportedTvResolutions.emplace_back("720p"); supportedTvResolutions.emplace_back("720p60"); }
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_1080P24)) supportedTvResolutions.emplace_back("1080p24");
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_1080I25)) supportedTvResolutions.emplace_back("1080p25");
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_1080P30)) supportedTvResolutions.emplace_back("1080p30");
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_1080I50)) supportedTvResolutions.emplace_back("1080i50");
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_1080P50)) supportedTvResolutions.emplace_back("1080p50");
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_1080I))  { supportedTvResolutions.emplace_back("1080i"); supportedTvResolutions.emplace_back("1080i60"); }
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_1080P))  { supportedTvResolutions.emplace_back("1080p"); supportedTvResolutions.emplace_back("1080p60"); }
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_1080P60)) supportedTvResolutions.emplace_back("1080p60");
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_2160P24)) supportedTvResolutions.emplace_back("2160p24");
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_2160P25)) supportedTvResolutions.emplace_back("2160p25");
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_2160P30)) supportedTvResolutions.emplace_back("2160p30");
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_2160P50)) supportedTvResolutions.emplace_back("2160p50");
-                            if (tvResolutions & static_cast<int32_t>(TVR::DS_TV_RESOLUTION_2160P60)) supportedTvResolutions.emplace_back("2160p60");
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_480I))  { supportedTvResolutions.emplace_back("480i"); supportedTvResolutions.emplace_back("480i60"); }
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_480P))  { supportedTvResolutions.emplace_back("480p"); supportedTvResolutions.emplace_back("480p60"); }
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_576I))  supportedTvResolutions.emplace_back("576i50");
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_576P))  supportedTvResolutions.emplace_back("576p50");
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_720P50)) supportedTvResolutions.emplace_back("720p50");
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_720P))  { supportedTvResolutions.emplace_back("720p"); supportedTvResolutions.emplace_back("720p60"); }
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P24)) supportedTvResolutions.emplace_back("1080p24");
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080I25)) supportedTvResolutions.emplace_back("1080p25");
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P30)) supportedTvResolutions.emplace_back("1080p30");
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080I50)) supportedTvResolutions.emplace_back("1080i50");
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P50)) supportedTvResolutions.emplace_back("1080p50");
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080I))  { supportedTvResolutions.emplace_back("1080i"); supportedTvResolutions.emplace_back("1080i60"); }
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P))  { supportedTvResolutions.emplace_back("1080p"); supportedTvResolutions.emplace_back("1080p60"); }
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P60)) supportedTvResolutions.emplace_back("1080p60");
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P24)) supportedTvResolutions.emplace_back("2160p24");
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P25)) supportedTvResolutions.emplace_back("2160p25");
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P30)) supportedTvResolutions.emplace_back("2160p30");
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P50)) supportedTvResolutions.emplace_back("2160p50");
+                            if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P60)) supportedTvResolutions.emplace_back("2160p60");
                         }
                     }
                     vp->Release();
@@ -1421,19 +1417,18 @@ namespace WPEFramework {
                     if (vd->GetVideoDeviceConfig(cfgIt) == Core::ERROR_NONE && cfgIt != nullptr) {
                         Exchange::IDeviceSettingsVideoDevice::VideoDeviceConfigInfo cfg;
                         if (cfgIt->Next(cfg)) {
-                            using VZ = Exchange::IDeviceSettingsVideoDevice::VideoZoom;
-                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_NONE))              vectorSet(supportedSettopResolutions, "NONE");
-                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_FULL))              vectorSet(supportedSettopResolutions, "FULL");
-                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_LB_16_9))           vectorSet(supportedSettopResolutions, "LB_16_9");
-                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_LB_14_9))           vectorSet(supportedSettopResolutions, "LB_14_9");
-                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_CCO))               vectorSet(supportedSettopResolutions, "CCO");
-                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_PAN_SCAN))          vectorSet(supportedSettopResolutions, "PAN_SCAN");
-                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_LB_2_21_1_ON_4_3))  vectorSet(supportedSettopResolutions, "LB_2_21_1_ON_4_3");
-                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_LB_2_21_1_ON_16_9)) vectorSet(supportedSettopResolutions, "LB_2_21_1_ON_16_9");
-                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_PLATFORM))          vectorSet(supportedSettopResolutions, "PLATFORM");
-                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_16_9_ZOOM))         vectorSet(supportedSettopResolutions, "16_9_ZOOM");
-                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_PILLARBOX_4_3))     vectorSet(supportedSettopResolutions, "PILLARBOX_4_3");
-                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VZ::DS_VIDEO_DEVICE_ZOOM_WIDE_4_3))          vectorSet(supportedSettopResolutions, "WIDE_4_3");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VideoZoom::DS_VIDEO_DEVICE_ZOOM_NONE))              vectorSet(supportedSettopResolutions, "NONE");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VideoZoom::DS_VIDEO_DEVICE_ZOOM_FULL))              vectorSet(supportedSettopResolutions, "FULL");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VideoZoom::DS_VIDEO_DEVICE_ZOOM_LB_16_9))           vectorSet(supportedSettopResolutions, "LB_16_9");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VideoZoom::DS_VIDEO_DEVICE_ZOOM_LB_14_9))           vectorSet(supportedSettopResolutions, "LB_14_9");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VideoZoom::DS_VIDEO_DEVICE_ZOOM_CCO))               vectorSet(supportedSettopResolutions, "CCO");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VideoZoom::DS_VIDEO_DEVICE_ZOOM_PAN_SCAN))          vectorSet(supportedSettopResolutions, "PAN_SCAN");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VideoZoom::DS_VIDEO_DEVICE_ZOOM_LB_2_21_1_ON_4_3))  vectorSet(supportedSettopResolutions, "LB_2_21_1_ON_4_3");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VideoZoom::DS_VIDEO_DEVICE_ZOOM_LB_2_21_1_ON_16_9)) vectorSet(supportedSettopResolutions, "LB_2_21_1_ON_16_9");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VideoZoom::DS_VIDEO_DEVICE_ZOOM_PLATFORM))          vectorSet(supportedSettopResolutions, "PLATFORM");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VideoZoom::DS_VIDEO_DEVICE_ZOOM_16_9_ZOOM))         vectorSet(supportedSettopResolutions, "16_9_ZOOM");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VideoZoom::DS_VIDEO_DEVICE_ZOOM_PILLARBOX_4_3))     vectorSet(supportedSettopResolutions, "PILLARBOX_4_3");
+                            if (cfg.supportedDFCsMask & static_cast<uint32_t>(VideoZoom::DS_VIDEO_DEVICE_ZOOM_WIDE_4_3))          vectorSet(supportedSettopResolutions, "WIDE_4_3");
                         }
                         cfgIt->Release();
                     }
@@ -1526,12 +1521,11 @@ namespace WPEFramework {
                             while (typeIt->Next(typeInfo)) {
                                 if (audioPort.empty() || Utils::String::stringContains(typeInfo.name, audioPort)) {
                                     uint32_t modeMask = typeInfo.supportedStereoModeMask;
-                                    using SM = Exchange::IDeviceSettingsAudio::StereoMode;
-                                    if (modeMask & (1u << static_cast<uint32_t>(SM::AUDIO_STEREO_MONO)))        vectorSet(supportedAudioModes, "MONO");
-                                    if (modeMask & (1u << static_cast<uint32_t>(SM::AUDIO_STEREO_STEREO)))      vectorSet(supportedAudioModes, "STEREO");
-                                    if (modeMask & (1u << static_cast<uint32_t>(SM::AUDIO_STEREO_PASSTHROUGH))) vectorSet(supportedAudioModes, "PASSTHRU");
-                                    if (modeMask & (1u << static_cast<uint32_t>(SM::AUDIO_STEREO_DD)))          vectorSet(supportedAudioModes, "DOLBYDIGITAL");
-                                    if (modeMask & (1u << static_cast<uint32_t>(SM::AUDIO_STEREO_DDPLUS)))      vectorSet(supportedAudioModes, "DOLBYDIGITALPLUS");
+                                    if (modeMask & (1u << static_cast<uint32_t>(StereoMode::AUDIO_STEREO_MONO)))        vectorSet(supportedAudioModes, "MONO");
+                                    if (modeMask & (1u << static_cast<uint32_t>(StereoMode::AUDIO_STEREO_STEREO)))      vectorSet(supportedAudioModes, "STEREO");
+                                    if (modeMask & (1u << static_cast<uint32_t>(StereoMode::AUDIO_STEREO_PASSTHROUGH))) vectorSet(supportedAudioModes, "PASSTHRU");
+                                    if (modeMask & (1u << static_cast<uint32_t>(StereoMode::AUDIO_STEREO_DD)))          vectorSet(supportedAudioModes, "DOLBYDIGITAL");
+                                    if (modeMask & (1u << static_cast<uint32_t>(StereoMode::AUDIO_STEREO_DDPLUS)))      vectorSet(supportedAudioModes, "DOLBYDIGITALPLUS");
                                 }
                             }
                             typeIt->Release();
@@ -1694,20 +1688,19 @@ namespace WPEFramework {
             {
                 auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
                 if (vd != nullptr) {
-                    using VZ = Exchange::IDeviceSettingsVideoDevice::VideoZoom;
-                    VZ dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_UNKNOWN;
+                    VZ dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_UNKNOWN;
                     string zs = zoomSetting;
                     std::transform(zs.begin(), zs.end(), zs.begin(), ::toupper);
-                    if (zs == "NONE")               dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_NONE;
-                    else if (zs == "FULL")          dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_FULL;
-                    else if (zs == "LB_16_9")       dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_LB_16_9;
-                    else if (zs == "LB_14_9")       dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_LB_14_9;
-                    else if (zs == "CCO")           dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_CCO;
-                    else if (zs == "PAN_SCAN")      dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_PAN_SCAN;
-                    else if (zs == "PLATFORM")      dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_PLATFORM;
-                    else if (zs == "16_9_ZOOM")     dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_16_9_ZOOM;
-                    else if (zs == "PILLARBOX_4_3") dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_PILLARBOX_4_3;
-                    else if (zs == "WIDE_4_3")      dfcZoom = VZ::DS_VIDEO_DEVICE_ZOOM_WIDE_4_3;
+                    if (zs == "NONE")               dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_NONE;
+                    else if (zs == "FULL")          dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_FULL;
+                    else if (zs == "LB_16_9")       dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_LB_16_9;
+                    else if (zs == "LB_14_9")       dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_LB_14_9;
+                    else if (zs == "CCO")           dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_CCO;
+                    else if (zs == "PAN_SCAN")      dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_PAN_SCAN;
+                    else if (zs == "PLATFORM")      dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_PLATFORM;
+                    else if (zs == "16_9_ZOOM")     dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_16_9_ZOOM;
+                    else if (zs == "PILLARBOX_4_3") dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_PILLARBOX_4_3;
+                    else if (zs == "WIDE_4_3")      dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_WIDE_4_3;
                     else { LOGERR("Unknown zoom setting: %s", zoomSetting.c_str()); success = false; }
                     if (success && vd->SetVideoDeviceDFC(_videoDeviceHandle, dfcZoom) != Core::ERROR_NONE) {
                         success = false;
@@ -2134,6 +2127,8 @@ namespace WPEFramework {
             if (!hasPersist) LOGINFO("persist: true");
 
             bool success = true;
+#ifndef USE_DEVICESETTING_PLUGIN
+            // libds path: parse soundMode string into device:: enums
             device::AudioStereoMode mode = device::AudioStereoMode::kStereo;  //default to stereo
             bool stereoAuto = false;
 
@@ -2168,6 +2163,7 @@ namespace WPEFramework {
                 LOGWARN("Sound mode '%s' is empty or incompatible with known values, hence sound mode will not changed!", soundMode.c_str());
                 returnResponse(success);
             }
+#endif // !USE_DEVICESETTING_PLUGIN (mode parsing)
 
             if (!checkPortName(audioPort))
             {
@@ -2184,16 +2180,15 @@ namespace WPEFramework {
                     if (!audioPort.empty()) {
                         const auto it = _audioPortHandles.find(audioPort);
                         if (it != _audioPortHandles.end()) {
-                            using SM = Exchange::IDeviceSettingsAudio::StereoMode;
-                            SM comMode = SM::AUDIO_STEREO_STEREO;
-                            if (soundMode == "mono")                  comMode = SM::AUDIO_STEREO_MONO;
-                            else if (soundMode == "stereo")           comMode = SM::AUDIO_STEREO_STEREO;
-                            else if (soundMode == "surround")         comMode = SM::AUDIO_STEREO_SURROUND;
-                            else if (soundMode.substr(0, 4) == "auto") comMode = SM::AUDIO_STEREO_SURROUND;
-                            else if (soundMode == "passthru")         comMode = SM::AUDIO_STEREO_PASSTHROUGH;
-                            else if (soundMode == "dolbydigital")     comMode = SM::AUDIO_STEREO_DD;
-                            else if (soundMode == "dolbydigitalplus")  comMode = SM::AUDIO_STEREO_DDPLUS;
-                            else if (soundMode == "dolby digital 5.1") comMode = SM::AUDIO_STEREO_SURROUND;
+                            SM comMode = StereoMode::AUDIO_STEREO_STEREO;
+                            if (soundMode == "mono")                  comMode = StereoMode::AUDIO_STEREO_MONO;
+                            else if (soundMode == "stereo")           comMode = StereoMode::AUDIO_STEREO_STEREO;
+                            else if (soundMode == "surround")         comMode = StereoMode::AUDIO_STEREO_SURROUND;
+                            else if (soundMode.substr(0, 4) == "auto") comMode = StereoMode::AUDIO_STEREO_SURROUND;
+                            else if (soundMode == "passthru")         comMode = StereoMode::AUDIO_STEREO_PASSTHROUGH;
+                            else if (soundMode == "dolbydigital")     comMode = StereoMode::AUDIO_STEREO_DD;
+                            else if (soundMode == "dolbydigitalplus")  comMode = StereoMode::AUDIO_STEREO_DDPLUS;
+                            else if (soundMode == "dolby digital 5.1") comMode = StereoMode::AUDIO_STEREO_SURROUND;
                             if (audio->SetStereoMode(it->second, comMode, persist) != Core::ERROR_NONE) {
                                 success = false;
                             }
@@ -2528,13 +2523,12 @@ namespace WPEFramework {
 
             if(!capabilities)hdrCapabilities.Add("none");
 #ifdef USE_DEVICESETTING_PLUGIN
-            using HS3 = Exchange::IDeviceSettingsVideoPort::HDRStandard;
-            if(capabilities & static_cast<int32_t>(HS3::DS_HDRSTANDARD_HDR10))         hdrCapabilities.Add("HDR10");
-            if(capabilities & static_cast<int32_t>(HS3::DS_HDRSTANDARD_HDR10PLUS))     hdrCapabilities.Add("HDR10PLUS");
-            if(capabilities & static_cast<int32_t>(HS3::DS_HDRSTANDARD_HLG))           hdrCapabilities.Add("HLG");
-            if(capabilities & static_cast<int32_t>(HS3::DS_HDRSTANDARD_DOLBYVISION))   hdrCapabilities.Add("Dolby Vision");
-            if(capabilities & static_cast<int32_t>(HS3::DS_HDRSTANDARD_TECHNICOLORPRIME)) hdrCapabilities.Add("Technicolor Prime");
-            if(capabilities & static_cast<int32_t>(HS3::DS_HDRSTANDARD_SDR))           hdrCapabilities.Add("SDR");
+            if(capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_HDR10))         hdrCapabilities.Add("HDR10");
+            if(capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_HDR10PLUS))     hdrCapabilities.Add("HDR10PLUS");
+            if(capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_HLG))           hdrCapabilities.Add("HLG");
+            if(capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_DOLBYVISION))   hdrCapabilities.Add("Dolby Vision");
+            if(capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_TECHNICOLORPRIME)) hdrCapabilities.Add("Technicolor Prime");
+            if(capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_SDR))           hdrCapabilities.Add("SDR");
 #else
             if(capabilities & dsHDRSTANDARD_HDR10)hdrCapabilities.Add("HDR10");
             if(capabilities & dsHDRSTANDARD_HDR10PLUS)hdrCapabilities.Add("HDR10PLUS");
@@ -2613,13 +2607,12 @@ namespace WPEFramework {
 
             if(!capabilities)hdrCapabilities.Add("none");
 #ifdef USE_DEVICESETTING_PLUGIN
-            using HS2 = Exchange::IDeviceSettingsVideoPort::HDRStandard;
-            if(capabilities & static_cast<int32_t>(HS2::DS_HDRSTANDARD_HDR10))         hdrCapabilities.Add("HDR10");
-            if(capabilities & static_cast<int32_t>(HS2::DS_HDRSTANDARD_HDR10PLUS))     hdrCapabilities.Add("HDR10PLUS");
-            if(capabilities & static_cast<int32_t>(HS2::DS_HDRSTANDARD_HLG))           hdrCapabilities.Add("HLG");
-            if(capabilities & static_cast<int32_t>(HS2::DS_HDRSTANDARD_DOLBYVISION))   hdrCapabilities.Add("Dolby Vision");
-            if(capabilities & static_cast<int32_t>(HS2::DS_HDRSTANDARD_TECHNICOLORPRIME)) hdrCapabilities.Add("Technicolor Prime");
-            if(capabilities & static_cast<int32_t>(HS2::DS_HDRSTANDARD_SDR))           hdrCapabilities.Add("SDR");
+            if(capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_HDR10))         hdrCapabilities.Add("HDR10");
+            if(capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_HDR10PLUS))     hdrCapabilities.Add("HDR10PLUS");
+            if(capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_HLG))           hdrCapabilities.Add("HLG");
+            if(capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_DOLBYVISION))   hdrCapabilities.Add("Dolby Vision");
+            if(capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_TECHNICOLORPRIME)) hdrCapabilities.Add("Technicolor Prime");
+            if(capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_SDR))           hdrCapabilities.Add("SDR");
 #else
             if(capabilities & dsHDRSTANDARD_HDR10)hdrCapabilities.Add("HDR10");
             if(capabilities & dsHDRSTANDARD_HDR10PLUS)hdrCapabilities.Add("HDR10PLUS");
@@ -2646,7 +2639,7 @@ namespace WPEFramework {
         }
 
         uint32_t DisplaySettings::getSettopAudioCapabilities(const JsonObject& parameters, JsonObject& response)
-
+        {
             JsonArray audioCapabilities;
             int capabilities = dsAUDIOSUPPORT_NONE;
 
@@ -2679,13 +2672,12 @@ namespace WPEFramework {
 
             if(!capabilities)audioCapabilities.Add("none");
 #ifdef USE_DEVICESETTING_PLUGIN
-            using AC = Exchange::IDeviceSettingsAudio::AudioCaps;
-            if(capabilities & static_cast<int32_t>(AC::AUDIO_CAPS_ATMOS))                   audioCapabilities.Add("ATMOS");
-            if(capabilities & static_cast<int32_t>(AC::AUDIO_CAPS_DOLBY_DIGITAL))           audioCapabilities.Add("DOLBY DIGITAL");
-            if(capabilities & static_cast<int32_t>(AC::AUDIO_CAPS_DOLBY_DIGITAL_PLUS))      audioCapabilities.Add("DOLBY DIGITAL PLUS");
-            if(capabilities & static_cast<int32_t>(AC::AUDIO_CAPS_DIGITAL_AUDIO_DELIVERY))  audioCapabilities.Add("Dual Audio Decode");
-            if(capabilities & static_cast<int32_t>(AC::AUDIO_CAPS_DIGITAL_AUDIO_PROCESS_V2)) audioCapabilities.Add("DAPv2");
-            if(capabilities & static_cast<int32_t>(AC::AUDIO_CAPS_MS12))                    audioCapabilities.Add("MS12");
+            if(capabilities & static_cast<int32_t>(AudioCapabilities::AUDIO_CAPS_ATMOS))                   audioCapabilities.Add("ATMOS");
+            if(capabilities & static_cast<int32_t>(AudioCapabilities::AUDIO_CAPS_DOLBY_DIGITAL))           audioCapabilities.Add("DOLBY DIGITAL");
+            if(capabilities & static_cast<int32_t>(AudioCapabilities::AUDIO_CAPS_DOLBY_DIGITAL_PLUS))      audioCapabilities.Add("DOLBY DIGITAL PLUS");
+            if(capabilities & static_cast<int32_t>(AudioCapabilities::AUDIO_CAPS_DIGITAL_AUDIO_DELIVERY))  audioCapabilities.Add("Dual Audio Decode");
+            if(capabilities & static_cast<int32_t>(AudioCapabilities::AUDIO_CAPS_DIGITAL_AUDIO_PROCESS_V2)) audioCapabilities.Add("DAPv2");
+            if(capabilities & static_cast<int32_t>(AudioCapabilities::AUDIO_CAPS_MS12))                    audioCapabilities.Add("MS12");
 #else
             if(capabilities & dsAUDIOSUPPORT_ATMOS)audioCapabilities.Add("ATMOS");
             if(capabilities & dsAUDIOSUPPORT_DD)audioCapabilities.Add("DOLBY DIGITAL");
@@ -2983,22 +2975,21 @@ namespace WPEFramework {
             }
 #else
             // COM-RPC path: Exchange::IDeviceSettingsAudio::AudioFormat enum values
-            using AF = Exchange::IDeviceSettingsAudio::AudioFormat;
             switch (static_cast<AF>(audioFormat)) {
-                case AF::AUDIO_FORMAT_NONE:           response["currentAudioFormat"] = "NONE"; break;
-                case AF::AUDIO_FORMAT_PCM:            response["currentAudioFormat"] = "PCM"; break;
-                case AF::AUDIO_FORMAT_DOLBY_AC3:      response["currentAudioFormat"] = "DOLBY AC3"; break;
-                case AF::AUDIO_FORMAT_DOLBY_EAC3:     response["currentAudioFormat"] = "DOLBY EAC3"; break;
-                case AF::AUDIO_FORMAT_DOLBY_AC4:      response["currentAudioFormat"] = "DOLBY AC4"; break;
-                case AF::AUDIO_FORMAT_DOLBY_MAT:      response["currentAudioFormat"] = "DOLBY MAT"; break;
-                case AF::AUDIO_FORMAT_DOLBY_TRUEHD:   response["currentAudioFormat"] = "DOLBY TRUEHD"; break;
-                case AF::AUDIO_FORMAT_DOLBY_EAC3_ATMOS:   response["currentAudioFormat"] = "DOLBY EAC3 ATMOS"; break;
-                case AF::AUDIO_FORMAT_DOLBY_TRUEHD_ATMOS: response["currentAudioFormat"] = "DOLBY TRUEHD ATMOS"; break;
-                case AF::AUDIO_FORMAT_DOLBY_MAT_ATMOS:    response["currentAudioFormat"] = "DOLBY MAT ATMOS"; break;
-                case AF::AUDIO_FORMAT_DOLBY_AC4_ATMOS:    response["currentAudioFormat"] = "DOLBY AC4 ATMOS"; break;
-                case AF::AUDIO_FORMAT_AAC:            response["currentAudioFormat"] = "AAC"; break;
-                case AF::AUDIO_FORMAT_VORBIS:         response["currentAudioFormat"] = "VORBIS"; break;
-                case AF::AUDIO_FORMAT_WMA:            response["currentAudioFormat"] = "WMA"; break;
+                case AudioFormat::AUDIO_FORMAT_NONE:           response["currentAudioFormat"] = "NONE"; break;
+                case AudioFormat::AUDIO_FORMAT_PCM:            response["currentAudioFormat"] = "PCM"; break;
+                case AudioFormat::AUDIO_FORMAT_DOLBY_AC3:      response["currentAudioFormat"] = "DOLBY AC3"; break;
+                case AudioFormat::AUDIO_FORMAT_DOLBY_EAC3:     response["currentAudioFormat"] = "DOLBY EAC3"; break;
+                case AudioFormat::AUDIO_FORMAT_DOLBY_AC4:      response["currentAudioFormat"] = "DOLBY AC4"; break;
+                case AudioFormat::AUDIO_FORMAT_DOLBY_MAT:      response["currentAudioFormat"] = "DOLBY MAT"; break;
+                case AudioFormat::AUDIO_FORMAT_DOLBY_TRUEHD:   response["currentAudioFormat"] = "DOLBY TRUEHD"; break;
+                case AudioFormat::AUDIO_FORMAT_DOLBY_EAC3_ATMOS:   response["currentAudioFormat"] = "DOLBY EAC3 ATMOS"; break;
+                case AudioFormat::AUDIO_FORMAT_DOLBY_TRUEHD_ATMOS: response["currentAudioFormat"] = "DOLBY TRUEHD ATMOS"; break;
+                case AudioFormat::AUDIO_FORMAT_DOLBY_MAT_ATMOS:    response["currentAudioFormat"] = "DOLBY MAT ATMOS"; break;
+                case AudioFormat::AUDIO_FORMAT_DOLBY_AC4_ATMOS:    response["currentAudioFormat"] = "DOLBY AC4 ATMOS"; break;
+                case AudioFormat::AUDIO_FORMAT_AAC:            response["currentAudioFormat"] = "AAC"; break;
+                case AudioFormat::AUDIO_FORMAT_VORBIS:         response["currentAudioFormat"] = "VORBIS"; break;
+                case AudioFormat::AUDIO_FORMAT_WMA:            response["currentAudioFormat"] = "WMA"; break;
                 default:                              response["currentAudioFormat"] = "UNKNOWN"; break;
             }
 #endif // !USE_DEVICESETTING_PLUGIN
@@ -3975,7 +3966,6 @@ namespace WPEFramework {
                         const auto it = _audioPortHandles.find(audioPort);
                         if (it != _audioPortHandles.end()) {
                             if (audio->SetAudioMute(it->second, muted) == Core::ERROR_NONE) {
-                                static bool cache_muted = false;
                                 if (cache_muted != muted) {
                                     cache_muted = muted;
                                     JsonObject params;
@@ -3988,7 +3978,6 @@ namespace WPEFramework {
                     } else { success = false; }
                 }
 #else
-                static bool cache_muted = false;
                 try
                 {
                     device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -4016,7 +4005,6 @@ namespace WPEFramework {
                 returnIfParamNotFound(parameters, "volumeLevel");
                 string sLevel = parameters["volumeLevel"].String();
                 float level = 0;
-                int current_volumelevel = 0;
                 try {
                         level = stof(sLevel);
                 }catch (const device::Exception& err) {
@@ -4046,6 +4034,7 @@ namespace WPEFramework {
                     } else { success = false; }
                 }
 #else
+                int current_volumelevel = 0;
                 try
                 {
                         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
@@ -5399,12 +5388,11 @@ namespace WPEFramework {
                     if (it != _videoPortHandles.end()) {
                         uint32_t colorDepth = 0;
                         if (vp->GetColorDepth(it->second, colorDepth) == Core::ERROR_NONE) {
-                            using CD = Exchange::IDeviceSettingsVideoPort::DisplayColorDepth;
                             switch (static_cast<CD>(colorDepth)) {
-                                case CD::DS_DISPLAY_COLORDEPTH_8BIT:  response["colorDepth"] = "8 Bit"; break;
-                                case CD::DS_DISPLAY_COLORDEPTH_10BIT: response["colorDepth"] = "10 Bit"; break;
-                                case CD::DS_DISPLAY_COLORDEPTH_12BIT: response["colorDepth"] = "12 Bit"; break;
-                                case CD::DS_DISPLAY_COLORDEPTH_AUTO:  response["colorDepth"] = "Auto"; break;
+                                case DisplayColorDepth::DS_DISPLAY_COLORDEPTH_8BIT:  response["colorDepth"] = "8 Bit"; break;
+                                case DisplayColorDepth::DS_DISPLAY_COLORDEPTH_10BIT: response["colorDepth"] = "10 Bit"; break;
+                                case DisplayColorDepth::DS_DISPLAY_COLORDEPTH_12BIT: response["colorDepth"] = "12 Bit"; break;
+                                case DisplayColorDepth::DS_DISPLAY_COLORDEPTH_AUTO:  response["colorDepth"] = "Auto"; break;
                                 default: success = false; break;
                             }
                         } else { success = false; }
@@ -5638,8 +5626,6 @@ namespace WPEFramework {
             bool success = true;
 #ifdef USE_DEVICESETTING_PLUGIN
             {
-                using DT = Exchange::IDeviceSettingsAudio::DuckingType;
-                using DA = Exchange::IDeviceSettingsAudio::DuckingAction;
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     const auto it = _audioPortHandles.find(audioPort);
@@ -5766,10 +5752,9 @@ namespace WPEFramework {
                 if (vd != nullptr) {
                     uint32_t formats = 0;
                     if (vd->GetSupportedVideoCodingFormats(_videoDeviceHandle, formats) == Core::ERROR_NONE) {
-                        using VCF = Exchange::IDeviceSettingsVideoDevice::VideoCodingFormat;
-                        if (formats & static_cast<uint32_t>(VCF::DS_VIDEO_CODEC_MPEGHPART2)) supportedFormats.Add("HEVC");
-                        if (formats & static_cast<uint32_t>(VCF::DS_VIDEO_CODEC_MPEG4PART10)) supportedFormats.Add("H264");
-                        if (formats & static_cast<uint32_t>(VCF::DS_VIDEO_CODEC_MPEG2)) supportedFormats.Add("MPEG2");
+                        if (formats & static_cast<uint32_t>(VideoCodingFormat::DS_VIDEO_CODEC_MPEGHPART2)) supportedFormats.Add("HEVC");
+                        if (formats & static_cast<uint32_t>(VideoCodingFormat::DS_VIDEO_CODEC_MPEG4PART10)) supportedFormats.Add("H264");
+                        if (formats & static_cast<uint32_t>(VideoCodingFormat::DS_VIDEO_CODEC_MPEG2)) supportedFormats.Add("MPEG2");
                         success = true;
                     }
                     vd->Release();
@@ -6197,12 +6182,11 @@ namespace WPEFramework {
                     if (it != _videoPortHandles.end()) {
                         uint32_t capabilities = 0;
                         if (vp->GetColorDepthCapabilities(it->second, capabilities) == Core::ERROR_NONE) {
-                            using CD = Exchange::IDeviceSettingsVideoPort::DisplayColorDepth;
                             if (!capabilities) colorDepthCapabilities.emplace_back("none");
-                            if (capabilities & static_cast<uint32_t>(CD::DS_DISPLAY_COLORDEPTH_8BIT))  colorDepthCapabilities.emplace_back("8 Bit");
-                            if (capabilities & static_cast<uint32_t>(CD::DS_DISPLAY_COLORDEPTH_10BIT)) colorDepthCapabilities.emplace_back("10 Bit");
-                            if (capabilities & static_cast<uint32_t>(CD::DS_DISPLAY_COLORDEPTH_12BIT)) colorDepthCapabilities.emplace_back("12 Bit");
-                            if (capabilities & static_cast<uint32_t>(CD::DS_DISPLAY_COLORDEPTH_AUTO))  colorDepthCapabilities.emplace_back("Auto");
+                            if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_8BIT))  colorDepthCapabilities.emplace_back("8 Bit");
+                            if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_10BIT)) colorDepthCapabilities.emplace_back("10 Bit");
+                            if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_12BIT)) colorDepthCapabilities.emplace_back("12 Bit");
+                            if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_AUTO))  colorDepthCapabilities.emplace_back("Auto");
                         }
                     }
                     vp->Release();
@@ -8691,14 +8675,13 @@ void DisplaySettings::sendMsgThread()
 		    mode = dsHDRSTANDARD_Invalid;
 	    return mode;
 #else
-            using HS = Exchange::IDeviceSettingsVideoPort::HDRStandard;
-            if(strcmp(strFormat,"SDR")== 0 )       return static_cast<uint32_t>(HS::DS_HDRSTANDARD_SDR);
-            if(strcmp(strFormat,"HDR10")== 0)      return static_cast<uint32_t>(HS::DS_HDRSTANDARD_HDR10);
-            if(strcmp(strFormat,"HDR10PLUS")== 0)  return static_cast<uint32_t>(HS::DS_HDRSTANDARD_HDR10PLUS);
-            if(strcmp(strFormat,"DV")== 0)         return static_cast<uint32_t>(HS::DS_HDRSTANDARD_DOLBYVISION);
-            if(strcmp(strFormat,"HLG")== 0)        return static_cast<uint32_t>(HS::DS_HDRSTANDARD_HLG);
-            if(strcmp(strFormat,"TechnicolorPrime")== 0) return static_cast<uint32_t>(HS::DS_HDRSTANDARD_TECHNICOLORPRIME);
-            return static_cast<uint32_t>(HS::DS_HDRSTANDARD_NONE);
+            if(strcmp(strFormat,"SDR")== 0 )       return static_cast<uint32_t>(HDRStandard::DS_HDRSTANDARD_SDR);
+            if(strcmp(strFormat,"HDR10")== 0)      return static_cast<uint32_t>(HDRStandard::DS_HDRSTANDARD_HDR10);
+            if(strcmp(strFormat,"HDR10PLUS")== 0)  return static_cast<uint32_t>(HDRStandard::DS_HDRSTANDARD_HDR10PLUS);
+            if(strcmp(strFormat,"DV")== 0)         return static_cast<uint32_t>(HDRStandard::DS_HDRSTANDARD_DOLBYVISION);
+            if(strcmp(strFormat,"HLG")== 0)        return static_cast<uint32_t>(HDRStandard::DS_HDRSTANDARD_HLG);
+            if(strcmp(strFormat,"TechnicolorPrime")== 0) return static_cast<uint32_t>(HDRStandard::DS_HDRSTANDARD_TECHNICOLORPRIME);
+            return static_cast<uint32_t>(HDRStandard::DS_HDRSTANDARD_NONE);
 #endif // !USE_DEVICESETTING_PLUGIN
         }
     Core::hresult DisplaySettings::Request(const string& newState)
@@ -8714,14 +8697,12 @@ void DisplaySettings::sendMsgThread()
 			if (disp != nullptr) {
 			    const auto it = _displayHandles.find(strVideoPort);
 			    if (it != _displayHandles.end()) {
-			        using ACT = Exchange::IDeviceSettingsDisplay::AVIContentType;
-			        using ASI = Exchange::IDeviceSettingsDisplay::AVIScanInformation;
 			        if (enable) {
-			            disp->SetAVIContentType(it->second, static_cast<uint32_t>(ACT::DS_AVI_CONTENT_TYPE_GAME));
-			            disp->SetAVIScanInformation(it->second, static_cast<uint32_t>(ASI::DS_AVI_SCAN_TYPE_UNDERSCAN));
+			            disp->SetAVIContentType(it->second, static_cast<uint32_t>(AVIContentType::DS_AVI_CONTENT_TYPE_GAME));
+			            disp->SetAVIScanInformation(it->second, static_cast<uint32_t>(AVIScanInformation::DS_AVI_SCAN_TYPE_UNDERSCAN));
 			        } else {
-			            disp->SetAVIContentType(it->second, static_cast<uint32_t>(ACT::DS_AVI_CONTENT_TYPE_NOT_SIGNALLED));
-			            disp->SetAVIScanInformation(it->second, static_cast<uint32_t>(ASI::DS_AVI_SCAN_TYPE_NO_DATA));
+			            disp->SetAVIContentType(it->second, static_cast<uint32_t>(AVIContentType::DS_AVI_CONTENT_TYPE_NOT_SIGNALLED));
+			            disp->SetAVIScanInformation(it->second, static_cast<uint32_t>(AVIScanInformation::DS_AVI_SCAN_TYPE_NO_DATA));
 			        }
 			        disp->SetAllmEnabled(it->second, enable);
 			    }

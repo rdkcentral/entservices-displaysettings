@@ -2,6 +2,3 @@ precondition = ["Platform"]
 callsign = "org.rdk.DisplaySettings"
 autostart = "@PLUGIN_DISPLAYSETTINGS_AUTOSTART@"
 startuporder = "@PLUGIN_DISPLAYSETTINGS_STARTUPORDER@"
-# devicesettingscallsign is only used when built with USE_DEVICESETTING_PLUGIN=ON.
-# It identifies the DeviceSettings Thunder plugin to connect to via COM-RPC.
-configuration = {"devicesettingscallsign":"@PLUGIN_DISPLAYSETTINGS_DEVICESETTINGS_CALLSIGN@"}

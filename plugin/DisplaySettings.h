@@ -254,8 +254,8 @@ namespace WPEFramework {
 
                 void OnDisplayFrameratePreChange(const string& /*frameRate*/) override {}
                 void OnDisplayFrameratePostChange(const string& /*frameRate*/) override {}
-                void OnZoomSettingChanged(const int32_t zoomSetting) override {
-                    _parent.OnDSZoomSettingChanged(zoomSetting);
+                void OnZoomSettingsChanged(const Exchange::IDeviceSettingsVideoDevice::VideoZoom zoomSetting) override {
+                    _parent.OnDSZoomSettingChanged(static_cast<int32_t>(zoomSetting));
                 }
 
                 BEGIN_INTERFACE_MAP(DSVideoDeviceNotification)
