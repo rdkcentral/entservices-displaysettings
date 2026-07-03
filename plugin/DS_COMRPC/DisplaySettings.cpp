@@ -2754,10 +2754,27 @@ namespace WPEFramework {
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
             {
-                // setMS12ProfileSettingsOverride is a libds-specific override mechanism.
-                // The COM-RPC path falls back to a no-op (not supported via IDeviceSettingsAudio).
-                LOGWARN("setMS12ProfileSettingsOverride: not supported via COM-RPC DeviceSettings plugin");
-                success = false;
+                // Map "operation" string (ADD/REMOVE) to MS12ProfileState enum
+                Exchange::IDeviceSettingsAudio::MS12ProfileState profileState =
+                    Exchange::IDeviceSettingsAudio::MS12ProfileState::AUDIO_MS12_PROFILE_STATE_ADD;
+                if (audioProfileState == "REMOVE" || audioProfileState == "remove") {
+                    profileState = Exchange::IDeviceSettingsAudio::MS12ProfileState::AUDIO_MS12_PROFILE_STATE_REMOVE;
+                }
+                auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    const auto it = _audioPortHandles.find(audioPort);
+                    if (it != _audioPortHandles.end()) {
+                        if (audio->SetAudioMS12SettingsOverride(it->second, audioProfileName, audioProfileSettingsName,
+                                                               audioProfileSettingValue, profileState) != Core::ERROR_NONE) {
+                            success = false;
+                        }
+                    } else {
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    success = false;
+                }
             }
             returnResponse(success);
         }
@@ -4025,21 +4042,56 @@ namespace WPEFramework {
             bool success = true;
             bool isConnectedDeviceRepeater = false;
             {
-                // IsConnectedDeviceRepeater not available in COM-RPC interface
-                LOGWARN("isConnectedDeviceRepeater: COM-RPC path not implemented");
-                success = false;
+                const std::string strVideoPort = _vpConfigStore.GetDefaultVideoPortName();
+                if (!isDisplayConnected(strVideoPort)) {
+                    LOGERR("isConnectedDeviceRepeater failure: display not connected on %s\n", strVideoPort.c_str());
+                    success = false;
+                } else {
+                    auto* disp = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+                    if (disp != nullptr) {
+                        int32_t displayHandle = -1;
+                        if (disp->GetDisplay(Exchange::IDeviceSettingsDisplay::DS_DISPLAY_PORT_TYPE_HDMI, 0, displayHandle) == Core::ERROR_NONE && displayHandle >= 0) {
+                            Exchange::IDeviceSettingsDisplay::DisplayEDID edId{};
+                            Exchange::IDeviceSettingsDisplay::IDSVideoPortResolutionIterator* resList = nullptr;
+                            if (disp->GetDisplayEdid(displayHandle, edId, resList) == Core::ERROR_NONE) {
+                                isConnectedDeviceRepeater = edId.isRepeater;
+                                if (resList != nullptr) {
+                                    resList->Release();
+                                    resList = nullptr;
+                                }
+                            } else {
+                                success = false;
+                            }
+                        } else {
+                            success = false;
+                        }
+                        disp->Release();
+                    } else {
+                        success = false;
+                    }
+                }
             }
+            response["HdcpRepeater"] = isConnectedDeviceRepeater;
             returnResponse(success);
         }
 
         uint32_t DisplaySettings::getDefaultResolution (const JsonObject& parameters, JsonObject& response)
         {   //sample servicemanager response:
             LOGINFOMETHOD();
-			bool success = true;
+            bool success = true;
             {
-                // GetDefaultResolution not available in COM-RPC interface
-                LOGWARN("getDefaultResolution: COM-RPC path not implemented");
-                success = false;
+                const std::string strVideoPort = _vpConfigStore.GetDefaultVideoPortName();
+                if (!isDisplayConnected(strVideoPort)) {
+                    LOGERR("getDefaultResolution failure: display not connected on %s\n", strVideoPort.c_str());
+                    success = false;
+                } else {
+                    const std::string defaultRes = _vpConfigStore.GetDefaultResolution(strVideoPort);
+                    if (!defaultRes.empty()) {
+                        response["defaultResolution"] = defaultRes;
+                    } else {
+                        success = false;
+                    }
+                }
             }
             returnResponse(success);
         }
