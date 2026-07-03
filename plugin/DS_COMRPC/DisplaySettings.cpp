@@ -4074,6 +4074,9 @@ namespace Plugin {
             } else {
                 success = false;
             }
+        } catch (const std::exception& err) {
+            LOGERR("setPreferredColorDepth exception: %s", err.what());
+            success = false;
         }
         returnResponse(success);
     }
@@ -5805,7 +5808,7 @@ namespace Plugin {
             try {
                 isCecEnabled = getHdmiCecSinkCecEnableStatus();
             } catch (const std::exception& err) {
-                LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
+                LOGERR("Exception caught: message=%s", err.what());
             }
         }
 
@@ -5939,7 +5942,7 @@ namespace Plugin {
                     } /*End of m_currentArcRoutingState check */
                     arcAudio->Release();
                 } catch (const std::exception& err) {
-                    LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
+                    LOGERR("Exception caught: message=%s", err.what());
                 }
             } else {
                 LOGERR("Invalid SAD state m_AudioDeviceSADState =%d", m_AudioDeviceSADState);
@@ -5993,7 +5996,7 @@ namespace Plugin {
                     }
                 } // Release mutex m_AudioDeviceStatesUpdateMutex
                 catch (const std::exception& err) {
-                    LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
+                    LOGERR("Exception caught: message=%s", err.what());
                 }
             } else {
                 LOGERR("%s: Invalid audio mode sent by HdmiCecSink !!!\n", __FUNCTION__);
@@ -6070,7 +6073,7 @@ namespace Plugin {
                     LOGINFO("Skip Disable ARC and not notifying the UI as  m_hdmiInAudioDeviceConnected = false\n");
                 }
             } catch (const std::exception& err) {
-                LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
+                LOGERR("Exception caught: message=%s", err.what());
             }
         }
 
@@ -6191,7 +6194,7 @@ namespace Plugin {
                     }
                 }
             } catch (const std::exception& err) {
-                LOG_DEVICE_EXCEPTION0();
+                LOGERR("Exception caught: message=%s", err.what());
             }
         }
     }
@@ -6264,7 +6267,7 @@ namespace Plugin {
                     }
 
                 } catch (const std::exception& err) {
-                    LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
+                    LOGERR("Exception caught: message=%s", err.what());
                 }
             } // Release Mutex m_AudioDeviceStatesUpdateMutex if Arc is Success
             else {
@@ -6321,7 +6324,7 @@ namespace Plugin {
                             LOGINFO("onARCTerminationEventHandler: Skip Disable ARC and not notifying the UI as  m_hdmiInAudioDeviceConnected = false\n");
                         }
                     } catch (const std::exception& err) {
-                        LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
+                        LOGERR("Exception caught: message=%s", err.what());
                     }
                 } else {
                     LOGERR("CEC onARCTerminationEventHandler Failed !!!");
@@ -6443,7 +6446,7 @@ namespace Plugin {
                     }
                 }
             } catch (const std::exception& err) {
-                LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
+                LOGERR("Exception caught: message=%s", err.what());
             }
         } else if (pState == AVR_POWER_STATE_STANDBY) {
             m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_STANDBY;
@@ -6546,7 +6549,7 @@ namespace Plugin {
                 m_ArcDetectionTimer.stop();
             }
         } catch (const std::exception& err) {
-            LOG_DEVICE_EXCEPTION1(string(" Exception in checkArcDeviceConnected"));
+            LOGERR("Exception caught: message=%s", err.what());
         }
     }
 
