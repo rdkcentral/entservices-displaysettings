@@ -54,8 +54,8 @@ else()
 endif()
 
 add_library(${MODULE_NAME} SHARED
-	${DS_SOURCE_DIR}/DisplaySettings.cpp
-	Module.cpp)
+    ${DS_SOURCE_DIR}/DisplaySettings.cpp
+    ${DS_SOURCE_DIR}/Module.cpp)
 
 target_include_directories(${MODULE_NAME} PRIVATE ${DS_SOURCE_DIR})
 
