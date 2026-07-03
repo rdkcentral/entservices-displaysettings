@@ -2379,6 +2379,8 @@ namespace Plugin {
                         response["enable"] = boost ? true : false;
                         response["bassBoost"] = boost;
                     } else {
+                        // DS_IARM: catch sets response["enable"] = false
+                        response["enable"] = false;
                         success = false;
                     }
                 } else {
@@ -2666,9 +2668,10 @@ namespace Plugin {
     {
         LOGINFOMETHOD();
         returnIfParamNotFound(parameters, "mode");
+        // DS_IARM: returnIfParamNotFound for both mode and level
+        returnIfParamNotFound(parameters, "level");
         string sMode = parameters["mode"].String();
-        // DS_IARM: sBoost uses HasLabel guard (optional when mode != 1)
-        string sLevel = parameters.HasLabel("level") ? parameters["level"].String() : "";
+        string sLevel = parameters["level"].String();
         int volLevel = 0;
         int volMode = 0;
         // DS_IARM: TryParseIntInRange(sMode, 0, 2, mode) — hard rejects outside [0,2]
@@ -2724,10 +2727,9 @@ namespace Plugin {
         returnIfParamNotFound(parameters, "surroundDecoderEnable");
         string sEnableSurroundDecoder = parameters["surroundDecoderEnable"].String();
         bool enableSurroundDecoder = false;
-        try {
-            enableSurroundDecoder = parameters["surroundDecoderEnable"].Boolean();
-        } catch (const std::exception& err) {
-            LOGERR("Failed to parse surroundDecoderEnable: %s", err.what());
+        // DS_IARM: TryGetBoolParam accepts true/false/TRUE/FALSE/1/0
+        if (!TryGetBoolParam(parameters, "surroundDecoderEnable", enableSurroundDecoder)) {
+            LOGWARN("surroundDecoderEnable invalid: '%s' (expected true/false)", sEnableSurroundDecoder.c_str());
             returnResponse(false);
         }
         bool success = true;
@@ -2882,10 +2884,9 @@ namespace Plugin {
         returnIfParamNotFound(parameters, "MISteeringEnable");
         string sMISteering = parameters["MISteeringEnable"].String();
         bool MISteering = false;
-        try {
-            MISteering = parameters["MISteeringEnable"].Boolean();
-        } catch (const std::exception& err) {
-            LOGERR("Failed to parse MISteeringEnable: %s", err.what());
+        // DS_IARM: TryGetBoolParam accepts true/false/TRUE/FALSE/1/0
+        if (!TryGetBoolParam(parameters, "MISteeringEnable", MISteering)) {
+            LOGWARN("MISteeringEnable invalid: '%s' (expected true/false)", sMISteering.c_str());
             returnResponse(false);
         }
         bool success = true;
@@ -2953,10 +2954,9 @@ namespace Plugin {
         string sMuted = parameters["muted"].String();
         bool muted = false;
         static bool cache_muted = false;
-        try {
-            muted = parameters["muted"].Boolean();
-        } catch (const std::exception& err) {
-            LOGERR("Failed to parse muted: %s", err.what());
+        // DS_IARM: TryGetBoolParam accepts true/false/TRUE/FALSE/1/0
+        if (!TryGetBoolParam(parameters, "muted", muted)) {
+            LOGWARN("muted invalid: '%s' (expected true/false)", sMuted.c_str());
             returnResponse(false);
         }
 
@@ -3248,6 +3248,9 @@ namespace Plugin {
                         response["enable"] = (enhancerlevel ? true : false);
                         response["enhancerlevel"] = enhancerlevel;
                     } else {
+                        // DS_IARM: catch sets these defaults
+                        response["enable"] = false;
+                        response["enhancerlevel"] = 0;
                         success = false;
                     }
                 } else {
@@ -3314,6 +3317,9 @@ namespace Plugin {
                         response["enable"] = (intelligentEqualizerMode ? true : false);
                         response["mode"] = intelligentEqualizerMode;
                     } else {
+                        // DS_IARM: catch sets these defaults
+                        response["enable"] = false;
+                        response["mode"] = 0;
                         success = false;
                     }
                 } else {
@@ -3380,6 +3386,9 @@ namespace Plugin {
                         response["enable"] = (graphicEqualizerMode ? true : false);
                         response["mode"] = graphicEqualizerMode;
                     } else {
+                        // DS_IARM: catch sets these defaults
+                        response["enable"] = false;
+                        response["mode"] = 0;
                         success = false;
                     }
                 } else {
@@ -3531,10 +3540,9 @@ namespace Plugin {
         returnIfParamNotFound(parameters, "mixing");
         string sMixing = parameters["mixing"].String();
         bool mixing = false;
-        try {
-            mixing = parameters["mixing"].Boolean();
-        } catch (const std::exception& err) {
-            LOGERR("Failed to parse mixing: %s", err.what());
+        // DS_IARM: TryGetBoolParam accepts true/false/TRUE/FALSE/1/0
+        if (!TryGetBoolParam(parameters, "mixing", mixing)) {
+            LOGWARN("mixing invalid: '%s' (expected true/false)", sMixing.c_str());
             returnResponse(false);
         }
         bool success = true;
@@ -3972,18 +3980,23 @@ namespace Plugin {
         {
             uint32_t mode = getVideoFormatTypeFromString(sMode.c_str());
             string videoPort = parameters.HasLabel("videoPort") ? parameters["videoPort"].String() : "HDMI0";
-            auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
-            if (vp != nullptr) {
-                const auto it = _videoPortHandles.find(videoPort);
-                if (it != _videoPortHandles.end()) {
-                    if (vp->SetForceHDRMode(it->second, static_cast<Exchange::IDeviceSettingsVideoPort::HDRStandard>(mode)) == Core::ERROR_NONE) {
-                        success = true;
-                        LOGINFO("setForceHDRMode set successfully \n");
+            // DS_IARM: checks isDisplayConnected before calling setForceHDRMode
+            if (!isDisplayConnected(videoPort)) {
+                LOGERR("setForceHDRMode failure: display not connected on %s!\n", videoPort.c_str());
+            } else {
+                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    const auto it = _videoPortHandles.find(videoPort);
+                    if (it != _videoPortHandles.end()) {
+                        if (vp->SetForceHDRMode(it->second, static_cast<Exchange::IDeviceSettingsVideoPort::HDRStandard>(mode)) == Core::ERROR_NONE) {
+                            success = true;
+                            LOGINFO("setForceHDRMode set successfully \n");
+                        }
+                    } else {
+                        LOGERR("setForceHDRMode failure: port %s not found!\n", videoPort.c_str());
                     }
-                } else {
-                    LOGERR("setForceHDRMode failure: port %s not found!\n", videoPort.c_str());
+                    vp->Release();
                 }
-                vp->Release();
             }
         }
         returnResponse(success);
@@ -4097,7 +4110,7 @@ namespace Plugin {
             returnIfBooleanParamNotFound(parameters, "mute");
             bool mute = parameters["mute"].Boolean();
 
-            action = mute ? 1 : 0; // START : STOP
+            action = mute ? 0 : 1; // START(0) : STOP(1) — matches AUDIO_DUCKINGACTION_START=0
             type = 0; // ABSOLUTE
             level = mute ? 0 : 100;
         } else if (mode == "attenuate") {
@@ -4114,7 +4127,7 @@ namespace Plugin {
                 returnResponse(false);
             }
 
-            action = enable ? 1 : 0; // START : STOP
+            action = enable ? 0 : 1; // START(0) : STOP(1) — matches AUDIO_DUCKINGACTION_START=0
             type = relative ? 1 : 0; // RELATIVE : ABSOLUTE
             level = static_cast<uint8_t>((volume * 100.0) + 0.5);
         } else if (mode == "raw") {
@@ -4146,9 +4159,9 @@ namespace Plugin {
             }
 
             if (actionStr == "start") {
-                action = 1; // START
+                action = 0; // AUDIO_DUCKINGACTION_START=0
             } else if (actionStr == "stop") {
-                action = 0; // STOP
+                action = 1; // AUDIO_DUCKINGACTION_STOP=1
             } else {
                 LOGERR("Invalid action %s", actionStr.c_str());
                 returnResponse(false);
@@ -4301,7 +4314,26 @@ namespace Plugin {
                     while (iter->Next(ps)) {
                         JsonObject item;
                         item["index"] = entryIndex + 1; // 1-based index (matches DS_IARM TR-069 usage)
-                        item["profile"] = static_cast<int>(ps.profile);
+                        // DS_IARM: hevcProfileToString() maps enum → "MAIN"/"MAIN 10"/"MAIN STILL PICTURE"
+                        // for non-HEVC returns std::to_string(profile)
+                        if (vc == Exchange::IDeviceSettingsVideoDevice::VideoCodec::DS_VIDEO_CODEC_MPEGHPART2) {
+                            switch (ps.profile) {
+                            case Exchange::IDeviceSettingsVideoDevice::VideoCodecHEVCProfile::DS_VIDEO_CODEC_HEVC_PROFILE_MAIN:
+                                item["profile"] = string("MAIN");
+                                break;
+                            case Exchange::IDeviceSettingsVideoDevice::VideoCodecHEVCProfile::DS_VIDEO_CODEC_HEVC_PROFILE_MAIN10:
+                                item["profile"] = string("MAIN 10");
+                                break;
+                            case Exchange::IDeviceSettingsVideoDevice::VideoCodecHEVCProfile::DS_VIDEO_CODEC_HEVC_PROFILE_MAIN_STILLPICTURE:
+                                item["profile"] = string("MAIN STILL PICTURE");
+                                break;
+                            default:
+                                item["profile"] = string("UNKNOWN");
+                                break;
+                            }
+                        } else {
+                            item["profile"] = std::to_string(static_cast<int>(ps.profile));
+                        }
                         item["level"] = ps.level;
                         entries.Add(item);
                         entryIndex++;
@@ -4395,7 +4427,13 @@ namespace Plugin {
         LOGINFOMETHOD();
 
         bool success = false;
-        string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : "HDMI0";
+        // DS_IARM: defaults to getDefaultVideoPortName(), checks isDisplayConnected before querying
+        const std::string defaultVP = _vpConfigStore.GetDefaultVideoPortName();
+        string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : defaultVP;
+        if (!isDisplayConnected(videoDisplay)) {
+            LOGWARN("getDisplayAspectRatio: display not connected on port: %s", videoDisplay.c_str());
+            returnResponse(success);
+        }
         {
             auto* disp = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
             if (disp != nullptr) {
