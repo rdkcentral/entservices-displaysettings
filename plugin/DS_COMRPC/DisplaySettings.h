@@ -242,25 +242,42 @@ namespace WPEFramework {
                 DisplaySettings& _parent;
             };
 
+            // ----------------------------------------------------------------
+            // COM-RPC notification delegate: IDeviceSettingsHDMIIn::INotification
+            // Bridges COM-RPC HDMI-In hotplug events to DisplaySettings.
+            // DS_IARM equivalent: IHdmiInEvents::OnHdmiInEventHotPlug
+            //   (registered for IARM_BUS_DSMGR_EVENT_HDMI_IN_HOTPLUG in IarmImpl.cpp).
+            // ----------------------------------------------------------------
+            class DSHDMIInNotification
+                : public Exchange::IDeviceSettingsHDMIIn::INotification {
+            public:
+                explicit DSHDMIInNotification(DisplaySettings& parent) : _parent(parent) {}
+                DSHDMIInNotification(const DSHDMIInNotification&) = delete;
+                DSHDMIInNotification& operator=(const DSHDMIInNotification&) = delete;
+
+                void OnHDMIInEventHotPlug(const Exchange::IDeviceSettingsHDMIIn::HDMIInPort port,
+                                          const bool isConnected) override {
+                    _parent.OnDSHDMIInEventHotPlug(static_cast<int>(port), isConnected);
+                }
+
+                BEGIN_INTERFACE_MAP(DSHDMIInNotification)
+                    INTERFACE_ENTRY(Exchange::IDeviceSettingsHDMIIn::INotification)
+                END_INTERFACE_MAP
+            private:
+                DisplaySettings& _parent;
+            };
+
             // COM-RPC: notification delegate instance members (initialized with *this in ctor)
             Core::Sink<DSVideoPortNotification>      _DSVideoPortNotification;
             Core::Sink<DSAudioNotification>          _DSAudioNotification;
             Core::Sink<DSDisplayHotPlugNotification> _DSDisplayHotPlugNotification;
             Core::Sink<DSDisplayNotification>        _DSDisplayNotification;
             Core::Sink<DSVideoDeviceNotification>    _DSVideoDeviceNotification;
-
-            // COM-RPC: cached port handles acquired in OnDeviceSettingsActivated()
-            std::map<std::string, int32_t> _videoPortHandles;   ///< key = port name e.g. "HDMI0"
-            std::map<std::string, int32_t> _audioPortHandles;   ///< key = port name e.g. "HDMI0"
-            std::map<std::string, int32_t> _displayHandles;     ///< key = port name
-            int32_t                        _videoDeviceHandle { -1 };
-            // COM-RPC: cached config stores — loaded once in OnDeviceSettingsActivated(),
-            // cleared in OnDeviceSettingsDeactivated(). All per-method code uses these
-            // instead of calling LoadVideoPortConfig()/LoadAudioConfig() on every request.
-            VideoPortConfigStore           _vpConfigStore;      ///< port types, names, resolutions
-            AudioConfigStore               _audioConfigStore;   ///< audio port types and names
+            Core::Sink<DSHDMIInNotification>         _DSHDMIInNotification;
 
             // COM-RPC: DeviceSettingsClientHelper overrides
+            // NOTE: _videoPortHandles, _audioPortHandles, _displayHandles, _videoDeviceHandle,
+            // _vpConfigStore, _audioConfigStore are inherited from DeviceSettingsClientHelper.
             void OnDeviceSettingsActivated() override;
             void OnDeviceSettingsDeactivated() override;
 
@@ -279,6 +296,7 @@ namespace WPEFramework {
             void OnDSDisplayHDMIHotPlug(uint32_t displayEvent);
             void OnDSDisplayRxSense(uint32_t displayEvent);
             void OnDSZoomSettingChanged(int32_t zoomSetting);
+            void OnDSHDMIInEventHotPlug(int port, bool isConnected);
 
             //Begin methods
             uint32_t getConnectedVideoDisplays(const JsonObject& parameters, JsonObject& response);
