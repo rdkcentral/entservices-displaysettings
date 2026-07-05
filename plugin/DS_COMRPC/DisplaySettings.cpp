@@ -1370,7 +1370,6 @@ namespace Plugin {
         returnResponse(true);
     }
 
-    // BELOW SET OF APIS NEED TO BE REVIEWED BY ME
     uint32_t DisplaySettings::getZoomSetting(const JsonObject& parameters, JsonObject& response)
     { // sample servicemanager response:
         LOGINFOMETHOD();
@@ -5247,7 +5246,6 @@ namespace Plugin {
         returnResponse(success);
     }
 
-    // NEED TO BE REVIEWED BY ME
     void DisplaySettings::checkSADUpdate()
     {
         // COM-RPC path: replaces libds calls with IDeviceSettingsAudio COM-RPC methods
@@ -5314,7 +5312,6 @@ namespace Plugin {
         }
     }
 
-    // --- getEnableAudioPort ---
     uint32_t DisplaySettings::getEnableAudioPort(const JsonObject& parameters, JsonObject& response)
     {
         LOGINFOMETHOD();
@@ -5330,17 +5327,20 @@ namespace Plugin {
                 if (audio != nullptr) {
                     // DS_IARM: aPort.isEnabled() returns live HW state; use IsAudioPortEnabled here
                     bool enabled = false;
-                    if (audio->IsAudioPortEnabled(audioHandle, enabled) == Core::ERROR_NONE)
+                    if (audio->IsAudioPortEnabled(audioHandle, enabled) == Core::ERROR_NONE) {
                         response["enable"] = enabled;
-                    else
+                    }
+                    else {
+                        LOGWARN("getEnableAudioPort: IsAudioPortEnabled failed for audioPort=%s", audioPort.c_str());
                         success = false;
-                } else
-                    success = false;
+                    }
                     audio->Release();
+                } else {
+                    success = false;
                 }
-            }
-            } else
+            } else {
                 success = false;
+            }
         }
         LOGWARN("getEnableAudioPort: audioPort=%s enable=%s", audioPort.c_str(),
             response["enable"].Boolean() ? "true" : "false");
