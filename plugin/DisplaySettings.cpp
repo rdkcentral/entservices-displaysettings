@@ -1476,7 +1476,9 @@ namespace WPEFramework {
                     audioPort = "HDMI0";
 
                 stereoAuto = true;
+				
                 mode = device::AudioStereoMode::kSurround;
+				LOGINFO("setting sound mode = %s  \n ", mode.toString().c_str());
             }
             else if (soundMode == "dolby digital 5.1")
                 mode = device::AudioStereoMode::kSurround;
@@ -1492,7 +1494,7 @@ namespace WPEFramework {
                 returnResponse(false);
             }
 
-            LOGWARN("display = %s, mode = %s!", audioPort.c_str(), soundMode.c_str());
+            LOGWARN("display = %s, input mode = %s!", audioPort.c_str(), soundMode.c_str());
 
             try
             {
@@ -1625,7 +1627,7 @@ namespace WPEFramework {
             //TODO(MROLLINS) -- so this is interesting.  ServiceManager had a settingChanged event that I guess handled settings from many services.
             //Does that mean we need to save our setting back to another plugin that would own settings (and this settingsChanged event) ?
             //ServiceManager::getInstance()->saveSetting(this, SETTING_DISPLAY_SERVICE_SOUND_MODE, soundMode);
-
+           LOGINFO("final sound mode = %s  \n ", mode.toString().c_str());
             returnResponse(success);
         }
 
