@@ -55,8 +55,9 @@ endif()
 
 add_library(${MODULE_NAME} SHARED
     ${DS_SOURCE_DIR}/DisplaySettings.cpp
-    ${DS_SOURCE_DIR}/Module.cpp)
+    Module.cpp)
 
+target_include_directories(${MODULE_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(${MODULE_NAME} PRIVATE ${DS_SOURCE_DIR})
 
 set_target_properties(${MODULE_NAME} PROPERTIES
