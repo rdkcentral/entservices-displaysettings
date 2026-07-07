@@ -376,7 +376,8 @@ namespace Plugin {
                 if (_audioConfigStore.getAudioPortEntries(entries)) {
                     for (const AudioPortEntry& e : entries) {
                         int32_t handle = -1;
-                        if (audio->GetAudioPort(e.type, e.index, handle) == Core::ERROR_NONE) {
+                        Core::hresult comResult = audio->GetAudioPort(e.type, e.index, handle);
+                        if (comResult == Core::ERROR_NONE) {
                             _audioPortHandles[e.name] = handle;
                         }
                     }
@@ -396,6 +397,10 @@ namespace Plugin {
         // COM-RPC: acquire audio interface once for the entire per-port loop
         // (replaces device::Host::getInstance().getAudioOutputPorts())
         auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+        if (audio == nullptr) {
+            LOGWARN("DisplaySettings::InitAudioPorts: failed to acquire IDeviceSettingsAudio interface");
+            return;
+        }
 
         for (const auto& kv : _audioPortHandles) {
             const std::string& portName = kv.first;
@@ -407,7 +412,8 @@ namespace Plugin {
             // COM-RPC: replaces libds vPort.getEnablePersist()
             if (audio != nullptr) {
                 std::string unused;
-                if (audio->GetAudioEnablePersist(portHandle, isPortPersistenceValEnabled, unused) != Core::ERROR_NONE) {
+                auto comRc = audio->GetAudioEnablePersist(portHandle, isPortPersistenceValEnabled, unused);
+                if (comRc != Core::ERROR_NONE){
                     LOGWARN("Audio Port : [%s] Getting enable persist value failed. Proceeding with true\n", portName.c_str());
                 }
             }
@@ -424,7 +430,8 @@ namespace Plugin {
                 // COM-RPC: replaces libds vPort.getHdmiArcPortId(&portId)
                 if (audio != nullptr) {
                     int32_t portId = -1;
-                    if (audio->GetAudioHDMIARCPortId(portHandle, portId) == Core::ERROR_NONE && portId >= 0) {
+                    auto comRc = audio->GetAudioHDMIARCPortId(portHandle, portId);
+                    if (comRc == Core::ERROR_NONE && portId >= 0){
                         hdmiArcPortId = portId;
                         LOGWARN("HDMI ARC port ID hdmiArcPortId=%d\n", hdmiArcPortId);
                     }
@@ -739,7 +746,12 @@ namespace Plugin {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     bool connected = false;
-                    vp->IsVideoPortDisplayConnected(videoHandle, connected);
+                    auto hr = vp->IsVideoPortDisplayConnected(videoHandle, connected);
+                    if (hr == Core::ERROR_NONE) {
+                        LOGINFO("Video port '%s' is %s", port.c_str(), connected ? "connected" : "disconnected");
+                    } else {
+                        LOGERR("Failed to check video port '%s' connection status", port.c_str());
+                    }
                     vp->Release();
                     isHdmiDisplayConnected = connected;
                     isConnected = connected;
@@ -779,10 +791,16 @@ namespace Plugin {
                             _videoPortHandles[e.name] = handle;
                             LOGINFO("VideoPort '%s' → handle=%d", e.name.c_str(), handle);
                         }
+                        else {
+                            LOGERR("Failed to acquire VideoPort '%s' handle, Error=%d", e.name.c_str(), rc);
+                        }
                     }
                 }
                 vp->Register(&_DSVideoPortNotification);
                 vp->Release();
+            }
+            else {
+                LOGERR("Failed to acquire IDeviceSettingsVideoPort interface");
             }
         }
 
@@ -803,10 +821,16 @@ namespace Plugin {
                             _audioPortHandles[e.name] = handle;
                             LOGINFO("AudioPort '%s' → handle=%d", e.name.c_str(), handle);
                         }
+                        else {
+                            LOGERR("Failed to acquire AudioPort '%s' handle, Error=%d", e.name.c_str(), rc);
+                        }
                     }
                 }
                 audio->Register(&_DSAudioNotification);
                 audio->Release();
+            }
+            else {
+                LOGERR("Failed to acquire IDeviceSettingsAudio interface");
             }
         }
 
@@ -818,15 +842,24 @@ namespace Plugin {
                 disp->Register(&_DSDisplayNotification);
                 disp->Release();
             }
+            else {
+                LOGERR("Failed to acquire IDeviceSettingsDisplay interface");
+            }
         }
 
         // --- VideoDevice sub-interface ---
         {
             auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
             if (vd != nullptr) {
-                vd->GetVideoDeviceHandle(0, _videoDeviceHandle);
+                auto hr = vd->GetVideoDeviceHandle(0, _videoDeviceHandle);
+                if (hr != Core::ERROR_NONE) {
+                    LOGERR("Failed to acquire VideoDevice handle, Error=%d", hr);
+                }
                 vd->Register(&_DSVideoDeviceNotification);
                 vd->Release();
+            }
+            else {
+                LOGERR("Failed to acquire IDeviceSettingsVideoDevice interface");
             }
         }
 
@@ -839,6 +872,9 @@ namespace Plugin {
             if (hdmiIn != nullptr) {
                 hdmiIn->Register(&_DSHDMIInNotification);
                 hdmiIn->Release();
+            }
+            else {
+                LOGERR("Failed to acquire IDeviceSettingsHDMIIn interface");
             }
         }
 
@@ -1099,11 +1135,13 @@ namespace Plugin {
                     const std::string& portName = kv.first;
                     int32_t portHandle = kv.second;
                     if (isAudioOutputPortConnected(audio, portName, portHandle)) {
+                        LOGINFO("Audio Port : [%s] is connected \n", portName.c_str());
                         if ((portName == "HDMI_ARC0") && (m_hdmiInAudioDeviceConnected != true)) {
                             continue;
                         }
                         vectorSet(connectedAudioPorts, portName);
                     } else if (portName == "HDMI_ARC0" && m_hdmiInAudioDeviceConnected == true && m_arcEarcAudioEnabled == false) {
+                        LOGINFO("Audio Port : [%s] is disconnected but ARC/eARC audio is enabled, so send the connectedAudioPorts update to UI \n", portName.c_str());
                         /* This is the case where we get ARC initiation or eARC detection done before HPD.
                          * Send connectedport update as ARC disconnected and Restart the ARC-eARC again */
                         m_hdmiInAudioDeviceConnected = false;
@@ -1119,6 +1157,9 @@ namespace Plugin {
                     }
                 }
                 audio->Release();
+            }
+            else {
+                LOGERR("Failed to acquire IDeviceSettingsAudio interface");
             }
         }
         setResponseArray(response, "connectedAudioPorts", connectedAudioPorts);
@@ -1137,13 +1178,23 @@ namespace Plugin {
             if (_vpConfigStore.ResolveByName(videoDisplay, entry)) {
                 // DS_IARM: vPort.isDisplayConnected() — use isDisplayConnected() wrapper
                 if (isDisplayConnected(entry.name)) {
+                    LOGINFO("Display is connected for video port '%s' (type=%d, index=%d)", entry.name.c_str(), entry.type, entry.index);
                     std::vector<VideoPortResolution> resolutions;
                     if (_vpConfigStore.GetResolutionsForType(entry.type, resolutions)) {
                         for (const auto& res : resolutions) {
                             vectorSet(supportedResolutions, res.name);
                         }
                     }
+                    else {
+                        LOGWARN("No resolutions found for video port '%s' (type=%d, index=%d)", entry.name.c_str(), entry.type, entry.index);
+                    }
                 }
+                else {
+                    LOGWARN("Display is not connected for video port '%s' (type=%d, index=%d)", entry.name.c_str(), entry.type, entry.index);
+                }
+            }
+            else {
+                LOGWARN("Video port '%s' not found in config store", videoDisplay.c_str());
             }
         }
         setResponseArray(response, "supportedResolutions", supportedResolutions);
@@ -1162,6 +1213,9 @@ namespace Plugin {
                     vectorSet(supportedVideoDisplays, e.name);
                 }
             }
+            else {
+                LOGWARN("No video port entries found in config store");
+            }
         }
         setResponseArray(response, "supportedVideoDisplays", supportedVideoDisplays);
         returnResponse(true);
@@ -1179,7 +1233,8 @@ namespace Plugin {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     int32_t tvResolutions = 0;
-                    if (vp->GetTVSupportedResolutions(videoHandle, tvResolutions) == Core::ERROR_NONE) {
+                    auto hr = vp->GetTVSupportedResolutions(videoHandle, tvResolutions);
+                    if (hr == Core::ERROR_NONE) {
                         if (!tvResolutions)
                             supportedTvResolutions.emplace_back("none");
                         if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_480I)) {
@@ -1231,6 +1286,9 @@ namespace Plugin {
                         if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P60))
                             supportedTvResolutions.emplace_back("2160p60");
                     }
+                    else {
+                        LOGERR("Failed to get TV supported resolutions for video port '%s' (handle=%d), Error=%d", videoDisplay.c_str(), videoHandle, hr);
+                    }
                     vp->Release();
                 }
             }
@@ -1263,6 +1321,9 @@ namespace Plugin {
                     }
                 }
             }
+            else {
+                LOGWARN("No video port entries found in config store");
+            }
         }
         setResponseArray(response, "supportedSettopResolutions", supportedSettopResolutions);
         returnResponse(true);
@@ -1279,6 +1340,9 @@ namespace Plugin {
                     vectorSet(supportedAudioPorts, kv.first);
                 }
                 audio->Release();
+            }
+            else {
+                LOGERR("Failed to acquire IDeviceSettingsAudio interface");
             }
         }
         setResponseArray(response, "supportedAudioPorts", supportedAudioPorts);
@@ -1325,6 +1389,9 @@ namespace Plugin {
                     }
                 }
             }
+            else {
+                LOGWARN("No audio port entries found in config store");
+            }
         }
         // DS_IARM post-loop:
         //   if (Utils::String::stringContains(audioPort, "HDMI0")) {
@@ -1343,8 +1410,14 @@ namespace Plugin {
                 if (videoHandle >= 0) {
                     auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                     if (vp != nullptr) {
-                        vp->GetVideoPortDisplaySurroundMode(videoHandle, surroundMode);
+                        auto hr = vp->GetVideoPortDisplaySurroundMode(videoHandle, surroundMode);
+                        if (hr != Core::ERROR_NONE) {
+                            LOGERR("Failed to get video port display surround mode for video port '%s' (handle=%d), Error=%d", defaultVP.c_str(), videoHandle, hr);
+                        }
                         vp->Release();
+                    }
+                    else {
+                        LOGERR("Failed to acquire IDeviceSettingsVideoPort interface");
                     }
                 }
             }
@@ -1380,7 +1453,8 @@ namespace Plugin {
             auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
             if (vd != nullptr) {
                 Exchange::IDeviceSettingsVideoDevice::VideoZoom dfcZoom = Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_UNKNOWN;
-                if (vd->GetVideoDeviceDFC(_videoDeviceHandle, dfcZoom) == Core::ERROR_NONE) {
+                auto hr = vd->GetVideoDeviceDFC(_videoDeviceHandle, dfcZoom);
+                if (hr == Core::ERROR_NONE) {
                     switch (dfcZoom) {
                     case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_NONE:
                         zoomSetting = "NONE";
@@ -1413,14 +1487,17 @@ namespace Plugin {
                         zoomSetting = "WIDE_4_3";
                         break;
                     default:
+                        LOGERR("Unknown DFC zoom value %d", static_cast<int>(dfcZoom));
                         success = false;
                         break;
                     }
                 } else {
+                    LOGERR("GetVideoDeviceDFC failed, Error=%d", static_cast<int>(hr));
                     success = false;
                 }
                 vd->Release();
             } else {
+                LOGERR("IDeviceSettingsVideoDevice not available");
                 success = false;
             }
         }
@@ -1466,11 +1543,16 @@ namespace Plugin {
                     LOGERR("Unknown zoom setting: %s", zoomSetting.c_str());
                     success = false;
                 }
-                if (success && vd->SetVideoDeviceDFC(_videoDeviceHandle, dfcZoom) != Core::ERROR_NONE) {
-                    success = false;
+                if (success) {
+                    auto hr = vd->SetVideoDeviceDFC(_videoDeviceHandle, dfcZoom);
+                    if (hr != Core::ERROR_NONE) {
+                        LOGERR("SetVideoDeviceDFC failed for '%s', Error=%d", zoomSetting.c_str(), static_cast<int>(hr));
+                        success = false;
+                    }
                 }
                 vd->Release();
             } else {
+                LOGERR("IDeviceSettingsVideoDevice not available");
                 success = false;
             }
         }
@@ -1493,21 +1575,26 @@ namespace Plugin {
                         auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                         if (vp != nullptr) {
                             Exchange::IDeviceSettingsVideoPort::VideoPortResolution vpRes;
-                            if (vp->GetVideoPortResolution(videoHandle, vpRes) == Core::ERROR_NONE) {
+                            auto comRc = vp->GetVideoPortResolution(videoHandle, vpRes);
+                            if (comRc == Core::ERROR_NONE){
                                 currentResolutionCache = vpRes.name;
                                 isResCacheUpdated = true;
                             } else {
+                                LOGERR("GetVideoPortResolution failed for '%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comRc));
                                 success = false;
                             }
                             vp->Release();
                         } else {
+                            LOGERR("IDeviceSettingsVideoPort not available");
                             success = false;
                         }
                     }
                 } else {
+                    LOGERR("no video port handle for '%s'", videoDisplay.c_str());
                     success = false;
                 }
             } else {
+                LOGERR("unknown videoDisplay '%s'", videoDisplay.c_str());
                 success = false;
             }
         }
@@ -1590,6 +1677,7 @@ namespace Plugin {
                     }
                     vp->Release();
                 } else {
+                    LOGERR("IDeviceSettingsVideoPort not available");
                     success = false;
                 }
             } else {
@@ -1631,6 +1719,10 @@ namespace Plugin {
                 int32_t audioHandle = -1;
                 // DS_IARM: aPort.isConnected() — replicated per port type by isAudioOutputPortConnected
                 bool portConnected = isAudioOutputPortConnected(audio, audioPort, audioHandle);
+                if (audioHandle < 0) {
+                    LOGERR("No audio handle found for audioPort '%s'", audioPort.c_str());
+                    success = false;
+                }
 
                 // Determine mode string — mirrors DS_IARM per-type logic
                 bool isHdmi = (audioPort == "HDMI0" || (Utils::String::stringContains(audioPort, "HDMI") && !Utils::String::stringContains(audioPort, "ARC")));
@@ -1640,8 +1732,14 @@ namespace Plugin {
                 Exchange::IDeviceSettingsAudio::StereoMode stereoMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
                 int32_t stereoAuto = 0;
                 if (audioHandle >= 0) {
-                    audio->GetStereoMode(audioHandle, stereoMode);
-                    audio->GetStereoAuto(audioHandle, stereoAuto);
+                    auto hr = audio->GetStereoMode(audioHandle, stereoMode);
+                    if (hr != Core::ERROR_NONE) {
+                        LOGERR("GetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(hr));
+                    }
+                    hr = audio->GetStereoAuto(audioHandle, stereoAuto);
+                    if (hr != Core::ERROR_NONE) {
+                        LOGERR("GetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(hr));
+                    }
                 }
 
                 if (portConnected) {
@@ -1655,9 +1753,17 @@ namespace Plugin {
                             if (vpHandle >= 0) {
                                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                                 if (vp != nullptr) {
-                                    vp->GetVideoPortDisplaySurroundMode(vpHandle, surroundMode);
+                                    auto hr = vp->GetVideoPortDisplaySurroundMode(vpHandle, surroundMode);
+                                    if (hr != Core::ERROR_NONE) {
+                                        LOGERR("GetVideoPortDisplaySurroundMode failed for video port handle %d, Error=%d", vpHandle, static_cast<int>(hr));
+                                        success = false;
+                                    }
                                     vp->Release();
                                 }
+                            }
+                            else {
+                                LOGERR("No video port handle found for audioPort '%s'", audioPort.c_str());
+                                success = false;
                             }
                             if (surroundMode == VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_DDPLUS) {
                                 modeString = "AUTO (Dolby Digital Plus)";
@@ -1706,6 +1812,7 @@ namespace Plugin {
                 }
                 audio->Release();
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -1768,6 +1875,7 @@ namespace Plugin {
             if (!audioPort.empty()) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
+                    Core::hresult comResult = Core::ERROR_NONE;
                     int32_t audioHandle = -1;
                     // DS_IARM: aPort.isConnected() — replicated per port type by isAudioOutputPortConnected
                     bool portConnected = isAudioOutputPortConnected(audio, audioPort, audioHandle);
@@ -1779,7 +1887,12 @@ namespace Plugin {
                         if (portConnected) {
                             if (isHdmi && comMode != Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH) {
                                 // HDMI + non-passthru: set stereoAuto then stereoMode
-                                audio->SetStereoAuto(audioHandle, stereoAuto ? 1 : 0, persist);
+                                comResult = audio->SetStereoAuto(audioHandle, stereoAuto ? 1 : 0, persist);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                    success = false;
+                                }
+
                                 if (stereoAuto) {
                                     // DS_IARM: if (getSurroundMode()) comMode = kSurround; else comMode = kStereo
                                     // COM-RPC: GetVideoPortDisplaySurroundMode on the HDMI video port handle
@@ -1788,28 +1901,53 @@ namespace Plugin {
                                     if (vpHandle >= 0) {
                                         auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                                         if (vp != nullptr) {
-                                            vp->GetVideoPortDisplaySurroundMode(vpHandle, surroundMode);
+                                            comResult = vp->GetVideoPortDisplaySurroundMode(vpHandle, surroundMode);
+                                            if (comResult != Core::ERROR_NONE) {
+                                                LOGERR("GetVideoPortDisplaySurroundMode failed for video port handle %d, Error=%d", vpHandle, static_cast<int>(comResult));
+                                                success = false;
+                                            }
                                             vp->Release();
                                         }
                                     }
+                                    else {
+                                        LOGERR("No video port handle found for audioPort '%s'", audioPort.c_str());
+                                        success = false;
+                                    }
+
                                     if (surroundMode != VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_NONE) {
                                         comMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND;
                                     } else {
                                         comMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
                                     }
                                 }
-                                audio->SetStereoMode(audioHandle, comMode, persist);
+                                comResult = audio->SetStereoMode(audioHandle, comMode, persist);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                    success = false;
+                                }
                             } else if (isHdmi) {
                                 // HDMI + passthru: reset stereoAuto
-                                LOGERR("Reset auto on %s for mode = %s!", audioPort.c_str(), soundMode.c_str());
-                                audio->SetStereoAuto(audioHandle, 0, persist);
-                                audio->SetStereoMode(audioHandle, comMode, persist);
+                                LOGWARN("Reset auto on %s for mode = %s!", audioPort.c_str(), soundMode.c_str());
+                                comResult = audio->SetStereoAuto(audioHandle, 0, persist);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                    success = false;
+                                }
+                                comResult = audio->SetStereoMode(audioHandle, comMode, persist);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                    success = false;
+                                }
                             } else if (isArc) {
                                 if (!stereoAuto && (comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND ||
                                                     comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH ||
                                                     comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO)) {
                                     // ARC non-auto: reset stereoAuto, audioHandle SAD, set stereoMode
-                                    audio->SetStereoAuto(audioHandle, 0, persist);
+                                    comResult = audio->SetStereoAuto(audioHandle, 0, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
                                     if (m_hdmiInAudioDeviceType == static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC) && m_hdmiInAudioDeviceConnected == true) {
                                         if (comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH) {
                                             if (m_AudioDeviceSADState == AUDIO_DEVICE_SAD_CLEARED || m_AudioDeviceSADState == AUDIO_DEVICE_SAD_UNKNOWN) {
@@ -1827,11 +1965,19 @@ namespace Plugin {
                                             }
                                         }
                                     }
-                                    audio->SetStereoMode(audioHandle, comMode, persist);
+                                    comResult = audio->SetStereoMode(audioHandle, comMode, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
                                 } else {
                                     // ARC auto mode
                                     if (m_hdmiInAudioDeviceType == static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_EARC)) {
-                                        audio->SetStereoAuto(audioHandle, 1, persist);
+                                        comResult = audio->SetStereoAuto(audioHandle, 1, persist);
+                                        if (comResult != Core::ERROR_NONE) {
+                                            LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                            success = false;
+                                        }
                                     } else if (m_hdmiInAudioDeviceType == static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC) && m_hdmiInAudioDeviceConnected == true) {
                                         if (m_AudioDeviceSADState == AUDIO_DEVICE_SAD_CLEARED || m_AudioDeviceSADState == AUDIO_DEVICE_SAD_UNKNOWN) {
                                             LOGINFO("%s: sending SAD request\n", __FUNCTION__);
@@ -1839,16 +1985,32 @@ namespace Plugin {
                                             m_AudioDeviceSADState = AUDIO_DEVICE_SAD_REQUESTED;
                                             LOGINFO("setSoundMode Auto: SAD Requested\n");
                                         }
-                                        audio->SetStereoAuto(audioHandle, 1, persist);
+                                        comResult = audio->SetStereoAuto(audioHandle, 1, persist);
+                                        if (comResult != Core::ERROR_NONE) {
+                                            LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                            success = false;
+                                        }
                                     }
                                 }
                             } else if (Utils::String::stringContains(audioPort, "SPDIF") || Utils::String::stringContains(audioPort, "HEADPHONE")) {
                                 // DS_IARM: else if (kSPDIF || kHEADPHONE)
                                 if (!stereoAuto) {
-                                    audio->SetStereoAuto(audioHandle, 0, persist);
-                                    audio->SetStereoMode(audioHandle, comMode, persist);
+                                    comResult = audio->SetStereoAuto(audioHandle, 0, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
+                                    comResult = audio->SetStereoMode(audioHandle, comMode, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
                                 } else {
-                                    audio->SetStereoAuto(audioHandle, 1, persist);
+                                    comResult = audio->SetStereoAuto(audioHandle, 1, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
                                 }
                             }
                         } else {
@@ -1857,30 +2019,56 @@ namespace Plugin {
                                 if (!stereoAuto && (comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND ||
                                                     comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH ||
                                                     comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO)) {
-                                    audio->SetStereoAuto(audioHandle, 0, persist);
-                                    audio->SetStereoMode(audioHandle, comMode, persist);
+                                    comResult = audio->SetStereoAuto(audioHandle, 0, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
+                                    comResult = audio->SetStereoMode(audioHandle, comMode, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
                                 } else {
-                                    audio->SetStereoAuto(audioHandle, stereoAuto ? 1 : 0, persist);
+                                    comResult = audio->SetStereoAuto(audioHandle, stereoAuto ? 1 : 0, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
                                 }
                             } else if (isHdmi) {
                                 if (comMode != Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH) {
-                                    audio->SetStereoAuto(audioHandle, stereoAuto ? 1 : 0, persist);
+                                    comResult = audio->SetStereoAuto(audioHandle, stereoAuto ? 1 : 0, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
                                     LOGINFO("setting stereoAuto=%d", stereoAuto);
                                 } else {
-                                    audio->SetStereoAuto(audioHandle, 0, persist);
+                                    comResult = audio->SetStereoAuto(audioHandle, 0, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
                                 }
                                 LOGINFO("setting sound mode = %s", soundMode.c_str());
-                                audio->SetStereoMode(audioHandle, comMode, persist);
+                                comResult = audio->SetStereoMode(audioHandle, comMode, persist);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                    success = false;
+                                }
                             } else {
                                 LOGERR("setSoundMode failed !! Device Not Connected...\n");
                                 success = false;
                             }
                         }
                     } else {
+                        LOGERR("no audio port handle found for audioPort='%s'", audioPort.c_str());
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
@@ -1911,15 +2099,22 @@ namespace Plugin {
             auto* disp = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
             if (disp != nullptr) {
                 int32_t displayHandle = -1;
+                Core::hresult comResult = disp->GetDisplay(Exchange::IDeviceSettingsDisplay::DS_DISPLAY_PORT_TYPE_HDMI, 0, displayHandle);
                 // COM-RPC_TODO: Need to check and maintain a cache of display handles, similar to video port handles, to avoid repeated calls to GetDisplay()
-                if (disp->GetDisplay(Exchange::IDeviceSettingsDisplay::DS_DISPLAY_PORT_TYPE_HDMI, 0, displayHandle) == Core::ERROR_NONE && displayHandle >= 0) {
+                if (comResult == Core::ERROR_NONE && displayHandle >= 0) {
                     constexpr uint16_t kEdidMaxLen = 256;
                     uint8_t edidBuf[kEdidMaxLen] = {};
                     if (disp->GetDisplayEdidBytes(displayHandle, edidBuf, kEdidMaxLen) == Core::ERROR_NONE) {
                         Core::ToString(edidBuf, kEdidMaxLen, true, edidbase64);
                     }
                 }
+                else {
+                    LOGERR("GetDisplay failed for HDMI display, Error=%d", static_cast<int>(comResult));
+                }
                 disp->Release();
+            }
+            else {
+                LOGERR("IDeviceSettingsDisplay not available");
             }
         }
         // DS_IARM: returns base64("unknown") when not connected; match that default
@@ -1941,10 +2136,17 @@ namespace Plugin {
             if (host != nullptr) {
                 constexpr uint16_t kEdidMaxLen = 256;
                 uint8_t edidBuf[kEdidMaxLen] = {};
-                if (host->GetEDID(edidBuf, kEdidMaxLen) == Core::ERROR_NONE) {
+                Core::hresult comResult = host->GetEDID(edidBuf, kEdidMaxLen);
+                if (comResult == Core::ERROR_NONE) {
                     Core::ToString(edidBuf, kEdidMaxLen, true, base64String);
                 }
+                else {
+                    LOGERR("GetEDID failed for host, Error=%d", static_cast<int>(comResult));
+                }
                 host->Release();
+            }
+            else {
+                LOGERR("IDeviceSettingsHost not available");
             }
         }
         // DS_IARM: returns base64("unknown") on failure; match that default
@@ -1971,12 +2173,25 @@ namespace Plugin {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     bool portActive = false;
-                    if (vp->IsVideoPortActive(videoHandle, portActive) == Core::ERROR_NONE) {
+                    Core::hresult comResult = vp->IsVideoPortActive(videoHandle, portActive);
+                    if (comResult == Core::ERROR_NONE) {
                         active = portActive;
+                    }
+                    else {
+                        LOGERR("IsVideoPortActive failed for video handle %d, Error=%d", videoHandle, static_cast<int>(comResult));
                     }
                     vp->Release();
                 }
+                else {
+                    LOGERR("IDeviceSettingsVideoPort not available");
+                }
             }
+            else {
+                LOGERR("No video port handle found for videoDisplay '%s'", videoDisplay.c_str());
+            }
+        }
+        else {
+            LOGINFO("Display '%s' is not connected", videoDisplay.c_str());
         }
         response["activeInput"] = JsonValue(active);
         returnResponse(true);
@@ -1998,12 +2213,22 @@ namespace Plugin {
                     auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                     if (vp != nullptr) {
                         int32_t tvCapabilities = 0;
-                        if (vp->GetTVHDRCapabilities(videoHandle, tvCapabilities) == Core::ERROR_NONE) {
+                        Core::hresult comResult = vp->GetTVHDRCapabilities(videoHandle, tvCapabilities);
+                        if (comResult == Core::ERROR_NONE) {
                             capabilities = tvCapabilities;
                         }
                         vp->Release();
                     }
+                    else {
+                        LOGERR("IDeviceSettingsVideoPort not available");
+                    }
                 }
+                else {
+                    LOGERR("No video port handle found for videoDisplay '%s'", defaultVP.c_str());
+                }
+            }
+            else {
+                LOGINFO("Display '%s' is not connected", defaultVP.c_str());
             }
         }
 
@@ -2046,10 +2271,17 @@ namespace Plugin {
                 auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
                 if (vd != nullptr) {
                     int32_t caps = 0;
-                    if (vd->GetHDRCapabilities(_videoDeviceHandle, caps) == Core::ERROR_NONE) {
+                    Core:hresult comResult = vd->GetHDRCapabilities(_videoDeviceHandle, caps);
+                    if (comResult == Core::ERROR_NONE) {
                         capabilities = caps;
                     }
+                    else {
+                        LOGERR("GetHDRCapabilities failed for video device handle %d, Error=%d", _videoDeviceHandle, static_cast<int>(comResult));
+                    }
                     vd->Release();
+                }
+                else {
+                    LOGERR("IDeviceSettingsVideoDevice not available");
                 }
             }
             stbHDRcapabilitiesCache = capabilities;
@@ -2097,11 +2329,20 @@ namespace Plugin {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     int32_t caps = 0;
-                    if (audio->GetAudioCapabilities(audioHandle, caps) == Core::ERROR_NONE) {
+                    Core:hresult comResult = audio->GetAudioCapabilities(audioHandle, caps);
+                    if (comResult == Core::ERROR_NONE) {
                         capabilities = caps;
+                    } else {
+                        LOGERR("GetAudioCapabilities failed for audio handle %d", audioHandle);
                     }
                     audio->Release();
                 }
+                else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                }
+            }
+            else {
+                LOGERR("no audio port handle for '%s'", audioPort.c_str());
             }
         }
 
@@ -2140,11 +2381,20 @@ namespace Plugin {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     int32_t caps = 0;
-                    if (audio->GetAudioMS12Capabilities(audioHandle, caps) == Core::ERROR_NONE) {
+                    Core:hresult comResult = audio->GetAudioMS12Capabilities(audioHandle, caps);
+                    if (comResult == Core::ERROR_NONE) {
                         capabilities = caps;
+                    } else {
+                        LOGERR("GetAudioMS12Capabilities failed for audio handle %d", audioHandle);
                     }
                     audio->Release();
                 }
+                else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                }
+            }
+            else {
+                LOGERR("no audio port handle for '%s'", audioPort.c_str());
             }
         }
 
@@ -2173,7 +2423,7 @@ namespace Plugin {
         const std::string defaultVP = _vpConfigStore.GetDefaultVideoPortName();
         string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : defaultVP;
         if (!isDisplayConnected(videoDisplay)) {
-            LOGERR("getCurrentOutputSettings: display not connected on %s", videoDisplay.c_str());
+            LOGERR("display not connected on %s", videoDisplay.c_str());
             returnResponse(false);
         }
         {
@@ -2182,7 +2432,8 @@ namespace Plugin {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     Exchange::IDeviceSettingsVideoPort::DSOutputSettings settings;
-                    if (vp->GetCurrentOutputSettings(videoHandle, settings) == Core::ERROR_NONE) {
+                    Core::hresult comResult = vp->GetCurrentOutputSettings(videoHandle, settings);
+                    if (comResult == Core::ERROR_NONE) {
                         // DS_IARM response keys: colorSpace, colorDepth, matrixCoefficients, videoEOTF, quantizationRange
                         response["colorSpace"] = static_cast<uint32_t>(settings.colorSpace);
                         response["colorDepth"] = static_cast<uint32_t>(settings.colorDepth);
@@ -2190,13 +2441,16 @@ namespace Plugin {
                         response["videoEOTF"] = static_cast<uint32_t>(settings.videoEotf);
                         response["quantizationRange"] = static_cast<uint32_t>(settings.quantizationRange);
                     } else {
+                        LOGERR("GetCurrentOutputSettings failed for '%s'", videoDisplay.c_str());
                         success = false;
                     }
                     vp->Release();
                 } else {
+                    LOGERR("IDeviceSettingsVideoPort not available");
                     success = false;
                 }
             } else {
+                LOGERR("no video port handle for '%s'", videoDisplay.c_str());
                 success = false;
             }
         }
@@ -2217,18 +2471,23 @@ namespace Plugin {
                 int32_t audioHandle = -1;
                 if (isAudioOutputPortConnected(audio, audioPort, audioHandle)) {
                     Exchange::IDeviceSettingsAudio::VolumeLeveller leveller{ 0, 0 };
-                    if (audio->GetAudioVolumeLeveller(audioHandle, leveller) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioVolumeLeveller(audioHandle, leveller);
+                    if (comResult == Core::ERROR_NONE) {
                         response["enable"] = (leveller.mode ? true : false);
                         response["level"] = leveller.level;
                     } else {
-                        LOGERR("getVolumeLeveller: GetAudioVolumeLeveller failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("GetAudioVolumeLeveller failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                         response["enable"] = false;
                         response["level"] = 0;
                     }
+                } else {
+                    LOGERR("no audio port handle for '%s'", audioPort.c_str());
+                    success = false;
                 }
                 audio->Release();
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -2247,18 +2506,24 @@ namespace Plugin {
                 int32_t audioHandle = -1;
                 if (isAudioOutputPortConnected(audio, audioPort, audioHandle)) {
                     Exchange::IDeviceSettingsAudio::VolumeLeveller leveller{ 0, 0 };
-                    if (audio->GetAudioVolumeLeveller(audioHandle, leveller) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioVolumeLeveller(audioHandle, leveller);
+                    if (comResult == Core::ERROR_NONE) {
                         response["mode"] = leveller.mode;
                         response["level"] = leveller.level;
                     } else {
-                        LOGERR("getVolumeLeveller2: GetAudioVolumeLeveller failed for audioPort='%s'", audioPort.c_str());
+                        Core::hresult comResult = audio->GetAudioVolumeLeveller(audioHandle, leveller);
+                        LOGERR("getVolumeLeveller2: GetAudioVolumeLeveller failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                         response["mode"] = 0;
                         response["level"] = 0;
                     }
+                } else {
+                    LOGERR("getVolumeLeveller2: no audio port handle for '%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                    success = false;
                 }
                 audio->Release();
             } else {
+                LOGERR("getVolumeLeveller2: IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -2349,23 +2614,28 @@ namespace Plugin {
                         if (it == _audioPortHandles.end()) continue;
                         int32_t handle = it->second;
                         bool enabled = false;
-                        if (audio->IsAudioPortEnabled(handle, enabled) == Core::ERROR_NONE && enabled) {
+                        Core::hresult comResult = audio->IsAudioPortEnabled(handle, enabled);
+                        if (comResult == Core::ERROR_NONE && enabled) {
                             if (isAudioOutputPortConnected(audio, portName, handle)) {
                                 audioHandle = handle;
                                 break;
                             }
                         }
+                        else {
+                            LOGERR("IsAudioPortEnabled failed for audio port '%s', Error=%d", portName.c_str(), static_cast<int>(comResult));
+                        }
                     }
                 }
 
                 if (audioHandle >= 0) {
-                    if (audio->GetAudioFormat(audioHandle, fmt) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioFormat(audioHandle, fmt);
+                    if (comResult == Core::ERROR_NONE) {
                         success = true;
                     } else {
-                        LOGERR("getAudioFormat: GetAudioFormat failed");
+                        LOGERR("GetAudioFormat failed for audio port '%s'", portName.c_str());
                     }
                 } else {
-                    LOGERR("getAudioFormat: no suitable audio port handle found");
+                    LOGERR("no suitable audio port handle found, Error=%d", static_cast<int>(comResult));
                 }
                 audio->Release();
             } else {
@@ -2447,14 +2717,15 @@ namespace Plugin {
                 int32_t audioHandle = -1;
                 if (isAudioOutputPortConnected(audio, audioPort, audioHandle)) {
                     int32_t bassBoost = 0;
-                    if (audio->GetAudioBassEnhancer(audioHandle, bassBoost) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioBassEnhancer(audioHandle, bassBoost);
+                    if (comResult == Core::ERROR_NONE) {
                         boost = bassBoost;
                         response["enable"] = boost ? true : false;
                         response["bassBoost"] = boost;
                     } else {
                         // DS_IARM: catch sets response["enable"] = false
                         response["enable"] = false;
-                        LOGERR("getBassEnhancer: GetAudioBassEnhancer failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("GetAudioBassEnhancer failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                 } else {
@@ -2463,6 +2734,7 @@ namespace Plugin {
                 }
                 audio->Release();
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -2480,18 +2752,20 @@ namespace Plugin {
             if (audio != nullptr) {
                 int32_t audioHandle = -1;
                 if (isAudioOutputPortConnected(audio, audioPort, audioHandle)) {
-                    if (audio->IsAudioSurroundDecoderEnabled(audioHandle, surroundDecoderEnable) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->IsAudioSurroundDecoderEnabled(audioHandle, surroundDecoderEnable);
+                    if (comResult == Core::ERROR_NONE) {
                         response["surroundDecoderEnable"] = surroundDecoderEnable;
                     } else {
-                        LOGERR("isSurroundDecoderEnabled: IsAudioSurroundDecoderEnabled failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("IsAudioSurroundDecoderEnabled failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                     }
                 } else {
-                    LOGERR("aport is not connected!");
+                    LOGERR("aport is not connected!, Error=%d", static_cast<int>(comResult));
                     success = false;
                 }
                 audio->Release();
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -2510,17 +2784,20 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->GetAudioGain(audioHandle, gain) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioGain(audioHandle, gain);
+                    if (comResult == Core::ERROR_NONE) {
                         response["gain"] = to_string(gain);
                     } else {
-                        LOGERR("getGain: GetAudioGain failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("GetAudioGain failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
+                LOGERR("audio port handle not found for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -2539,17 +2816,20 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->IsAudioMuted(audioHandle, muted) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->IsAudioMuted(audioHandle, muted);
+                    if (comResult == Core::ERROR_NONE) {
                         response["muted"] = muted;
                     } else {
-                        LOGERR("getMuted: IsAudioMuted failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("IsAudioMuted failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
+                LOGERR("audio port handle not found for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -2575,18 +2855,21 @@ namespace Plugin {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     float vol = 0;
-                    if (audio->GetAudioLevel(audioHandle, vol) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioLevel(audioHandle, vol);
+                    if (comResult == Core::ERROR_NONE) {
                         level = vol;
                         response["volumeLevel"] = to_string(level);
                     } else {
-                        LOGERR("getVolumeLevel: GetAudioLevel failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("GetAudioLevel failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
+                LOGERR("audio port handle not found for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -2605,11 +2888,12 @@ namespace Plugin {
                 int32_t audioHandle = -1;
                 if (isAudioOutputPortConnected(audio, audioPort, audioHandle)) {
                     int32_t drcMode = 0;
-                    if (audio->GetAudioDRCMode(audioHandle, drcMode) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioDRCMode(audioHandle, drcMode);
+                    if (comResult == Core::ERROR_NONE) {
                         mode = drcMode;
                         response["DRCMode"] = mode ? "RF" : "line";
                     } else {
-                        LOGERR("getDRCMode: GetAudioDRCMode failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("GetAudioDRCMode failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                     }
                 } else {
@@ -2618,6 +2902,7 @@ namespace Plugin {
                 }
                 audio->Release();
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -2635,11 +2920,12 @@ namespace Plugin {
                 int32_t audioHandle = -1;
                 if (isAudioOutputPortConnected(audio, audioPort, audioHandle)) {
                     Exchange::IDeviceSettingsAudio::SurroundVirtualizer sv{ 0, 0 };
-                    if (audio->GetAudioSurroundVirtualizer(audioHandle, sv) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioSurroundVirtualizer(audioHandle, sv);
+                    if (comResult == Core::ERROR_NONE) {
                         response["enable"] = sv.mode ? true : false;
                         response["boost"] = sv.boost;
                     } else {
-                        LOGERR("getSurroundVirtualizer: GetAudioSurroundVirtualizer failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("GetAudioSurroundVirtualizer failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                     }
                 } else {
@@ -2648,6 +2934,7 @@ namespace Plugin {
                 }
                 audio->Release();
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -2665,7 +2952,8 @@ namespace Plugin {
                 int32_t audioHandle = -1;
                 if (isAudioOutputPortConnected(audio, audioPort, audioHandle)) {
                     Exchange::IDeviceSettingsAudio::SurroundVirtualizer sv{ 0, 0 };
-                    if (audio->GetAudioSurroundVirtualizer(audioHandle, sv) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioSurroundVirtualizer(audioHandle, sv);
+                    if (comResult == Core::ERROR_NONE) {
                         response["mode"] = sv.mode;
                         response["boost"] = sv.boost;
                     } else {
@@ -2682,6 +2970,7 @@ namespace Plugin {
                 }
                 audio->Release();
             } else {
+                LOGERR("getSurroundVirtualizer2: IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -2699,18 +2988,20 @@ namespace Plugin {
             if (audio != nullptr) {
                 int32_t audioHandle = -1;
                 if (isAudioOutputPortConnected(audio, audioPort, audioHandle)) {
-                    if (audio->GetAudioMISteering(audioHandle, enable) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioMISteering(audioHandle, enable);
+                    if (comResult == Core::ERROR_NONE) {
                         response["MISteeringEnable"] = enable;
                     } else {
-                        LOGERR("getMISteering: GetAudioMISteering failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("GetAudioMISteering failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                     }
                 } else {
-                    LOGERR("aport is not connected!");
+                    LOGERR("aport is not connected!, Error=%d", static_cast<int>(comResult));
                     success = false;
                 }
                 audio->Release();
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -2740,15 +3031,18 @@ namespace Plugin {
                     Exchange::IDeviceSettingsAudio::VolumeLeveller vl;
                     vl.level = static_cast<uint8_t>(volLevel);
                     vl.mode = static_cast<uint8_t>(volMode);
-                    if (audio->SetAudioVolumeLeveller(audioHandle, vl) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioVolumeLeveller(audioHandle, vl);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioVolumeLeveller failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
                     success = false;
                 }
             } else {
-                LOGERR("setVolumeLeveller: SetAudioVolumeLeveller failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -2798,15 +3092,18 @@ namespace Plugin {
                     Exchange::IDeviceSettingsAudio::VolumeLeveller vl;
                     vl.level = static_cast<uint8_t>(volLevel);
                     vl.mode = static_cast<uint8_t>(volMode);
-                    if (audio->SetAudioVolumeLeveller(audioHandle, vl) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioVolumeLeveller(audioHandle, vl);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioVolumeLeveller failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
                     success = false;
                 }
             } else {
-                LOGERR("setVolumeLeveller2: SetAudioVolumeLeveller failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -2831,15 +3128,18 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->EnableAudioSurroundDecoder(audioHandle, enableSurroundDecoder) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->EnableAudioSurroundDecoder(audioHandle, enableSurroundDecoder);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("EnableAudioSurroundDecoder failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
                     success = false;
                 }
             } else {
-                LOGERR("enableSurroundDecoder: EnableAudioSurroundDecoder failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -2864,15 +3164,18 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->SetAudioBassEnhancer(audioHandle, bassBoost) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioBassEnhancer(audioHandle, bassBoost);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioBassEnhancer failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
                     success = false;
                 }
             } else {
-                LOGERR("setBassEnhancer: SetAudioBassEnhancer failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -2902,15 +3205,18 @@ namespace Plugin {
                     Exchange::IDeviceSettingsAudio::SurroundVirtualizer sv;
                     sv.mode = static_cast<uint8_t>(svMode);
                     sv.boost = static_cast<uint8_t>(svBoost);
-                    if (audio->SetAudioSurroundVirtualizer(audioHandle, sv) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioSurroundVirtualizer(audioHandle, sv);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioSurroundVirtualizer failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
                     success = false;
                 }
             } else {
-                LOGERR("setSurroundVirtualizer: SetAudioSurroundVirtualizer failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -2959,15 +3265,18 @@ namespace Plugin {
                     Exchange::IDeviceSettingsAudio::SurroundVirtualizer sv;
                     sv.mode = static_cast<uint8_t>(svMode);
                     sv.boost = static_cast<uint8_t>(svBoost);
-                    if (audio->SetAudioSurroundVirtualizer(audioHandle, sv) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioSurroundVirtualizer(audioHandle, sv);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioSurroundVirtualizer failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
                     success = false;
                 }
             } else {
-                LOGERR("setSurroundVirtualizer2: SetAudioSurroundVirtualizer failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -2992,15 +3301,18 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->SetAudioMISteering(audioHandle, MISteering) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioMISteering(audioHandle, MISteering);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioMISteering failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
                     success = false;
                 }
             } else {
-                LOGERR("setMISteering: SetAudioMISteering failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -3030,15 +3342,18 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->SetAudioGain(audioHandle, newGain) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioGain(audioHandle, newGain);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioGain failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
                     success = false;
                 }
             } else {
-                LOGERR("setGain: SetAudioGain failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -3066,7 +3381,8 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->SetAudioMute(audioHandle, muted) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioMute(audioHandle, muted);
+                    if (comResult == Core::ERROR_NONE) {
                         if (cache_muted != muted) {
                             cache_muted = muted;
                             JsonObject params;
@@ -3074,13 +3390,16 @@ namespace Plugin {
                             sendNotify("muteStatusChanged", params);
                         }
                     } else {
+                        LOGERR("SetAudioMute failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
                     success = false;
                 }
             } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -3109,21 +3428,30 @@ namespace Plugin {
                 if (audio != nullptr) {
                     // DS_IARM: reads current_volumelevel = aPort.getLevel() before set
                     float currentLevel = -1.0f;
-                    audio->GetAudioLevel(audioHandle, currentLevel);
-                    if (audio->SetAudioLevel(audioHandle, static_cast<float>(level)) == Core::ERROR_NONE) {
-                        if (static_cast<int>(currentLevel) != level) {
-                            JsonObject params;
-                            params["volumeLevel"] = level;
-                            sendNotify("volumeLevelChanged", params);
+                    Core::hresult comResult = audio->GetAudioLevel(audioHandle, currentLevel);
+                    if (comResult == Core::ERROR_NONE) {
+                        comResult = audio->SetAudioLevel(audioHandle, static_cast<float>(level));
+                        if (comResult == Core::ERROR_NONE) {
+                            if (static_cast<int>(currentLevel) != level) {
+                                JsonObject params;
+                                params["volumeLevel"] = level;
+                                sendNotify("volumeLevelChanged", params);
+                            }
+                        } else {
+                            LOGERR("SetAudioLevel failed for audioPort='%s'", audioPort.c_str());
+                            success = false;
                         }
                     } else {
+                        LOGERR("GetAudioLevel failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -3148,15 +3476,18 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->SetAudioDRCMode(audioHandle, DRCMode) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioDRCMode(audioHandle, DRCMode);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioDRCMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
-                LOGERR("setDRCMode: SetAudioDRCMode failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -3183,15 +3514,18 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->SetAudioCompression(audioHandle, compresionLevel) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioCompression(audioHandle, compresionLevel);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioCompression failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
-                LOGERR("setMS12AudioCompression: SetAudioCompression failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -3211,7 +3545,8 @@ namespace Plugin {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     int32_t level = 0;
-                    if (audio->GetAudioCompression(audioHandle, level) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioCompression(audioHandle, level);
+                    if (comResult == Core::ERROR_NONE) {
                         compressionlevel = level;
                         response["compressionlevel"] = compressionlevel;
                         response["enable"] = (compressionlevel ? true : false);
@@ -3224,9 +3559,11 @@ namespace Plugin {
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -3255,15 +3592,18 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->SetAudioDolbyVolumeMode(audioHandle, dolbyVolumeMode) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioDolbyVolumeMode(audioHandle, dolbyVolumeMode);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioDolbyVolumeMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
-                LOGERR("setDolbyVolumeMode: SetAudioDolbyVolumeMode failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -3282,17 +3622,20 @@ namespace Plugin {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     bool enabled = false;
-                    if (audio->GetAudioDolbyVolumeMode(audioHandle, enabled) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioDolbyVolumeMode(audioHandle, enabled);
+                    if (comResult == Core::ERROR_NONE) {
                         response["dolbyVolumeMode"] = enabled;
                     } else {
-                        LOGERR("getDolbyVolumeMode: GetAudioDolbyVolumeMode failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("GetAudioDolbyVolumeMode failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -3319,15 +3662,18 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->SetAudioDialogEnhancement(audioHandle, enhancerlevel) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioDialogEnhancement(audioHandle, enhancerlevel);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioDialogEnhancement failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("SetAudioDialogEnhancement failed for audioPort='%s'", audioPort.c_str());
                     success = false;
                 }
             } else {
-                LOGERR("setDialogEnhancement: SetAudioDialogEnhancement failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("SetAudioDialogEnhancement failed for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -3347,7 +3693,8 @@ namespace Plugin {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     int32_t level = 0;
-                    if (audio->GetAudioDialogEnhancement(audioHandle, level) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioDialogEnhancement(audioHandle, level);
+                    if (comResult == Core::ERROR_NONE) {
                         enhancerlevel = level;
                         response["enable"] = (enhancerlevel ? true : false);
                         response["enhancerlevel"] = enhancerlevel;
@@ -3355,14 +3702,16 @@ namespace Plugin {
                         // DS_IARM: catch sets these defaults
                         response["enable"] = false;
                         response["enhancerlevel"] = 0;
-                        LOGERR("getDialogEnhancement: GetAudioDialogEnhancement failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("GetAudioDialogEnhancement failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -3390,15 +3739,18 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->SetAudioIntelligentEqualizerMode(audioHandle, intelligentEqualizerMode) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioIntelligentEqualizerMode(audioHandle, intelligentEqualizerMode);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioIntelligentEqualizerMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("SetAudioIntelligentEqualizerMode failed for audioPort='%s'", audioPort.c_str());
                     success = false;
                 }
             } else {
-                LOGERR("setIntelligentEqualizerMode: SetAudioIntelligentEqualizerMode failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("SetAudioIntelligentEqualizerMode failed for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -3418,7 +3770,8 @@ namespace Plugin {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     int32_t mode = 0;
-                    if (audio->GetAudioIntelligentEqualizerMode(audioHandle, mode) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioIntelligentEqualizerMode(audioHandle, mode);
+                    if (comResult == Core::ERROR_NONE) {
                         intelligentEqualizerMode = mode;
                         response["enable"] = (intelligentEqualizerMode ? true : false);
                         response["mode"] = intelligentEqualizerMode;
@@ -3426,14 +3779,16 @@ namespace Plugin {
                         // DS_IARM: catch sets these defaults
                         response["enable"] = false;
                         response["mode"] = 0;
-                        LOGERR("getIntelligentEqualizerMode: GetAudioIntelligentEqualizerMode failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("GetAudioIntelligentEqualizerMode failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -3461,15 +3816,18 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->SetAudioGraphicEqualizerMode(audioHandle, graphicEqualizerMode) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioGraphicEqualizerMode(audioHandle, graphicEqualizerMode);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioGraphicEqualizerMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
-                LOGERR("setGraphicEqualizerMode: SetAudioGraphicEqualizerMode failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -3489,7 +3847,8 @@ namespace Plugin {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     int32_t mode = 0;
-                    if (audio->GetAudioGraphicEqualizerMode(audioHandle, mode) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioGraphicEqualizerMode(audioHandle, mode);
+                    if (comResult == Core::ERROR_NONE) {
                         graphicEqualizerMode = mode;
                         response["enable"] = (graphicEqualizerMode ? true : false);
                         response["mode"] = graphicEqualizerMode;
@@ -3497,14 +3856,16 @@ namespace Plugin {
                         // DS_IARM: catch sets these defaults
                         response["enable"] = false;
                         response["mode"] = 0;
-                        LOGERR("getGraphicEqualizerMode: GetAudioGraphicEqualizerMode failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("GetAudioGraphicEqualizerMode failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -3526,15 +3887,18 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->SetAudioMS12Profile(audioHandle, audioProfileName) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioMS12Profile(audioHandle, audioProfileName);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioMS12Profile failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
-                LOGERR("setMS12AudioProfile: SetAudioMS12Profile failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -3573,13 +3937,16 @@ namespace Plugin {
                     if (audio->SetAudioMS12SettingsOverride(audioHandle, audioProfileName, audioProfileSettingsName,
                             audioProfileSettingValue, profileState)
                         != Core::ERROR_NONE) {
+                        LOGERR("SetAudioMS12SettingsOverride failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -3598,7 +3965,8 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->GetAudioMS12Profile(audioHandle, audioProfileName) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioMS12Profile(audioHandle, audioProfileName);
+                    if (comResult == Core::ERROR_NONE) {
                         response["ms12AudioProfile"] = audioProfileName;
                     } else {
                         // DS_IARM: sets "None" on error
@@ -3609,10 +3977,12 @@ namespace Plugin {
                     audio->Release();
                 } else {
                     response["ms12AudioProfile"] = "None";
+                    LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                     success = false;
                 }
             } else {
                 response["ms12AudioProfile"] = "None";
+                LOGERR("audio port '%s' handle not found", audioPort.c_str());
                 success = false;
             }
         }
@@ -3630,15 +4000,25 @@ namespace Plugin {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Exchange::IDeviceSettingsAudio::IDeviceSettingsAudioMS12AudioProfileIterator* it2 = nullptr;
-                    if (audio->GetAudioMS12ProfileList(audioHandle, it2) == Core::ERROR_NONE && it2 != nullptr) {
+                    Core::hresult comResult = audio->GetAudioMS12ProfileList(audioHandle, it2);
+                    if (comResult == Core::ERROR_NONE && it2 != nullptr) {
                         Exchange::IDeviceSettingsAudio::MS12AudioProfile profile;
                         while (it2->Next(profile)) {
                             supportedProfiles.push_back(profile.audioProfile);
                         }
                         it2->Release();
                     }
+                    else {
+                        LOGERR("GetAudioMS12ProfileList failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                    }
                     audio->Release();
                 }
+                else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                }
+            }
+            else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
             }
         }
         setResponseArray(response, "supportedMS12AudioProfiles", supportedProfiles);
@@ -3664,24 +4044,31 @@ namespace Plugin {
                 // DS_IARM: STB → aPort.setAssociatedAudioMixing() (per-port handle)
                 //          TV  → Host::setAssociatedAudioMixing() (NULL handle)
                 if (_audioConfigStore.IsHDMIOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
                     // STB path: use specified audioPort handle
                     const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
                     if (audioHandle >= 0) {
-                        if (audio->SetAssociatedAudioMixing(audioHandle, mixing) != Core::ERROR_NONE) {
+                        Core::hresult comResult = audio->SetAssociatedAudioMixing(audioHandle, mixing);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetAssociatedAudioMixing failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                             success = false;
                         }
                     } else {
-                        LOGERR("setAssociatedAudioMixing: port '%s' not found", audioPort.c_str());
+                        LOGERR("port '%s' not found", audioPort.c_str());
                         success = false;
                     }
                 } else {
+                    LOGINFO("HdmiOutPort NOT present");
                     // TV path: DS_IARM Host::setAssociatedAudioMixing() — NULL handle (0)
-                    if (audio->SetAssociatedAudioMixing(0, mixing) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAssociatedAudioMixing(0, mixing);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAssociatedAudioMixing failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                 }
                 audio->Release();
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -3699,29 +4086,35 @@ namespace Plugin {
             if (audio != nullptr) {
                 // DS_IARM: STB → aPort.getAssociatedAudioMixing(); TV → Host::getAssociatedAudioMixing()
                 if (_audioConfigStore.IsHDMIOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
                     // STB path: use specified audioPort handle
                     const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
                     if (audioHandle >= 0) {
-                        if (audio->GetAssociatedAudioMixing(audioHandle, mixing) == Core::ERROR_NONE) {
+                        Core::hresult comResult = audio->GetAssociatedAudioMixing(audioHandle, mixing);
+                        if (comResult == Core::ERROR_NONE) {
                             response["mixing"] = mixing;
                         } else {
-                            LOGERR("getAssociatedAudioMixing: GetAssociatedAudioMixing failed for audioPort='%s'", audioPort.c_str());
+                            LOGERR("GetAssociatedAudioMixing failed for audioPort='%s'", audioPort.c_str());
                             success = false;
                         }
                     } else {
+                        LOGERR("audio port '%s' handle not found, Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                 } else {
+                    LOGINFO("HdmiOutPort NOT present");
                     // TV path: DS_IARM Host::getAssociatedAudioMixing() — NULL handle (0)
-                    if (audio->GetAssociatedAudioMixing(0, mixing) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAssociatedAudioMixing(0, mixing);
+                    if (comResult == Core::ERROR_NONE) {
                         response["mixing"] = mixing;
                     } else {
-                        LOGERR("getAssociatedAudioMixing: GetAssociatedAudioMixing failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("GetAssociatedAudioMixing failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                     }
                 }
                 audio->Release();
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -3746,24 +4139,31 @@ namespace Plugin {
             if (audio != nullptr) {
                 // DS_IARM: STB → aPort.setFaderControl(); TV → Host::setFaderControl() (NULL handle)
                 if (_audioConfigStore.IsHDMIOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
                     // STB path: use specified audioPort handle
                     const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
                     if (audioHandle >= 0) {
-                        if (audio->SetAudioFaderControl(audioHandle, mixerBalance) != Core::ERROR_NONE) {
+                        Core::hresult comResult = audio->SetAudioFaderControl(audioHandle, mixerBalance);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetAudioFaderControl failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                             success = false;
                         }
                     } else {
-                        LOGERR("setFaderControl: port '%s' not found", audioPort.c_str());
+                        LOGERR("port '%s' not found", audioPort.c_str());
                         success = false;
                     }
                 } else {
+                    LOGINFO("HdmiOutPort NOT present");
                     // TV path: DS_IARM Host::setFaderControl() — NULL handle (0)
-                    if (audio->SetAudioFaderControl(0, mixerBalance) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioFaderControl(0, mixerBalance);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioFaderControl failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                 }
                 audio->Release();
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -3781,33 +4181,39 @@ namespace Plugin {
             if (audio != nullptr) {
                 // DS_IARM: STB → aPort.getFaderControl(); TV → Host::getFaderControl() (NULL handle)
                 if (_audioConfigStore.IsHDMIOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
                     // STB path: use specified audioPort handle
                     const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
                     if (audioHandle >= 0) {
                         int32_t balance = 0;
-                        if (audio->GetAudioFaderControl(audioHandle, balance) == Core::ERROR_NONE) {
+                        Core::hresult comResult = audio->GetAudioFaderControl(audioHandle, balance);
+                        if (comResult == Core::ERROR_NONE) {
                             mixerBalance = balance;
                             response["mixerBalance"] = mixerBalance;
                         } else {
-                            LOGERR("getFaderControl: GetAudioFaderControl failed for audioPort='%s'", audioPort.c_str());
+                            LOGERR("GetAudioFaderControl failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                             success = false;
                         }
                     } else {
+                        LOGERR("audio port '%s' handle not found", audioPort.c_str());
                         success = false;
                     }
                 } else {
+                    LOGINFO("HdmiOutPort NOT present");
                     // TV path: DS_IARM Host::getFaderControl() — NULL handle (0)
                     int32_t balance = 0;
-                    if (audio->GetAudioFaderControl(0, balance) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioFaderControl(0, balance);
+                    if (comResult == Core::ERROR_NONE) {
                         mixerBalance = balance;
                         response["mixerBalance"] = mixerBalance;
                     } else {
-                        LOGERR("getFaderControl: GetAudioFaderControl failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("GetAudioFaderControl failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                 }
                 audio->Release();
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -3829,24 +4235,31 @@ namespace Plugin {
             if (audio != nullptr) {
                 // DS_IARM: STB → aPort.setPrimaryLanguage(); TV → Host::setPrimaryLanguage() (NULL handle)
                 if (_audioConfigStore.IsHDMIOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
                     // STB path: use specified audioPort handle
                     const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
                     if (audioHandle >= 0) {
-                        if (audio->SetAudioPrimaryLanguage(audioHandle, primaryLanguage) != Core::ERROR_NONE) {
+                        Core::hresult comResult = audio->SetAudioPrimaryLanguage(audioHandle, primaryLanguage);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetAudioPrimaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                             success = false;
                         }
                     } else {
-                        LOGERR("setPrimaryLanguage: port '%s' not found", audioPort.c_str());
+                        LOGERR("port '%s' not found", audioPort.c_str());
                         success = false;
                     }
                 } else {
+                    LOGINFO("HdmiOutPort NOT present");
                     // TV path: DS_IARM Host::setPrimaryLanguage() — NULL handle (0)
-                    if (audio->SetAudioPrimaryLanguage(0, primaryLanguage) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioPrimaryLanguage(0, primaryLanguage);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioPrimaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                 }
                 audio->Release();
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -3866,32 +4279,38 @@ namespace Plugin {
             if (audio != nullptr) {
                 // DS_IARM: STB → aPort.getPrimaryLanguage(); TV → Host::getPrimaryLanguage() (NULL handle)
                 if (_audioConfigStore.IsHDMIOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
                     // STB path: use specified audioPort handle
                     const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
                     if (audioHandle >= 0) {
-                        if (audio->GetAudioPrimaryLanguage(audioHandle, primaryLanguage) == Core::ERROR_NONE) {
+                        Core::hresult comResult = audio->GetAudioPrimaryLanguage(audioHandle, primaryLanguage);
+                        if (comResult == Core::ERROR_NONE) {
                             response["lang"] = primaryLanguage;
                         } else {
                             // DS_IARM: catch sets response["lang"] = "None"
                             response["lang"] = "None";
-                            LOGERR("getPrimaryLanguage: GetAudioPrimaryLanguage failed for audioPort='%s'", audioPort.c_str());
+                            LOGERR("GetAudioPrimaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                             success = false;
                         }
                     } else {
+                        LOGERR("audio port '%s' handle not found", audioPort.c_str());
                         success = false;
                     }
                 } else {
+                    LOGINFO("HdmiOutPort NOT present");
                     // TV path: DS_IARM Host::getPrimaryLanguage() — NULL handle (0)
-                    if (audio->GetAudioPrimaryLanguage(0, primaryLanguage) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioPrimaryLanguage(0, primaryLanguage);
+                    if (comResult == Core::ERROR_NONE) {
                         response["lang"] = primaryLanguage;
                     } else {
                         response["lang"] = "None";
-                        LOGERR("getPrimaryLanguage: GetAudioPrimaryLanguage failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("GetAudioPrimaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                 }
                 audio->Release();
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -3913,24 +4332,31 @@ namespace Plugin {
             if (audio != nullptr) {
                 // DS_IARM: STB → aPort.setSecondaryLanguage(); TV → Host::setSecondaryLanguage() (NULL handle)
                 if (_audioConfigStore.IsHDMIOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
                     // STB path: use specified audioPort handle
                     const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
                     if (audioHandle >= 0) {
-                        if (audio->SetAudioSecondaryLanguage(audioHandle, secondaryLanguage) != Core::ERROR_NONE) {
+                        Core::hresult comResult = audio->SetAudioSecondaryLanguage(audioHandle, secondaryLanguage);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetAudioSecondaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                             success = false;
                         }
                     } else {
-                        LOGERR("setSecondaryLanguage: port '%s' not found", audioPort.c_str());
+                        LOGERR("port '%s' not found", audioPort.c_str());
                         success = false;
                     }
                 } else {
+                    LOGINFO("HdmiOutPort NOT present");
                     // TV path: DS_IARM Host::setSecondaryLanguage() — NULL handle (0)
-                    if (audio->SetAudioSecondaryLanguage(0, secondaryLanguage) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioSecondaryLanguage(0, secondaryLanguage);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioSecondaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                 }
                 audio->Release();
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -3950,32 +4376,38 @@ namespace Plugin {
             if (audio != nullptr) {
                 // DS_IARM: STB → aPort.getSecondaryLanguage(); TV → Host::getSecondaryLanguage() (NULL handle)
                 if (_audioConfigStore.IsHDMIOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
                     // STB path: use specified audioPort handle
                     const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
                     if (audioHandle >= 0) {
-                        if (audio->GetAudioSecondaryLanguage(audioHandle, secondaryLanguage) == Core::ERROR_NONE) {
+                        Core::hresult comResult = audio->GetAudioSecondaryLanguage(audioHandle, secondaryLanguage);
+                        if (comResult == Core::ERROR_NONE) {
                             response["lang"] = secondaryLanguage;
                         } else {
                             // DS_IARM: catch sets response["lang"] = "None"
                             response["lang"] = "None";
-                            LOGERR("getSecondaryLanguage: GetAudioSecondaryLanguage failed for audioPort='%s'", audioPort.c_str());
+                            LOGERR("GetAudioSecondaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                             success = false;
                         }
                     } else {
+                        LOGERR("audio port '%s' handle not found", audioPort.c_str());
                         success = false;
                     }
                 } else {
+                    LOGINFO("HdmiOutPort NOT present");
                     // TV path: DS_IARM Host::getSecondaryLanguage() — NULL handle (0)
-                    if (audio->GetAudioSecondaryLanguage(0, secondaryLanguage) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioSecondaryLanguage(0, secondaryLanguage);
+                    if (comResult == Core::ERROR_NONE) {
                         response["lang"] = secondaryLanguage;
                     } else {
                         response["lang"] = "None";
-                        LOGERR("getSecondaryLanguage: GetAudioSecondaryLanguage failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("GetAudioSecondaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                 }
                 audio->Release();
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -4008,23 +4440,28 @@ namespace Plugin {
             }
         }
 
+        LOGINFO("Current Mapped AudioPort='%s'", audioPort.c_str());
+
         uint32_t audioDelayMs = 0;
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->GetAudioDelay(audioHandle, audioDelayMs) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioDelay(audioHandle, audioDelayMs);
+                    if (comResult == Core::ERROR_NONE) {
                         response["audioDelay"] = std::to_string(audioDelayMs);
                     } else {
-                        LOGERR("getAudioDelay: GetAudioDelay failed for audioPort='%s'", audioPort.c_str());
+                        LOGERR("GetAudioDelay failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -4075,20 +4512,25 @@ namespace Plugin {
             }
         }
 
+        LOGINFO("Current Mapped AudioPort='%s'", audioPort.c_str());
+
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->SetAudioDelay(audioHandle, static_cast<uint32_t>(audioDelayMs)) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioDelay(audioHandle, static_cast<uint32_t>(audioDelayMs));
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioDelay failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
-                LOGERR("setAudioDelay: SetAudioDelay failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -4117,16 +4559,18 @@ namespace Plugin {
                 Exchange::IDeviceSettingsAudio::DolbyAtmosCapability::AUDIO_DOLBY_ATMOS_NOT_SUPPORTED;
 
             if (_audioConfigStore.IsHDMIOutPortPresent()) {
+                LOGINFO("HdmiOutPort present");
                 // DS_IARM STB path: default HDMI0; override with specified valid port
                 const string usePort = isValidAudioPort ? audioPort : "HDMI0";
                 int32_t audioHandle = -1;
                 bool connected = isAudioOutputPortConnected(audio, usePort, audioHandle);
                 if (audioHandle >= 0) {
                     if (connected) {
-                        if (audio->GetAudioSinkDeviceAtmosCapability(audioHandle, caps) == Core::ERROR_NONE) {
+                        Core::hresult comResult = audio->GetAudioSinkDeviceAtmosCapability(audioHandle, caps);
+                        if (comResult == Core::ERROR_NONE) {
                             response["atmos_capability"] = static_cast<int>(caps);
                         } else {
-                            LOGERR("getSinkAtmosCapability: GetAudioSinkDeviceAtmosCapability failed for audioPort='%s'", usePort.c_str());
+                            LOGERR("GetAudioSinkDeviceAtmosCapability failed for audioPort='%s', Error=%d", usePort.c_str(), static_cast<int>(comResult));
                             success = false;
                         }
                     } else {
@@ -4134,9 +4578,11 @@ namespace Plugin {
                         success = false;
                     }
                 } else {
+                    LOGERR("audio port '%s' handle not found", audioPort.c_str());
                     success = false;
                 }
             } else {
+                LOGINFO("HdmiOutPort NOT present");
                 // DS_IARM TV path
                 if (isValidAudioPort) {
                     int32_t audioHandle = -1;
@@ -4146,10 +4592,11 @@ namespace Plugin {
                         ? (connected && m_arcEarcAudioEnabled)
                         : connected;
                     if (audioHandle >= 0 && portReady) {
-                        if (audio->GetAudioSinkDeviceAtmosCapability(audioHandle, caps) == Core::ERROR_NONE) {
+                        Core::hresult comResult = audio->GetAudioSinkDeviceAtmosCapability(audioHandle, caps);
+                        if (comResult == Core::ERROR_NONE) {
                             response["atmos_capability"] = static_cast<int>(caps);
                         } else {
-                            LOGERR("getSinkAtmosCapability: GetAudioSinkDeviceAtmosCapability failed for audioPort='%s'", audioPort.c_str());
+                            LOGERR("GetAudioSinkDeviceAtmosCapability failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                             success = false;
                         }
                     } else {
@@ -4158,16 +4605,18 @@ namespace Plugin {
                     }
                 } else {
                     // DS_IARM: device::Host::getInstance().getSinkDeviceAtmosCapability() — NULL handle (0)
-                    if (audio->GetAudioSinkDeviceAtmosCapability(0, caps) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioSinkDeviceAtmosCapability(0, caps);
+                    if (comResult == Core::ERROR_NONE) {
                         response["atmos_capability"] = static_cast<int>(caps);
                     } else {
-                        LOGERR("getSinkAtmosCapability: GetAudioSinkDeviceAtmosCapability failed (TV host-level)");
+                        LOGERR("GetAudioSinkDeviceAtmosCapability failed (TV host-level), Error=%d", static_cast<int>(comResult));
                         success = false;
                     }
                 }
             }
             audio->Release();
         } else {
+            LOGERR("IDeviceSettingsAudio not available");
             success = false;
         }
         returnResponse(success);
@@ -4199,23 +4648,27 @@ namespace Plugin {
                             LOGERR("setAudioAtmosOutputMode failure: HDMI0 not connected!\n");
                             success = false;
                         } else {
-                            if (audio->SetAudioAtmosOutputMode(audioHandle, enable) != Core::ERROR_NONE) {
-                                LOGERR("setAudioAtmosOutputMode: SetAudioAtmosOutputMode failed");
+                            Core::hresult comResult = audio->SetAudioAtmosOutputMode(audioHandle, enable);
+                            if (comResult != Core::ERROR_NONE) {
+                                LOGERR("SetAudioAtmosOutputMode failed, Error=%d", static_cast<int>(comResult));
                                 success = false;
                             }
                         }
                     } else {
+                        LOGERR("audio port handle not found, Error=%d", static_cast<int>(comResult));
                         success = false;
                     }
                 } else {
                     // DS_IARM TV path: device::Host::getInstance().setAudioAtmosOutputMode() — NULL handle (0)
-                    if (audio->SetAudioAtmosOutputMode(0, enable) != Core::ERROR_NONE) {
-                        LOGERR("setAudioAtmosOutputMode: SetAudioAtmosOutputMode failed (TV)");
+                    Core::hresult comResult = audio->SetAudioAtmosOutputMode(0, enable);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioAtmosOutputMode failed (TV), Error=%d", static_cast<int>(comResult));
                         success = false;
                     }
                 }
                 audio->Release();
             } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
         }
@@ -4241,9 +4694,12 @@ namespace Plugin {
                 if (videoHandle >= 0) {
                     auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                     if (vp != nullptr) {
-                        if (vp->SetForceHDRMode(videoHandle, static_cast<Exchange::IDeviceSettingsVideoPort::HDRStandard>(mode)) == Core::ERROR_NONE) {
+                        Core::hresult comResult = vp->SetForceHDRMode(videoHandle, static_cast<Exchange::IDeviceSettingsVideoPort::HDRStandard>(mode));
+                        if (comResult == Core::ERROR_NONE) {
                             success = true;
                             LOGINFO("setForceHDRMode set successfully \n");
+                        } else {
+                            LOGERR("setForceHDRMode failed, Error=%d", static_cast<int>(comResult));
                         }
                         vp->Release();
                     }
@@ -4268,7 +4724,8 @@ namespace Plugin {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     DisplayColorDepth colorDepth = DisplayColorDepth::DS_DISPLAY_COLORDEPTH_UNKNOWN;
-                    if (vp->GetPreferredColorDepth(videoHandle, colorDepth, persist) == Core::ERROR_NONE) {
+                    Core::hresult comResult = vp->GetPreferredColorDepth(videoHandle, colorDepth, persist);
+                    if (comResult == Core::ERROR_NONE) {
                         switch (colorDepth) {
                         case DisplayColorDepth::DS_DISPLAY_COLORDEPTH_8BIT:
                             response["colorDepth"] = "8 Bit";
@@ -4283,17 +4740,21 @@ namespace Plugin {
                             response["colorDepth"] = "Auto";
                             break;
                         default:
+                            LOGERR("Unknown color depth value %d", static_cast<int>(colorDepth));
                             success = false;
                             break;
                         }
                     } else {
+                        LOGERR("GetPreferredColorDepth failed for '%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     vp->Release();
                 } else {
+                    LOGERR("IDeviceSettingsVideoPort not available");
                     success = false;
                 }
             } else {
+                LOGERR("IDeviceSettingsVideoPort not available");
                 success = false;
             }
         }
@@ -4328,18 +4789,22 @@ namespace Plugin {
                         cd = Exchange::IDeviceSettingsVideoPort::DisplayColorDepth::DS_DISPLAY_COLORDEPTH_AUTO;
 
                     if (cd != Exchange::IDeviceSettingsVideoPort::DisplayColorDepth::DS_DISPLAY_COLORDEPTH_UNKNOWN) {
-                        if (vp->SetPreferredColorDepth(videoHandle, cd, persist) != Core::ERROR_NONE) {
+                        Core::hresult comResult = vp->SetPreferredColorDepth(videoHandle, cd, persist);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetPreferredColorDepth failed for videoDisplay='%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comResult));
                             success = false;
                         }
                     } else {
-                        LOGERR("UNKNOWN color depth: %s", strColorDepth.c_str());
+                        LOGERR("UNKNOWN color depth: %s, Error=%d", strColorDepth.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     vp->Release();
                 } else {
+                    LOGERR("IDeviceSettingsVideoPort not available");
                     success = false;
                 }
             } else {
+                LOGERR("Failed to get video port handle for videoDisplay='%s'", videoDisplay.c_str());
                 success = false;
             }
         } catch (const std::exception& err) {
@@ -4443,18 +4908,21 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->SetAudioDucking(audioHandle,
-                            static_cast<AudioDuckingType>(type),
-                            static_cast<AudioDuckingAction>(action),
-                            level)
-                        != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioDucking(audioHandle,
+                        static_cast<AudioDuckingType>(type),
+                        static_cast<AudioDuckingAction>(action),
+                        level);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioDucking failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -4475,14 +4943,17 @@ namespace Plugin {
         {
             // DS_IARM: only enable/disable if display is connected
             if (!isDisplayConnected(videoDisplay)) {
-                LOGERR("setEnableVideoPort: display NOT connected on port %s", videoDisplay.c_str());
+                LOGERR("display NOT connected on port %s", videoDisplay.c_str());
             } else {
                 const int32_t videoHandle = getCachedVideoPortHandle(videoDisplay);
                 if (videoHandle >= 0) {
                     auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                     if (vp != nullptr) {
-                        if (vp->EnableVideoPort(videoHandle, enable) == Core::ERROR_NONE) {
+                        Core::hresult comResult = vp->EnableVideoPort(videoHandle, enable);
+                        if (comResult == Core::ERROR_NONE) {
                             success = true;
+                        } else {
+                            LOGERR("EnableVideoPort failed for videoDisplay='%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comResult));
                         }
                         vp->Release();
                     }
@@ -4505,12 +4976,22 @@ namespace Plugin {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     bool enabled = false;
-                    if (vp->IsVideoPortEnabled(videoHandle, enabled) == Core::ERROR_NONE) {
+                    Core::hresult comResult = vp->IsVideoPortEnabled(videoHandle, enabled);
+                    if (comResult == Core::ERROR_NONE) {
                         response["enable"] = enabled;
                         success = true;
                     }
+                    else {
+                        LOGERR("IsVideoPortEnabled failed for videoDisplay='%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comResult));
+                    }
                     vp->Release();
                 }
+                else {
+                    LOGERR("IDeviceSettingsVideoPort not available");
+                }
+            }
+            else {
+                LOGERR("Failed to get video port handle for videoDisplay='%s'", videoDisplay.c_str());
             }
         }
         returnResponse(success);
@@ -4525,7 +5006,8 @@ namespace Plugin {
             auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
             if (vd != nullptr) {
                 int32_t formats = 0;
-                if (vd->GetSupportedVideoCodingFormats(_videoDeviceHandle, formats) == Core::ERROR_NONE) {
+                Core::hresult comResult = vd->GetSupportedVideoCodingFormats(_videoDeviceHandle, formats);
+                if (comResult == Core::ERROR_NONE) {
                     if (formats & static_cast<int32_t>(VideoCodec::DS_VIDEO_CODEC_MPEGHPART2))
                         supportedFormats.Add("HEVC");
                     if (formats & static_cast<int32_t>(VideoCodec::DS_VIDEO_CODEC_MPEG4PART10))
@@ -4534,7 +5016,13 @@ namespace Plugin {
                         supportedFormats.Add("MPEG2");
                     success = true;
                 }
+                else {
+                    LOGERR("GetSupportedVideoCodingFormats failed, Error=%d", static_cast<int>(comResult));
+                }
                 vd->Release();
+            }
+            else {
+                LOGERR("IDeviceSettingsVideoDevice not available");
             }
         }
         response["supportedFormats"] = supportedFormats;
@@ -4577,7 +5065,8 @@ namespace Plugin {
             auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
             if (vd != nullptr) {
                 Exchange::IDeviceSettingsVideoDevice::IDeviceSettingsVideoCodecProfileSupportIterator* iter = nullptr;
-                if (vd->GetCodecInfo(_videoDeviceHandle, vc, iter) == Core::ERROR_NONE && iter != nullptr) {
+                Core::hresult comResult = vd->GetCodecInfo(_videoDeviceHandle, vc, iter);
+                if (comResult == Core::ERROR_NONE && iter != nullptr) {
                     JsonArray entries;
                     Exchange::IDeviceSettingsVideoDevice::VideoCodecProfileSupport ps{};
                     int entryIndex = 0;
@@ -4613,7 +5102,13 @@ namespace Plugin {
                     iter->Release();
                     success = true;
                 }
+                else {
+                    LOGERR("GetCodecInfo failed for codec='%s', Error=%d", codec.c_str(), static_cast<int>(comResult));
+                }
                 vd->Release();
+            }
+            else {
+                LOGERR("IDeviceSettingsVideoDevice not available");
             }
         }
         returnResponse(success);
@@ -4656,14 +5151,24 @@ namespace Plugin {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Exchange::IDeviceSettingsAudio::AudioEncoding enc = Exchange::IDeviceSettingsAudio::AudioEncoding::AUDIO_ENCODING_NONE;
-                    if (audio->GetAudioEncoding(audioHandle, enc) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->GetAudioEncoding(audioHandle, enc);
+                    if (comResult == Core::ERROR_NONE) {
                         response["audioPort"] = audioPort;
                         response["encoding"] = encodingToString(enc);
                         response["encodingId"] = static_cast<int>(enc);
                         success = true;
                     }
+                    else {
+                        LOGERR("GetAudioEncoding failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                    }
                     audio->Release();
                 }
+                else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                }
+            }
+            else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
             }
         }
         returnResponse(success);
@@ -4711,7 +5216,8 @@ namespace Plugin {
                 auto* disp = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
                 if (disp != nullptr) {
                     Exchange::IDeviceSettingsDisplay::DisplayVideoAspectRatio ar = Exchange::IDeviceSettingsDisplay::DisplayVideoAspectRatio::DS_DISPLAY_ASPECT_RATIO_16X9;
-                    if (disp->GetDisplayAspectRatio(displayHandle, ar) == Core::ERROR_NONE) {
+                    Core::hresult comResult = disp->GetDisplayAspectRatio(displayHandle, ar);
+                    if (comResult == Core::ERROR_NONE) {
                         string aspectRatioName;
                         switch (ar) {
                         case Exchange::IDeviceSettingsDisplay::DisplayVideoAspectRatio::DS_DISPLAY_ASPECT_RATIO_4X3:
@@ -4728,8 +5234,17 @@ namespace Plugin {
                         response["aspectRatioValue"] = static_cast<int>(ar);
                         success = true;
                     }
+                    else {
+                        LOGERR("GetDisplayAspectRatio failed for videoDisplay='%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comResult));
+                    }
                     disp->Release();
                 }
+                else {
+                    LOGERR("IDeviceSettingsDisplay not available");
+                }
+            }
+            else {
+                LOGERR("Failed to get display handle for videoDisplay='%s'", videoDisplay.c_str());
             }
         }
 
@@ -4748,7 +5263,8 @@ namespace Plugin {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     uint32_t capabilities = 0;
-                    if (vp->GetColorDepthCapabilities(videoHandle, capabilities) == Core::ERROR_NONE) {
+                    Core::hresult comResult = vp->GetColorDepthCapabilities(videoHandle, capabilities);
+                    if (comResult == Core::ERROR_NONE) {
                         if (!capabilities)
                             colorDepthCapabilities.emplace_back("none");
                         if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_8BIT))
@@ -4760,8 +5276,17 @@ namespace Plugin {
                         if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_AUTO))
                             colorDepthCapabilities.emplace_back("Auto");
                     }
+                    else {
+                        LOGERR("GetColorDepthCapabilities failed for videoDisplay='%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comResult));
+                    }
                     vp->Release();
                 }
+                else {
+                    LOGERR("IDeviceSettingsVideoPort not available");
+                }
+            }
+            else {
+                LOGERR("Failed to get video port handle for videoDisplay='%s'", videoDisplay.c_str());
             }
         }
         setResponseArray(response, "capabilities", colorDepthCapabilities);
@@ -4776,14 +5301,17 @@ namespace Plugin {
         {
             auto* host = AcquireSubInterface<Exchange::IDeviceSettingsHost>();
             if (host != nullptr) {
-                if (host->GetMS12ConfigType(type) == Core::ERROR_NONE) {
+                Core::hresult comResult = host->GetMS12ConfigType(type);
+                if (comResult == Core::ERROR_NONE) {
                     LOGINFO("Platform supports MS12 Config Z\n");
                     response["ms12config"] = type;
                 } else {
+                    LOGERR("GetMS12ConfigType failed, Error=%d", static_cast<int>(comResult));
                     success = false;
                 }
                 host->Release();
             } else {
+                LOGERR("IDeviceSettingsHost not available");
                 success = false;
             }
         }
@@ -5088,7 +5616,9 @@ namespace Plugin {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     // Always persist the user's intent (replaces libds aPort.setEnablePersist)
-                    if (audio->SetAudioEnablePersist(audioHandle, pEnable, audioPort) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->SetAudioEnablePersist(audioHandle, pEnable, audioPort);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioEnablePersist failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
 
@@ -5096,16 +5626,26 @@ namespace Plugin {
 
                     if (audioPort != "HDMI_ARC0") {
                         // Non-ARC ports: direct enable/disable (replaces libds aPort.setEnablePort)
-                        if (audio->EnableAudioPort(audioHandle, pEnable) != Core::ERROR_NONE) {
-                            LOGWARN("DisplaySettings::setEnableAudioPort EnableAudioPort failed\n");
+                        comResult = audio->EnableAudioPort(audioHandle, pEnable);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGWARN("DisplaySettings::setEnableAudioPort EnableAudioPort failed, Error=%d\n", static_cast<int>(comResult));
                             success = false;
                         } else {
                             // DS_IARM: re-applies mute state after successfully enabling a non-ARC port
                             // (else if (aPort.isMuted()) { aPort.setMuted(true); })
                             bool muted = false;
-                            if (audio->IsAudioMuted(audioHandle, muted) == Core::ERROR_NONE && muted) {
+                            comResult = audio->IsAudioMuted(audioHandle, muted);
+                            if (comResult == Core::ERROR_NONE && muted) {
                                 LOGWARN("DisplaySettings::setEnableAudioPort: re-applying mute state\n");
-                                audio->SetAudioMute(audioHandle, true);
+                                comResult = audio->SetAudioMute(audioHandle, true);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGWARN("SetAudioMute failed, Error=%d\n", static_cast<int>(comResult));
+                                    success = false;
+                                }
+                            }
+                            else {
+                                LOGWARN("IsAudioMuted failed, Error=%d\n", static_cast<int>(comResult));
+                                success = false;
                             }
                         }
                     } else {
@@ -5120,7 +5660,14 @@ namespace Plugin {
                                         Exchange::IDeviceSettingsAudio::AudioARCStatus arcSt;
                                         arcSt.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_EARC;
                                         arcSt.status = true;
-                                        audio->EnableARC(audioHandle, arcSt);
+                                        comResult = audio->EnableARC(audioHandle, arcSt);
+                                        if (comResult != Core::ERROR_NONE) {
+                                            LOGWARN("EnableARC failed for eARC, Error=%d\n", static_cast<int>(comResult));
+                                            success = false;
+                                        }
+                                        else {
+                                            LOGINFO("EnableARC success for eARC\n");
+                                        }
                                         m_arcEarcAudioEnabled = true;
                                     } else {
                                         LOGINFO("eARC is already enabled. m_arcEarcAudioEnabled=%d\n", m_arcEarcAudioEnabled);
@@ -5133,8 +5680,14 @@ namespace Plugin {
                                         // Get stereo mode to decide if SAD is needed
                                         Exchange::IDeviceSettingsAudio::StereoMode comRpcMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
                                         int32_t comRpcStereoAuto = 0;
-                                        audio->GetStereoMode(audioHandle, comRpcMode);
-                                        audio->GetStereoAuto(audioHandle, comRpcStereoAuto);
+                                        comResult = audio->GetStereoMode(audioHandle, comRpcMode);
+                                        if (comResult != Core::ERROR_NONE) {
+                                            LOGWARN("GetStereoMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                        }
+                                        comResult = audio->GetStereoAuto(audioHandle, comRpcStereoAuto);
+                                        if (comResult != Core::ERROR_NONE) {
+                                            LOGWARN("GetStereoAuto failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                        }
                                         if ((comRpcMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH) || (comRpcStereoAuto != 0)) {
                                             int currentSADState = getAudioDeviceSADState();
                                             switch (currentSADState) {
@@ -5143,26 +5696,46 @@ namespace Plugin {
                                                 Exchange::IDeviceSettingsAudio::AudioARCStatus arcSt2;
                                                 arcSt2.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
                                                 arcSt2.status = true;
-                                                audio->EnableARC(audioHandle, arcSt2);
-                                                m_arcEarcAudioEnabled = true;
+                                                comResult = audio->EnableARC(audioHandle, arcSt2);
+                                                if (comResult != Core::ERROR_NONE) {
+                                                    LOGWARN("EnableARC failed for eARC, Error=%d\n", static_cast<int>(comResult));
+                                                } else {
+                                                    LOGINFO("EnableARC success for eARC\n");
+                                                    m_arcEarcAudioEnabled = true;
+                                                }
                                                 break;
                                             }
                                             case AUDIO_DEVICE_SAD_RECEIVED: {
                                                 LOGINFO("%s: Update Audio device SAD\n", __FUNCTION__);
                                                 setAudioDeviceSADState(AUDIO_DEVICE_SAD_UPDATED);
                                                 std::vector<uint8_t> sadBytes(sad_list.begin(), sad_list.end());
-                                                audio->SetSAD(audioHandle, sadBytes.data(), static_cast<uint8_t>(sadBytes.size()));
+                                                comResult = comaudio->SetSAD(audioHandle, sadBytes.data(), static_cast<uint8_t>(sadBytes.size()));
+                                                if (comResult != Core::ERROR_NONE) {
+                                                    LOGWARN("SetSAD failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                                }
+
                                                 if (comRpcStereoAuto != 0) {
-                                                    audio->SetStereoAuto(audioHandle, 1, true);
+                                                    comResult = audio->SetStereoAuto(audioHandle, 1, true);
+                                                    if (comResult != Core::ERROR_NONE) {
+                                                        LOGWARN("SetStereoAuto failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                                    }
                                                 } else {
-                                                    audio->SetStereoMode(audioHandle, comRpcMode, true);
+                                                    comResult = audio->SetStereoMode(audioHandle, comRpcMode, true);
+                                                    if (comResult != Core::ERROR_NONE) {
+                                                        LOGWARN("SetStereoMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                                    }
                                                 }
                                                 LOGINFO("%s: Enable ARC...\n", __FUNCTION__);
                                                 Exchange::IDeviceSettingsAudio::AudioARCStatus arcSt3;
                                                 arcSt3.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
                                                 arcSt3.status = true;
-                                                audio->EnableARC(audioHandle, arcSt3);
-                                                m_arcEarcAudioEnabled = true;
+                                                comResult = audio->EnableARC(audioHandle, arcSt3);
+                                                if (comResult != Core::ERROR_NONE) {
+                                                    LOGWARN("EnableARC failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                                } else {
+                                                    LOGINFO("EnableARC success for audioPort='%s'\n", audioPort.c_str());
+                                                    m_arcEarcAudioEnabled = true;
+                                                }
                                                 break;
                                             }
                                             case AUDIO_DEVICE_SAD_REQUESTED: {
@@ -5183,8 +5756,13 @@ namespace Plugin {
                                             arcSt4.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
                                             arcSt4.status = true;
                                             audio->EnableARC(audioHandle, arcSt4);
-                                            m_arcEarcAudioEnabled = true;
-                                            LOGINFO("%s: Enable ARC (PCM mode)...\n", __FUNCTION__);
+                                            comResult = audio->EnableARC(audioHandle, arcSt4);
+                                            if (comResult != Core::ERROR_NONE) {
+                                                LOGWARN("EnableARC failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                            } else {
+                                                LOGINFO("EnableARC success for audioPort='%s'\n", audioPort.c_str());
+                                                m_arcEarcAudioEnabled = true;
+                                            }
                                         }
                                     } else {
                                         LOGINFO("ARC/eARC audio already enabled. m_arcEarcAudioEnabled=%d\n", m_arcEarcAudioEnabled);
@@ -5202,9 +5780,13 @@ namespace Plugin {
                                     Exchange::IDeviceSettingsAudio::AudioARCStatus arcSt5;
                                     arcSt5.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_EARC;
                                     arcSt5.status = false;
-                                    audio->EnableARC(audioHandle, arcSt5);
-                                    m_arcEarcAudioEnabled = false;
-                                    LOGINFO("Disable eARC\n");
+                                    comResult = audio->EnableARC(audioHandle, arcSt5);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGWARN("Disable eARC failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                    } else {
+                                        LOGINFO("Disable eARC success for audioPort='%s'\n", audioPort.c_str());
+                                        m_arcEarcAudioEnabled = false;
+                                    }
                                     if (m_hdmiInAudioDeviceConnected == false) {
                                         m_hdmiInAudioDeviceType = 0; // dsAUDIOARCSUPPORT_NONE
                                     }
@@ -5212,9 +5794,13 @@ namespace Plugin {
                                     Exchange::IDeviceSettingsAudio::AudioARCStatus arcSt6;
                                     arcSt6.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
                                     arcSt6.status = false;
-                                    audio->EnableARC(audioHandle, arcSt6);
-                                    m_arcEarcAudioEnabled = false;
-                                    LOGINFO("Disable ARC\n");
+                                    comResult = audio->EnableARC(audioHandle, arcSt6);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGWARN("Disable ARC failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                    } else {
+                                        LOGINFO("Disable ARC success for audioPort='%s'\n", audioPort.c_str());
+                                        m_arcEarcAudioEnabled = false;
+                                    }
                                     if (m_hdmiInAudioDeviceConnected == false) {
                                         m_hdmiInAudioDeviceType = 0; // dsAUDIOARCSUPPORT_NONE
                                     }
@@ -5230,9 +5816,11 @@ namespace Plugin {
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
+                LOGERR("audio port '%s' handle not found", audioPort.c_str());
                 success = false;
             }
         }
@@ -5265,18 +5853,29 @@ namespace Plugin {
                     if (audio != nullptr) {
                         // Build flat SAD array from sad_list
                         std::vector<uint8_t> sadArray(sad_list.begin(), sad_list.end());
-                        audio->SetSAD(audioHandle,
-                            sadArray.data(),
-                            static_cast<uint8_t>(sadArray.size()));
+                        Core::hresult comResult = audio->SetSAD(audioHandle, sadArray.data(), static_cast<uint8_t>(sadArray.size()));
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGWARN("SetSAD failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                        }
 
                         int32_t stereoAutoMode = 0;
-                        if (audio->GetStereoAuto(audioHandle, stereoAutoMode) == Core::ERROR_NONE
-                            && stereoAutoMode != 0) {
-                            audio->SetStereoAuto(audioHandle, 1, true);
+                        comResult = audio->GetStereoAuto(audioHandle, stereoAutoMode);
+                        if (comResult == Core::ERROR_NONE && stereoAutoMode != 0) {
+                            comResult = audio->SetStereoAuto(audioHandle, 1, true);
+                            if (comResult != Core::ERROR_NONE) {
+                                LOGWARN("SetStereoAuto failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                            }
                         } else {
                             Exchange::IDeviceSettingsAudio::StereoMode mode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
-                            audio->GetStereoMode(audioHandle, mode);
-                            audio->SetStereoMode(audioHandle, mode, true);
+                            comResult = audio->GetStereoMode(audioHandle, mode);
+                            if (comResult == Core::ERROR_NONE) {
+                                comResult = audio->SetStereoMode(audioHandle, mode, true);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGWARN("SetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                                }
+                            } else {
+                                LOGWARN("GetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                            }
                         }
                         audio->Release();
                     }
@@ -5303,9 +5902,21 @@ namespace Plugin {
                         Exchange::IDeviceSettingsAudio::AudioARCStatus arcStatus{};
                         arcStatus.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
                         arcStatus.status = true;
-                        audio->EnableARC(audioHandle, arcStatus);
+                        Core::hresult comResult = audio->EnableARC(audioHandle, arcStatus);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGWARN("EnableARC failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                        }
+                        else {
+                            LOGINFO("EnableARC success for audioPort='HDMI_ARC0'\n");
+                        }
                         audio->Release();
                     }
+                    else {
+                        LOGERR("IDeviceSettingsAudio not available");
+                    }
+                }
+                else {
+                    LOGERR("audio port 'HDMI_ARC0' handle not found");
                 }
                 m_arcEarcAudioEnabled = true;
             }
@@ -5327,23 +5938,26 @@ namespace Plugin {
                 if (audio != nullptr) {
                     // DS_IARM: aPort.isEnabled() returns live HW state; use IsAudioPortEnabled here
                     bool enabled = false;
-                    if (audio->IsAudioPortEnabled(audioHandle, enabled) == Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->IsAudioPortEnabled(audioHandle, enabled);
+                    if (comResult == Core::ERROR_NONE) {
                         response["enable"] = enabled;
+                        LOGINFO("getEnableAudioPort: audioPort=%s enable=%s", audioPort.c_str(),
+                            response["enable"].Boolean() ? "true" : "false");
                     }
                     else {
-                        LOGWARN("getEnableAudioPort: IsAudioPortEnabled failed for audioPort=%s", audioPort.c_str());
+                        LOGWARN("getEnableAudioPort: IsAudioPortEnabled failed for audioPort=%s, Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
+                LOGERR("audio port '%s' handle not found", audioPort.c_str());
                 success = false;
             }
         }
-        LOGWARN("getEnableAudioPort: audioPort=%s enable=%s", audioPort.c_str(),
-            response["enable"].Boolean() ? "true" : "false");
         returnResponse(success);
     }
 
@@ -5461,8 +6075,14 @@ namespace Plugin {
                                     Exchange::IDeviceSettingsAudio::AudioARCStatus arcDSt;
                                     arcDSt.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
                                     arcDSt.status = false;
-                                    arcDAudio->EnableARC(arcDIt->second, arcDSt);
+                                    Core::hresult comResult = arcDAudio->EnableARC(arcDIt->second, arcDSt);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("Failed to disable ARC/eARC Audio, Error=%d", static_cast<int>(comResult));
+                                    }
                                     arcDAudio->Release();
+                                }
+                                else {
+                                    LOGERR("Failed to disable ARC/eARC Audio, IDeviceSettingsAudio not available or HDMI_ARC0 handle not found");
                                 }
                                 DisplaySettings::_instance->m_arcEarcAudioEnabled = false;
                             }
@@ -5681,9 +6301,18 @@ namespace Plugin {
                     const auto arcAIt = _audioPortHandles.find("HDMI_ARC0");
                     auto* arcAAudio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                     if (arcAAudio != nullptr && arcAIt != _audioPortHandles.end()) {
-                        arcAAudio->GetStereoMode(arcAIt->second, comRpcMode);
-                        arcAAudio->GetStereoAuto(arcAIt->second, comRpcStereoAuto);
+                        Core::hresult comResult = arcAAudio->GetStereoMode(arcAIt->second, comRpcMode);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGWARN("GetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                        }
+                        comResult = arcAAudio->GetStereoAuto(arcAIt->second, comRpcStereoAuto);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGWARN("GetStereoAuto failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                        }
                         arcAAudio->Release();
+                    }
+                    else {
+                        LOGERR("IDeviceSettingsAudio not available or HDMI_ARC0 handle not found");
                     }
                 }
                 if ((m_AudioDeviceSADState == AUDIO_DEVICE_SAD_CLEARED || m_AudioDeviceSADState == AUDIO_DEVICE_SAD_UNKNOWN) && ((comRpcMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH) || comRpcStereoAuto != 0)) {
@@ -5804,7 +6433,7 @@ namespace Plugin {
                     const auto arcIt = _audioPortHandles.find("HDMI_ARC0");
                     auto* arcAudio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                     if (arcAudio == nullptr || arcIt == _audioPortHandles.end()) {
-                        LOGERR("onShortAudioDescriptorEventHandler: HDMI_ARC0 handle unavailable");
+                        LOGERR("HDMI_ARC0 handle unavailable");
                         if (arcAudio)
                             arcAudio->Release();
                         return;
@@ -5822,6 +6451,7 @@ namespace Plugin {
                     }
 
                     bool wasSADTimerActive = false;
+                    Core::hresult comResult = Core::ERROR_NONE;
 
                     if (m_currentArcRoutingState == ARC_STATE_ARC_INITIATED) {
                         if (m_SADDetectionTimer.isActive()) {
@@ -5840,13 +6470,25 @@ namespace Plugin {
                                 arcAudio->SetSAD(arcHandle, sadB.data(), static_cast<uint8_t>(sadB.size()));
                             }
                             int32_t sAuto = 0;
-                            arcAudio->GetStereoAuto(arcHandle, sAuto);
+                            comResult = arcAudio->GetStereoAuto(arcHandle, sAuto);
+                            if (comResult != Core::ERROR_NONE) {
+                                LOGWARN("GetStereoAuto failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                            }
                             if (sAuto != 0) {
-                                arcAudio->SetStereoAuto(arcHandle, 1, true);
+                                comResult = arcAudio->SetStereoAuto(arcHandle, 1, true);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGWARN("SetStereoAuto failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                                }
                             } else {
                                 Exchange::IDeviceSettingsAudio::StereoMode sMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
-                                arcAudio->GetStereoMode(arcHandle, sMode);
-                                arcAudio->SetStereoMode(arcHandle, sMode, true);
+                                comResult = arcAudio->GetStereoMode(arcHandle, sMode);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGWARN("GetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                                }
+                                comResult = arcAudio->SetStereoMode(arcHandle, sMode, true);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGWARN("SetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                                }
                             }
                             LOGINFO("%s: Routing the audio since m_arcEarcAudioEnabled = %d\n", __FUNCTION__, m_arcEarcAudioEnabled);
                             LOGINFO("%s: Enable ARC... \n", __FUNCTION__);
@@ -5854,7 +6496,12 @@ namespace Plugin {
                                 Exchange::IDeviceSettingsAudio::AudioARCStatus arcSt;
                                 arcSt.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
                                 arcSt.status = true;
-                                arcAudio->EnableARC(arcHandle, arcSt);
+                                comResult = arcAudio->EnableARC(arcHandle, arcSt);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGERR("Failed to enable ARC/eARC Audio, Error=%d", static_cast<int>(comResult));
+                                } else {
+                                    LOGINFO("Enable ARC success for audioPort='HDMI_ARC0'\n");
+                                }
                             }
                             m_arcEarcAudioEnabled = true;
                         } else if (m_arcEarcAudioEnabled == true) { /*setEnableAudioPort is called,Timer started and Expired, arc is routed -- or for both wasSADTimerActive == true/false*/
@@ -5865,13 +6512,25 @@ namespace Plugin {
                                 arcAudio->SetSAD(arcHandle, sadB2.data(), static_cast<uint8_t>(sadB2.size()));
                             }
                             int32_t sAuto2 = 0;
-                            arcAudio->GetStereoAuto(arcHandle, sAuto2);
+                            comResult = arcAudio->GetStereoAuto(arcHandle, sAuto2);
+                            if (comResult != Core::ERROR_NONE) {
+                                LOGWARN("GetStereoAuto failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                            }
                             if (sAuto2 != 0) {
-                                arcAudio->SetStereoAuto(arcHandle, 1, true);
+                                comResult = arcAudio->SetStereoAuto(arcHandle, 1, true);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGWARN("SetStereoAuto failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                                }
                             } else {
                                 Exchange::IDeviceSettingsAudio::StereoMode sMode2 = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
-                                arcAudio->GetStereoMode(arcHandle, sMode2);
-                                arcAudio->SetStereoMode(arcHandle, sMode2, true);
+                                comResult = arcAudio->GetStereoMode(arcHandle, sMode2);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGWARN("GetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                                }
+                                comResult = arcAudio->SetStereoMode(arcHandle, sMode2, true);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGWARN("SetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                                }
                             }
                         } else { // SAD received before setEnableAudioPort
                             LOGINFO("%s: Not updating SAD now since arc routing has not yet happened and SAD timer is not active -> Routing and SAD is updated when setEnableAudioPort is called \n", __FUNCTION__);
@@ -6063,15 +6722,22 @@ namespace Plugin {
 
             try {
                 int types = 0;
+                Core::hresult comResult = Core::ERROR_NONE;
                 // COM-RPC: get supported ARC types
                 {
                     const auto arcPIt = _audioPortHandles.find("HDMI_ARC0");
                     auto* arcPAudio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                     if (arcPAudio != nullptr && arcPIt != _audioPortHandles.end()) {
                         int32_t arcTypes = 0;
-                        arcPAudio->GetSupportedARCTypes(arcPIt->second, arcTypes);
+                        comResult = arcPAudio->GetSupportedARCTypes(arcPIt->second, arcTypes);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGWARN("GetSupportedARCTypes failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                        }
                         types = static_cast<int>(arcTypes);
                         arcPAudio->Release();
+                    }
+                    else {
+                        LOGERR("IDeviceSettingsAudio not available or HDMI_ARC0 handle not found");
                     }
                 }
                 if ((types & static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_EARC)) && (m_hdmiInAudioDeviceConnected == false)) {
@@ -6115,14 +6781,19 @@ namespace Plugin {
         std::lock_guard<std::mutex> lock(m_callMutex);
         int types = 0;
         try {
+            Core::hresult comResult = Core::ERROR_NONE;
             // COM-RPC: get supported ARC types
             {
                 const auto arcCIt = _audioPortHandles.find("HDMI_ARC0");
                 auto* arcCAudio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (arcCAudio != nullptr && arcCIt != _audioPortHandles.end()) {
                     int32_t arcTypes = 0;
-                    arcCAudio->GetSupportedARCTypes(arcCIt->second, arcTypes);
-                    types = static_cast<int>(arcTypes);
+                    comResult = arcCAudio->GetSupportedARCTypes(arcCIt->second, arcTypes);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGWARN("GetSupportedARCTypes failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                    } else {
+                        types = static_cast<int>(arcTypes);
+                    }
                     arcCAudio->Release();
                 }
             }
@@ -6365,12 +7036,22 @@ namespace Plugin {
                     auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                     if (vp != nullptr) {
                         int32_t capabilities = 0;
-                        if (vp->GetTVHDRCapabilities(videoHandle, capabilities) == Core::ERROR_NONE) {
+                        Core::hresult comResult = vp->GetTVHDRCapabilities(videoHandle, capabilities);
+                        if (comResult == Core::ERROR_NONE) {
                             response["capabilities"] = capabilities;
                             success = true;
                         }
+                        else {
+                            LOGERR("GetTVHDRCapabilities failed for videoPort='%s', Error=%d", strVideoPort.c_str(), static_cast<int>(comResult));
+                        }
                         vp->Release();
                     }
+                    else {
+                        LOGERR("IDeviceSettingsVideoPort not available");
+                    }
+                }
+                else {
+                    LOGERR("video port handle not found for videoPort='%s'", strVideoPort.c_str());
                 }
             }
         }
@@ -6391,23 +7072,29 @@ namespace Plugin {
                 auto* disp = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
                 if (disp != nullptr) {
                     int32_t displayHandle = -1;
-                    if (disp->GetDisplay(Exchange::IDeviceSettingsDisplay::DS_DISPLAY_PORT_TYPE_HDMI, 0, displayHandle) == Core::ERROR_NONE && displayHandle >= 0) {
+                    Core::hresult comResult = Core::ERROR_NONE;
+                    comResult = disp->GetDisplay(Exchange::IDeviceSettingsDisplay::DS_DISPLAY_PORT_TYPE_HDMI, 0, displayHandle);
+                    if (comResult == Core::ERROR_NONE && displayHandle >= 0) {
                         Exchange::IDeviceSettingsDisplay::DisplayEDID edId{};
                         Exchange::IDeviceSettingsDisplay::IDSVideoPortResolutionIterator* resList = nullptr;
-                        if (disp->GetDisplayEdid(displayHandle, edId, resList) == Core::ERROR_NONE) {
+                        comResult = disp->GetDisplayEdid(displayHandle, edId, resList);
+                        if (comResult == Core::ERROR_NONE) {
                             isConnectedDeviceRepeater = edId.isRepeater;
                             if (resList != nullptr) {
                                 resList->Release();
                                 resList = nullptr;
                             }
                         } else {
+                            LOGERR("GetDisplayEdid failed, Error=%d", static_cast<int>(comResult));
                             success = false;
                         }
                     } else {
+                        LOGERR("video port handle not found, Error=%d", static_cast<int>(comResult));
                         success = false;
                     }
                     disp->Release();
                 } else {
+                    LOGERR("display handle not found");
                     success = false;
                 }
             }
@@ -6430,6 +7117,7 @@ namespace Plugin {
                 if (!defaultRes.empty()) {
                     response["defaultResolution"] = defaultRes;
                 } else {
+                    LOGERR("no default resolution for port '%s'", strVideoPort.c_str());
                     success = false;
                 }
             }
@@ -6471,6 +7159,7 @@ namespace Plugin {
         string firstDisplay = "";
         string firstResolution = "";
         bool firstResolutionSet = false;
+        Core::hresult comResult = Core::ERROR_NONE;
         for (int i = 0; i < (int)connectedDisplays.size(); i++) {
             string resolution;
             string display = connectedDisplays.at(i);
@@ -6480,8 +7169,12 @@ namespace Plugin {
                     auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                     if (vp != nullptr) {
                         Exchange::IDeviceSettingsVideoPort::VideoPortResolution vpRes;
-                        if (vp->GetVideoPortResolution(videoHandle, vpRes) == Core::ERROR_NONE) {
+                        comResult = vp->GetVideoPortResolution(videoHandle, vpRes);
+                        if (comResult == Core::ERROR_NONE) {
                             resolution = vpRes.name;
+                        }
+                        else {
+                            LOGERR("GetVideoPortResolution failed for videoPort='%s', Error=%d", display.c_str(), static_cast<int>(comResult));
                         }
                         vp->Release();
                     }
@@ -6638,15 +7331,18 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->ResetAudioDialogEnhancement(audioHandle) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->ResetAudioDialogEnhancement(audioHandle);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("ResetAudioDialogEnhancement failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
-                LOGERR("resetDialogEnhancement: ResetAudioDialogEnhancement failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -6663,15 +7359,18 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->ResetAudioBassEnhancer(audioHandle) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->ResetAudioBassEnhancer(audioHandle);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("ResetAudioBassEnhancer failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
-                LOGERR("resetBassEnhancer: ResetAudioBassEnhancer failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -6688,15 +7387,18 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->ResetAudioSurroundVirtualizer(audioHandle) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->ResetAudioSurroundVirtualizer(audioHandle);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("ResetAudioSurroundVirtualizer failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
-                LOGERR("resetSurroundVirtualizer: ResetAudioSurroundVirtualizer failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -6713,15 +7415,18 @@ namespace Plugin {
             if (audioHandle >= 0) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
-                    if (audio->ResetAudioVolumeLeveller(audioHandle) != Core::ERROR_NONE) {
+                    Core::hresult comResult = audio->ResetAudioVolumeLeveller(audioHandle);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("ResetAudioVolumeLeveller failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                     audio->Release();
                 } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
             } else {
-                LOGERR("resetVolumeLeveller: ResetAudioVolumeLeveller failed for audioPort='%s'", audioPort.c_str());
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
         }
@@ -6738,17 +7443,21 @@ namespace Plugin {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     Exchange::IDeviceSettingsVideoPort::HDRStandard hdrStd = Exchange::IDeviceSettingsVideoPort::HDRStandard::DS_HDRSTANDARD_NONE;
-                    if (vp->GetVideoEOTF(videoHandle, hdrStd) == Core::ERROR_NONE) {
+                    Core::hresult comResult = vp->GetVideoEOTF(videoHandle, hdrStd);
+                    if (comResult == Core::ERROR_NONE) {
                         response["currentVideoFormat"] = getVideoFormatTypeToString(static_cast<uint32_t>(hdrStd));
                     } else {
                         response["currentVideoFormat"] = "NONE";
+                        LOGERR("GetVideoEOTF failed for videoPort='%s', Error=%d", videoPort.c_str(), static_cast<int>(comResult));
                     }
                     vp->Release();
                 } else {
                     response["currentVideoFormat"] = "NONE";
+                    LOGERR("IDeviceSettingsVideoPort not available");
                 }
             } else {
                 response["currentVideoFormat"] = "NONE";
+                LOGERR("Failed to get video port handle for videoPort='%s'", videoPort.c_str());
             }
         }
         response["supportedVideoFormat"] = getSupportedVideoFormats();
@@ -6762,7 +7471,8 @@ namespace Plugin {
             auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
             if (vd != nullptr) {
                 int32_t capabilities = 0;
-                if (vd->GetHDRCapabilities(_videoDeviceHandle, capabilities) == Core::ERROR_NONE) {
+                Core::hresult comResult = vd->GetHDRCapabilities(_videoDeviceHandle, capabilities);
+                if (comResult == Core::ERROR_NONE) {
                     using HS = Exchange::IDeviceSettingsVideoPort::HDRStandard;
                     if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_HDR10))
                         videoFormats.Add("HDR10");
@@ -6777,7 +7487,13 @@ namespace Plugin {
                     if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_SDR))
                         videoFormats.Add("SDR");
                 }
+                else {
+                    LOGERR("GetHDRCapabilities failed for videoDeviceHandle=%d, Error=%d", _videoDeviceHandle, static_cast<int>(comResult));
+                }
                 vd->Release();
+            }
+            else {
+                LOGERR("IDeviceSettingsVideoDevice not available");
             }
         }
         return videoFormats;
@@ -6839,18 +7555,40 @@ namespace Plugin {
             bool enable = (newState == "GAME") ? true : false;
             const int32_t displayHandle = getCachedDisplayHandle(strVideoPort);
             if (displayHandle >= 0) {
+                Core::hresult comResult = Core::ERROR_NONE;
                 auto* disp = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
                 if (disp != nullptr) {
                     if (enable) {
-                        disp->SetAVIContentType(displayHandle, DisplayAVIContentType::DS_DISPLAY_AVI_CONTENT_GAME);
-                        disp->SetAVIScanInformation(displayHandle, DisplayAVIScanInformation::DS_DISPLAY_AVI_SCAN_UNDERSCAN);
+                        comResult = disp->SetAVIContentType(displayHandle, DisplayAVIContentType::DS_DISPLAY_AVI_CONTENT_GAME);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetAVIContentType failed for displayHandle=%d, Error=%d", displayHandle, static_cast<int>(comResult));
+                        }
+                        comResult = disp->SetAVIScanInformation(displayHandle, DisplayAVIScanInformation::DS_DISPLAY_AVI_SCAN_UNDERSCAN);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetAVIScanInformation failed for displayHandle=%d, Error=%d", displayHandle, static_cast<int>(comResult));
+                        }
                     } else {
-                        disp->SetAVIContentType(displayHandle, DisplayAVIContentType::DS_DISPLAY_AVI_CONTENT_NOT_SIGNALLED);
-                        disp->SetAVIScanInformation(displayHandle, DisplayAVIScanInformation::DS_DISPLAY_AVI_SCAN_NO_DATA);
+                        comResult = disp->SetAVIContentType(displayHandle, DisplayAVIContentType::DS_DISPLAY_AVI_CONTENT_NOT_SIGNALLED);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetAVIContentType failed for displayHandle=%d, Error=%d", displayHandle, static_cast<int>(comResult));
+                        }
+                        comResult = disp->SetAVIScanInformation(displayHandle, DisplayAVIScanInformation::DS_DISPLAY_AVI_SCAN_NO_DATA);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetAVIScanInformation failed for displayHandle=%d, Error=%d", displayHandle, static_cast<int>(comResult));
+                        }
                     }
-                    disp->SetAllmEnabled(displayHandle, enable);
+                    comResult = disp->SetAllmEnabled(displayHandle, enable);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAllmEnabled failed for displayHandle=%d, Error=%d", displayHandle, static_cast<int>(comResult));
+                    }
                     disp->Release();
                 }
+                else {
+                    LOGERR("IDeviceSettingsDisplay not available");
+                }
+            }
+            else {
+                LOGERR("display handle not found for videoPort='%s'", strVideoPort.c_str());
             }
         }
         if (0 == (int)connectedDisplays.size()) {
