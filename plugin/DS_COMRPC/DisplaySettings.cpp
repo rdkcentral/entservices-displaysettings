@@ -2271,7 +2271,7 @@ namespace Plugin {
                 auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
                 if (vd != nullptr) {
                     int32_t caps = 0;
-                    Core:hresult comResult = vd->GetHDRCapabilities(_videoDeviceHandle, caps);
+                    Core::hresult comResult = vd->GetHDRCapabilities(_videoDeviceHandle, caps);
                     if (comResult == Core::ERROR_NONE) {
                         capabilities = caps;
                     }
@@ -2329,7 +2329,7 @@ namespace Plugin {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     int32_t caps = 0;
-                    Core:hresult comResult = audio->GetAudioCapabilities(audioHandle, caps);
+                    Core::hresult comResult = audio->GetAudioCapabilities(audioHandle, caps);
                     if (comResult == Core::ERROR_NONE) {
                         capabilities = caps;
                     } else {
@@ -2381,7 +2381,7 @@ namespace Plugin {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     int32_t caps = 0;
-                    Core:hresult comResult = audio->GetAudioMS12Capabilities(audioHandle, caps);
+                    Core::hresult comResult = audio->GetAudioMS12Capabilities(audioHandle, caps);
                     if (comResult == Core::ERROR_NONE) {
                         capabilities = caps;
                     } else {
@@ -2511,14 +2511,13 @@ namespace Plugin {
                         response["mode"] = leveller.mode;
                         response["level"] = leveller.level;
                     } else {
-                        Core::hresult comResult = audio->GetAudioVolumeLeveller(audioHandle, leveller);
                         LOGERR("getVolumeLeveller2: GetAudioVolumeLeveller failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                         response["mode"] = 0;
                         response["level"] = 0;
                     }
                 } else {
-                    LOGERR("getVolumeLeveller2: no audio port handle for '%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                    LOGERR("getVolumeLeveller2: no audio port handle for '%s'", audioPort.c_str());
                     success = false;
                 }
                 audio->Release();
@@ -2632,10 +2631,10 @@ namespace Plugin {
                     if (comResult == Core::ERROR_NONE) {
                         success = true;
                     } else {
-                        LOGERR("GetAudioFormat failed for audio port '%s'", portName.c_str());
+                        LOGERR("GetAudioFormat failed, Error=%d", static_cast<int>(comResult));
                     }
                 } else {
-                    LOGERR("no suitable audio port handle found, Error=%d", static_cast<int>(comResult));
+                    LOGERR("no suitable audio port handle found");
                 }
                 audio->Release();
             } else {
@@ -2760,7 +2759,7 @@ namespace Plugin {
                         success = false;
                     }
                 } else {
-                    LOGERR("aport is not connected!, Error=%d", static_cast<int>(comResult));
+                    LOGERR("aport is not connected!");
                     success = false;
                 }
                 audio->Release();
@@ -2996,7 +2995,7 @@ namespace Plugin {
                         success = false;
                     }
                 } else {
-                    LOGERR("aport is not connected!, Error=%d", static_cast<int>(comResult));
+                    LOGERR("aport is not connected!");
                     success = false;
                 }
                 audio->Release();
@@ -4098,7 +4097,7 @@ namespace Plugin {
                             success = false;
                         }
                     } else {
-                        LOGERR("audio port '%s' handle not found, Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        LOGERR("audio port '%s' handle not found", audioPort.c_str());
                         success = false;
                     }
                 } else {
@@ -4655,7 +4654,7 @@ namespace Plugin {
                             }
                         }
                     } else {
-                        LOGERR("audio port handle not found, Error=%d", static_cast<int>(comResult));
+                        LOGERR("audio port handle not found");
                         success = false;
                     }
                 } else {
@@ -4795,7 +4794,7 @@ namespace Plugin {
                             success = false;
                         }
                     } else {
-                        LOGERR("UNKNOWN color depth: %s, Error=%d", strColorDepth.c_str(), static_cast<int>(comResult));
+                        LOGERR("UNKNOWN color depth: %s", strColorDepth.c_str());
                         success = false;
                     }
                     vp->Release();
@@ -5709,7 +5708,7 @@ namespace Plugin {
                                                 LOGINFO("%s: Update Audio device SAD\n", __FUNCTION__);
                                                 setAudioDeviceSADState(AUDIO_DEVICE_SAD_UPDATED);
                                                 std::vector<uint8_t> sadBytes(sad_list.begin(), sad_list.end());
-                                                comResult = comaudio->SetSAD(audioHandle, sadBytes.data(), static_cast<uint8_t>(sadBytes.size()));
+                                                comResult = audio->SetSAD(audioHandle, sadBytes.data(), static_cast<uint8_t>(sadBytes.size()));
                                                 if (comResult != Core::ERROR_NONE) {
                                                     LOGWARN("SetSAD failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                                                 }
