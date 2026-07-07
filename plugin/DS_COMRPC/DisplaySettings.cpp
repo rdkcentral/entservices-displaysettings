@@ -742,7 +742,7 @@ namespace Plugin {
         bool isConnected = isHdmiDisplayConnected;
         if (!isDisplayConnectedCacheUpdated || !(Utils::String::stringContains(port, "HDMI0"))) {
             const int32_t videoHandle = getCachedVideoPortHandle(port);
-            if (videoHandle >= 0) {
+            if (INVALID_DS_HANDLE != videoHandle) {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     bool connected = false;
@@ -781,11 +781,12 @@ namespace Plugin {
                 // Load port config once into cached member store (1-arg member fn)
                 LoadVideoPortConfig(_vpConfigStore);
 
+                //COMRPC_TODO: consider moving this into a helper fn to avoid code duplication with AudioPort init
                 _videoPortHandles.clear();
                 std::vector<VideoPortEntry> entries;
                 if (_vpConfigStore.BuildVideoPortEntries(entries)) {
                     for (const VideoPortEntry& e : entries) {
-                        int32_t handle = -1;
+                        int32_t handle = INVALID_DS_HANDLE;
                         Core::hresult rc = vp->GetVideoPort(e.type, e.index, handle);
                         if (rc == Core::ERROR_NONE) {
                             _videoPortHandles[e.name] = handle;
@@ -815,7 +816,7 @@ namespace Plugin {
                 std::vector<AudioPortEntry> entries;
                 if (_audioConfigStore.getAudioPortEntries(entries)) {
                     for (const AudioPortEntry& e : entries) {
-                        int32_t handle = -1;
+                        int32_t handle = INVALID_DS_HANDLE;
                         Core::hresult rc = audio->GetAudioPort(e.type, e.index, handle);
                         if (rc == Core::ERROR_NONE) {
                             _audioPortHandles[e.name] = handle;
@@ -1229,7 +1230,7 @@ namespace Plugin {
         vector<string> supportedTvResolutions;
         {
             const int32_t videoHandle = getCachedVideoPortHandle(videoDisplay);
-            if (videoHandle >= 0) {
+            if (INVALID_DS_HANDLE != videoHandle) {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     int32_t tvResolutions = 0;
@@ -1407,7 +1408,7 @@ namespace Plugin {
             VideoPortSurroundMode surroundMode = VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_NONE;
             if (displayConnected) {
                 const int32_t videoHandle = getCachedVideoPortHandle(defaultVP);
-                if (videoHandle >= 0) {
+                if (INVALID_DS_HANDLE != videoHandle) {
                     auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                     if (vp != nullptr) {
                         auto hr = vp->GetVideoPortDisplaySurroundMode(videoHandle, surroundMode);
@@ -1570,7 +1571,7 @@ namespace Plugin {
             VideoPortEntry entry;
             if (_vpConfigStore.ResolveByName(videoDisplay, entry)) {
                 const int32_t videoHandle = getCachedVideoPortHandle(entry.name);
-                if (videoHandle >= 0) {
+                if (INVALID_DS_HANDLE != videoHandle) {
                     if (!isResCacheUpdated) {
                         auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                         if (vp != nullptr) {
@@ -1662,7 +1663,7 @@ namespace Plugin {
         bool success = true;
         {
             const int32_t videoHandle = getCachedVideoPortHandle(videoDisplay);
-            if (videoHandle >= 0) {
+            if (INVALID_DS_HANDLE != videoHandle) {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     Exchange::IDeviceSettingsVideoPort::VideoPortResolution vpRes;
@@ -1719,7 +1720,7 @@ namespace Plugin {
                 int32_t audioHandle = -1;
                 // DS_IARM: aPort.isConnected() — replicated per port type by isAudioOutputPortConnected
                 bool portConnected = isAudioOutputPortConnected(audio, audioPort, audioHandle);
-                if (audioHandle < 0) {
+                if (INVALID_DS_HANDLE == audioHandle) {
                     LOGERR("No audio handle found for audioPort '%s'", audioPort.c_str());
                     success = false;
                 }
@@ -1731,7 +1732,7 @@ namespace Plugin {
                 // DS_IARM: getStereoMode()/getStereoAuto() called in both connected and disconnected paths
                 Exchange::IDeviceSettingsAudio::StereoMode stereoMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
                 int32_t stereoAuto = 0;
-                if (audioHandle >= 0) {
+                if (INVALID_DS_HANDLE != audioHandle) {
                     auto hr = audio->GetStereoMode(audioHandle, stereoMode);
                     if (hr != Core::ERROR_NONE) {
                         LOGERR("GetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(hr));
@@ -1750,7 +1751,7 @@ namespace Plugin {
                             // COM-RPC: GetVideoPortDisplaySurroundMode on the HDMI video port handle
                             VideoPortSurroundMode surroundMode = VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_NONE;
                             const int32_t vpHandle = getCachedVideoPortHandle(audioPort);
-                            if (vpHandle >= 0) {
+                            if (INVALID_DS_HANDLE != vpHandle) {
                                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                                 if (vp != nullptr) {
                                     auto hr = vp->GetVideoPortDisplaySurroundMode(vpHandle, surroundMode);
@@ -1880,7 +1881,7 @@ namespace Plugin {
                     // DS_IARM: aPort.isConnected() — replicated per port type by isAudioOutputPortConnected
                     bool portConnected = isAudioOutputPortConnected(audio, audioPort, audioHandle);
 
-                    if (audioHandle >= 0) {
+                    if (INVALID_DS_HANDLE != audioHandle) {
                         bool isHdmi = (audioPort == "HDMI0" || (Utils::String::stringContains(audioPort, "HDMI") && !Utils::String::stringContains(audioPort, "ARC")));
                         bool isArc = Utils::String::stringContains(audioPort, "HDMI_ARC");
 
@@ -1898,7 +1899,7 @@ namespace Plugin {
                                     // COM-RPC: GetVideoPortDisplaySurroundMode on the HDMI video port handle
                                     VideoPortSurroundMode surroundMode = VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_NONE;
                                     const int32_t vpHandle = getCachedVideoPortHandle(audioPort);
-                                    if (vpHandle >= 0) {
+                                    if (INVALID_DS_HANDLE != vpHandle) {
                                         auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                                         if (vp != nullptr) {
                                             comResult = vp->GetVideoPortDisplaySurroundMode(vpHandle, surroundMode);
@@ -2101,7 +2102,7 @@ namespace Plugin {
                 int32_t displayHandle = -1;
                 Core::hresult comResult = disp->GetDisplay(Exchange::IDeviceSettingsDisplay::DS_DISPLAY_PORT_TYPE_HDMI, 0, displayHandle);
                 // COM-RPC_TODO: Need to check and maintain a cache of display handles, similar to video port handles, to avoid repeated calls to GetDisplay()
-                if (comResult == Core::ERROR_NONE && displayHandle >= 0) {
+                if (comResult == Core::ERROR_NONE && INVALID_DS_HANDLE != displayHandle) {
                     constexpr uint16_t kEdidMaxLen = 256;
                     uint8_t edidBuf[kEdidMaxLen] = {};
                     if (disp->GetDisplayEdidBytes(displayHandle, edidBuf, kEdidMaxLen) == Core::ERROR_NONE) {
@@ -2169,7 +2170,7 @@ namespace Plugin {
         bool active = false;
         if (isDisplayConnected(videoDisplay)) {
             const int32_t videoHandle = getCachedVideoPortHandle(videoDisplay);
-            if (videoHandle >= 0) {
+            if (INVALID_DS_HANDLE != videoHandle) {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     bool portActive = false;
@@ -2209,7 +2210,7 @@ namespace Plugin {
             const std::string defaultVP = _vpConfigStore.GetDefaultVideoPortName();
             if (isDisplayConnected(defaultVP)) {
                 const int32_t videoHandle = getCachedVideoPortHandle(defaultVP);
-                if (videoHandle >= 0) {
+                if (INVALID_DS_HANDLE != videoHandle) {
                     auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                     if (vp != nullptr) {
                         int32_t tvCapabilities = 0;
@@ -2325,7 +2326,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     int32_t caps = 0;
@@ -2377,7 +2378,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     int32_t caps = 0;
@@ -2428,7 +2429,7 @@ namespace Plugin {
         }
         {
             const int32_t videoHandle = getCachedVideoPortHandle(videoDisplay);
-            if (videoHandle >= 0) {
+            if (INVALID_DS_HANDLE != videoHandle) {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     Exchange::IDeviceSettingsVideoPort::DSOutputSettings settings;
@@ -2626,7 +2627,7 @@ namespace Plugin {
                     }
                 }
 
-                if (audioHandle >= 0) {
+                if (INVALID_DS_HANDLE != audioHandle) {
                     Core::hresult comResult = audio->GetAudioFormat(audioHandle, fmt);
                     if (comResult == Core::ERROR_NONE) {
                         success = true;
@@ -2780,7 +2781,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->GetAudioGain(audioHandle, gain);
@@ -2812,7 +2813,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->IsAudioMuted(audioHandle, muted);
@@ -2850,7 +2851,7 @@ namespace Plugin {
         }
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     float vol = 0;
@@ -3024,7 +3025,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Exchange::IDeviceSettingsAudio::VolumeLeveller vl;
@@ -3085,7 +3086,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Exchange::IDeviceSettingsAudio::VolumeLeveller vl;
@@ -3124,7 +3125,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->EnableAudioSurroundDecoder(audioHandle, enableSurroundDecoder);
@@ -3160,7 +3161,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->SetAudioBassEnhancer(audioHandle, bassBoost);
@@ -3198,7 +3199,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Exchange::IDeviceSettingsAudio::SurroundVirtualizer sv;
@@ -3258,7 +3259,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Exchange::IDeviceSettingsAudio::SurroundVirtualizer sv;
@@ -3297,7 +3298,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->SetAudioMISteering(audioHandle, MISteering);
@@ -3338,7 +3339,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->SetAudioGain(audioHandle, newGain);
@@ -3377,7 +3378,7 @@ namespace Plugin {
         LOGWARN("DisplaySettings::setMuted called Audio Port :%s muted:%d\n", audioPort.c_str(), muted);
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->SetAudioMute(audioHandle, muted);
@@ -3422,7 +3423,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     // DS_IARM: reads current_volumelevel = aPort.getLevel() before set
@@ -3472,7 +3473,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->SetAudioDRCMode(audioHandle, DRCMode);
@@ -3510,7 +3511,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->SetAudioCompression(audioHandle, compresionLevel);
@@ -3540,7 +3541,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     int32_t level = 0;
@@ -3588,7 +3589,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->SetAudioDolbyVolumeMode(audioHandle, dolbyVolumeMode);
@@ -3617,7 +3618,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     bool enabled = false;
@@ -3658,7 +3659,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->SetAudioDialogEnhancement(audioHandle, enhancerlevel);
@@ -3688,7 +3689,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     int32_t level = 0;
@@ -3735,7 +3736,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->SetAudioIntelligentEqualizerMode(audioHandle, intelligentEqualizerMode);
@@ -3765,7 +3766,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     int32_t mode = 0;
@@ -3812,7 +3813,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->SetAudioGraphicEqualizerMode(audioHandle, graphicEqualizerMode);
@@ -3842,7 +3843,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     int32_t mode = 0;
@@ -3883,7 +3884,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->SetAudioMS12Profile(audioHandle, audioProfileName);
@@ -3930,7 +3931,7 @@ namespace Plugin {
                 profileState = Exchange::IDeviceSettingsAudio::MS12ProfileState::AUDIO_MS12_PROFILE_STATE_REMOVE;
             }
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     if (audio->SetAudioMS12SettingsOverride(audioHandle, audioProfileName, audioProfileSettingsName,
@@ -3961,7 +3962,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->GetAudioMS12Profile(audioHandle, audioProfileName);
@@ -3995,7 +3996,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Exchange::IDeviceSettingsAudio::IDeviceSettingsAudioMS12AudioProfileIterator* it2 = nullptr;
@@ -4046,7 +4047,7 @@ namespace Plugin {
                     LOGINFO("HdmiOutPort present");
                     // STB path: use specified audioPort handle
                     const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-                    if (audioHandle >= 0) {
+                    if (INVALID_DS_HANDLE != audioHandle) {
                         Core::hresult comResult = audio->SetAssociatedAudioMixing(audioHandle, mixing);
                         if (comResult != Core::ERROR_NONE) {
                             LOGERR("SetAssociatedAudioMixing failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
@@ -4088,7 +4089,7 @@ namespace Plugin {
                     LOGINFO("HdmiOutPort present");
                     // STB path: use specified audioPort handle
                     const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-                    if (audioHandle >= 0) {
+                    if (INVALID_DS_HANDLE != audioHandle) {
                         Core::hresult comResult = audio->GetAssociatedAudioMixing(audioHandle, mixing);
                         if (comResult == Core::ERROR_NONE) {
                             response["mixing"] = mixing;
@@ -4141,7 +4142,7 @@ namespace Plugin {
                     LOGINFO("HdmiOutPort present");
                     // STB path: use specified audioPort handle
                     const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-                    if (audioHandle >= 0) {
+                    if (INVALID_DS_HANDLE != audioHandle) {
                         Core::hresult comResult = audio->SetAudioFaderControl(audioHandle, mixerBalance);
                         if (comResult != Core::ERROR_NONE) {
                             LOGERR("SetAudioFaderControl failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
@@ -4183,7 +4184,7 @@ namespace Plugin {
                     LOGINFO("HdmiOutPort present");
                     // STB path: use specified audioPort handle
                     const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-                    if (audioHandle >= 0) {
+                    if (INVALID_DS_HANDLE != audioHandle) {
                         int32_t balance = 0;
                         Core::hresult comResult = audio->GetAudioFaderControl(audioHandle, balance);
                         if (comResult == Core::ERROR_NONE) {
@@ -4237,7 +4238,7 @@ namespace Plugin {
                     LOGINFO("HdmiOutPort present");
                     // STB path: use specified audioPort handle
                     const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-                    if (audioHandle >= 0) {
+                    if (INVALID_DS_HANDLE != audioHandle) {
                         Core::hresult comResult = audio->SetAudioPrimaryLanguage(audioHandle, primaryLanguage);
                         if (comResult != Core::ERROR_NONE) {
                             LOGERR("SetAudioPrimaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
@@ -4281,7 +4282,7 @@ namespace Plugin {
                     LOGINFO("HdmiOutPort present");
                     // STB path: use specified audioPort handle
                     const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-                    if (audioHandle >= 0) {
+                    if (INVALID_DS_HANDLE != audioHandle) {
                         Core::hresult comResult = audio->GetAudioPrimaryLanguage(audioHandle, primaryLanguage);
                         if (comResult == Core::ERROR_NONE) {
                             response["lang"] = primaryLanguage;
@@ -4334,7 +4335,7 @@ namespace Plugin {
                     LOGINFO("HdmiOutPort present");
                     // STB path: use specified audioPort handle
                     const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-                    if (audioHandle >= 0) {
+                    if (INVALID_DS_HANDLE != audioHandle) {
                         Core::hresult comResult = audio->SetAudioSecondaryLanguage(audioHandle, secondaryLanguage);
                         if (comResult != Core::ERROR_NONE) {
                             LOGERR("SetAudioSecondaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
@@ -4378,7 +4379,7 @@ namespace Plugin {
                     LOGINFO("HdmiOutPort present");
                     // STB path: use specified audioPort handle
                     const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-                    if (audioHandle >= 0) {
+                    if (INVALID_DS_HANDLE != audioHandle) {
                         Core::hresult comResult = audio->GetAudioSecondaryLanguage(audioHandle, secondaryLanguage);
                         if (comResult == Core::ERROR_NONE) {
                             response["lang"] = secondaryLanguage;
@@ -4444,7 +4445,7 @@ namespace Plugin {
         uint32_t audioDelayMs = 0;
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->GetAudioDelay(audioHandle, audioDelayMs);
@@ -4515,7 +4516,7 @@ namespace Plugin {
 
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->SetAudioDelay(audioHandle, static_cast<uint32_t>(audioDelayMs));
@@ -4563,7 +4564,7 @@ namespace Plugin {
                 const string usePort = isValidAudioPort ? audioPort : "HDMI0";
                 int32_t audioHandle = -1;
                 bool connected = isAudioOutputPortConnected(audio, usePort, audioHandle);
-                if (audioHandle >= 0) {
+                if (INVALID_DS_HANDLE != audioHandle) {
                     if (connected) {
                         Core::hresult comResult = audio->GetAudioSinkDeviceAtmosCapability(audioHandle, caps);
                         if (comResult == Core::ERROR_NONE) {
@@ -4590,7 +4591,7 @@ namespace Plugin {
                     bool portReady = (audioPort == "HDMI_ARC0")
                         ? (connected && m_arcEarcAudioEnabled)
                         : connected;
-                    if (audioHandle >= 0 && portReady) {
+                    if (INVALID_DS_HANDLE != audioHandle && portReady) {
                         Core::hresult comResult = audio->GetAudioSinkDeviceAtmosCapability(audioHandle, caps);
                         if (comResult == Core::ERROR_NONE) {
                             response["atmos_capability"] = static_cast<int>(caps);
@@ -4642,7 +4643,7 @@ namespace Plugin {
                     // DS_IARM STB path: HDMI0 port, check connectivity before setting
                     int32_t audioHandle = -1;
                     bool connected = isAudioOutputPortConnected(audio, "HDMI0", audioHandle);
-                    if (audioHandle >= 0) {
+                    if (INVALID_DS_HANDLE != audioHandle) {
                         if (!connected) {
                             LOGERR("setAudioAtmosOutputMode failure: HDMI0 not connected!\n");
                             success = false;
@@ -4690,7 +4691,7 @@ namespace Plugin {
                 LOGERR("setForceHDRMode failure: display not connected on %s!\n", videoPort.c_str());
             } else {
                 const int32_t videoHandle = getCachedVideoPortHandle(videoPort);
-                if (videoHandle >= 0) {
+                if (INVALID_DS_HANDLE != videoHandle) {
                     auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                     if (vp != nullptr) {
                         Core::hresult comResult = vp->SetForceHDRMode(videoHandle, static_cast<Exchange::IDeviceSettingsVideoPort::HDRStandard>(mode));
@@ -4719,7 +4720,7 @@ namespace Plugin {
         bool success = true;
         {
             const int32_t videoHandle = getCachedVideoPortHandle(videoDisplay);
-            if (videoHandle >= 0) {
+            if (INVALID_DS_HANDLE != videoHandle) {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     DisplayColorDepth colorDepth = DisplayColorDepth::DS_DISPLAY_COLORDEPTH_UNKNOWN;
@@ -4774,7 +4775,7 @@ namespace Plugin {
         bool success = true;
         try {
             const int32_t videoHandle = getCachedVideoPortHandle(videoDisplay);
-            if (videoHandle >= 0) {
+            if (INVALID_DS_HANDLE != videoHandle) {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     Exchange::IDeviceSettingsVideoPort::DisplayColorDepth cd = Exchange::IDeviceSettingsVideoPort::DisplayColorDepth::DS_DISPLAY_COLORDEPTH_UNKNOWN;
@@ -4904,7 +4905,7 @@ namespace Plugin {
         bool success = true;
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->SetAudioDucking(audioHandle,
@@ -4945,7 +4946,7 @@ namespace Plugin {
                 LOGERR("display NOT connected on port %s", videoDisplay.c_str());
             } else {
                 const int32_t videoHandle = getCachedVideoPortHandle(videoDisplay);
-                if (videoHandle >= 0) {
+                if (INVALID_DS_HANDLE != videoHandle) {
                     auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                     if (vp != nullptr) {
                         Core::hresult comResult = vp->EnableVideoPort(videoHandle, enable);
@@ -4971,7 +4972,7 @@ namespace Plugin {
         bool success = false;
         {
             const int32_t videoHandle = getCachedVideoPortHandle(videoDisplay);
-            if (videoHandle >= 0) {
+            if (INVALID_DS_HANDLE != videoHandle) {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     bool enabled = false;
@@ -5146,7 +5147,7 @@ namespace Plugin {
         bool success = false;
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Exchange::IDeviceSettingsAudio::AudioEncoding enc = Exchange::IDeviceSettingsAudio::AudioEncoding::AUDIO_ENCODING_NONE;
@@ -5211,7 +5212,7 @@ namespace Plugin {
         }
         {
             const int32_t displayHandle = getCachedDisplayHandle(videoDisplay);
-            if (displayHandle >= 0) {
+            if (INVALID_DS_HANDLE != displayHandle) {
                 auto* disp = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
                 if (disp != nullptr) {
                     Exchange::IDeviceSettingsDisplay::DisplayVideoAspectRatio ar = Exchange::IDeviceSettingsDisplay::DisplayVideoAspectRatio::DS_DISPLAY_ASPECT_RATIO_16X9;
@@ -5258,7 +5259,7 @@ namespace Plugin {
         vector<string> colorDepthCapabilities;
         {
             const int32_t videoHandle = getCachedVideoPortHandle(videoDisplay);
-            if (videoHandle >= 0) {
+            if (INVALID_DS_HANDLE != videoHandle) {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     uint32_t capabilities = 0;
@@ -5611,7 +5612,7 @@ namespace Plugin {
 
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     // Always persist the user's intent (replaces libds aPort.setEnablePersist)
@@ -5847,7 +5848,7 @@ namespace Plugin {
             if (m_AudioDeviceSADState == AUDIO_DEVICE_SAD_RECEIVED) {
                 m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UPDATED;
                 const int32_t audioHandle = getCachedAudioPortHandle("HDMI_ARC0");
-                if (audioHandle >= 0) {
+                if (INVALID_DS_HANDLE != audioHandle) {
                     auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                     if (audio != nullptr) {
                         // Build flat SAD array from sad_list
@@ -5895,7 +5896,7 @@ namespace Plugin {
             if (!m_requestSadRetrigger) {
                 LOGINFO("%s: Enable ARC (COM-RPC)... \n", __FUNCTION__);
                 const int32_t audioHandle = getCachedAudioPortHandle("HDMI_ARC0");
-                if (audioHandle >= 0) {
+                if (INVALID_DS_HANDLE != audioHandle) {
                     auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                     if (audio != nullptr) {
                         Exchange::IDeviceSettingsAudio::AudioARCStatus arcStatus{};
@@ -5932,7 +5933,7 @@ namespace Plugin {
             response["enable"] = aPortConfig["HDMI_ARC"].Boolean();
         } else {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     // DS_IARM: aPort.isEnabled() returns live HW state; use IsAudioPortEnabled here
@@ -7031,7 +7032,7 @@ namespace Plugin {
                 LOGERR("getTVHDRCapabilities failure: display not connected on %s!", strVideoPort.c_str());
             } else {
                 const int32_t videoHandle = getCachedVideoPortHandle(strVideoPort);
-                if (videoHandle >= 0) {
+                if (INVALID_DS_HANDLE != videoHandle) {
                     auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                     if (vp != nullptr) {
                         int32_t capabilities = 0;
@@ -7073,7 +7074,7 @@ namespace Plugin {
                     int32_t displayHandle = -1;
                     Core::hresult comResult = Core::ERROR_NONE;
                     comResult = disp->GetDisplay(Exchange::IDeviceSettingsDisplay::DS_DISPLAY_PORT_TYPE_HDMI, 0, displayHandle);
-                    if (comResult == Core::ERROR_NONE && displayHandle >= 0) {
+                    if (comResult == Core::ERROR_NONE && INVALID_DS_HANDLE != displayHandle) {
                         Exchange::IDeviceSettingsDisplay::DisplayEDID edId{};
                         Exchange::IDeviceSettingsDisplay::IDSVideoPortResolutionIterator* resList = nullptr;
                         comResult = disp->GetDisplayEdid(displayHandle, edId, resList);
@@ -7164,7 +7165,7 @@ namespace Plugin {
             string display = connectedDisplays.at(i);
             {
                 const int32_t videoHandle = getCachedVideoPortHandle(display);
-                if (videoHandle >= 0) {
+                if (INVALID_DS_HANDLE != videoHandle) {
                     auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                     if (vp != nullptr) {
                         Exchange::IDeviceSettingsVideoPort::VideoPortResolution vpRes;
@@ -7327,7 +7328,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->ResetAudioDialogEnhancement(audioHandle);
@@ -7355,7 +7356,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->ResetAudioBassEnhancer(audioHandle);
@@ -7383,7 +7384,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->ResetAudioSurroundVirtualizer(audioHandle);
@@ -7411,7 +7412,7 @@ namespace Plugin {
         string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
             const int32_t audioHandle = getCachedAudioPortHandle(audioPort);
-            if (audioHandle >= 0) {
+            if (INVALID_DS_HANDLE != audioHandle) {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->ResetAudioVolumeLeveller(audioHandle);
@@ -7438,7 +7439,7 @@ namespace Plugin {
             // DS_IARM: always uses getDefaultVideoPortName(); no videoPort parameter in original
             string videoPort = parameters.HasLabel("videoPort") ? parameters["videoPort"].String() : _vpConfigStore.GetDefaultVideoPortName();
             const int32_t videoHandle = getCachedVideoPortHandle(videoPort);
-            if (videoHandle >= 0) {
+            if (INVALID_DS_HANDLE != videoHandle) {
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     Exchange::IDeviceSettingsVideoPort::HDRStandard hdrStd = Exchange::IDeviceSettingsVideoPort::HDRStandard::DS_HDRSTANDARD_NONE;
@@ -7553,7 +7554,7 @@ namespace Plugin {
             const std::string& strVideoPort = connectedDisplays.at(i);
             bool enable = (newState == "GAME") ? true : false;
             const int32_t displayHandle = getCachedDisplayHandle(strVideoPort);
-            if (displayHandle >= 0) {
+            if (INVALID_DS_HANDLE != displayHandle) {
                 Core::hresult comResult = Core::ERROR_NONE;
                 auto* disp = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
                 if (disp != nullptr) {
