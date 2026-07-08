@@ -46,6 +46,9 @@
 name: Manual Branch Backport
 
 on:
+  push:
+    branches:
+      - feature/Github_POC   # temporary — remove this line after PR is merged to develop
   workflow_dispatch:
     inputs:
 
