@@ -366,25 +366,8 @@ namespace Plugin {
     void DisplaySettings::AudioPortsReInitialize()
     {
         LOGINFO("Entering DisplaySettings::AudioPortsReInitialize");
-        // COM-RPC path: re-acquire audio port handles
-        _audioPortHandles.clear();
-        {
-            auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
-            if (audio != nullptr) {
-                // Re-use the cached config store — no reload needed
-                std::vector<AudioPortEntry> entries;
-                if (_audioConfigStore.getAudioPortEntries(entries)) {
-                    for (const AudioPortEntry& e : entries) {
-                        int32_t handle = -1;
-                        Core::hresult comResult = audio->GetAudioPort(e.type, e.index, handle);
-                        if (comResult == Core::ERROR_NONE) {
-                            _audioPortHandles[e.name] = handle;
-                        }
-                    }
-                }
-                audio->Release();
-            }
-        }
+        // COM-RPC path: reload audio config and re-acquire port handles
+        LoadAudioConfig(_audioConfigStore);
     }
 
     void DisplaySettings::InitAudioPorts()
@@ -402,9 +385,13 @@ namespace Plugin {
             return;
         }
 
-        for (const auto& kv : _audioPortHandles) {
+        for (const auto& kv : getAudioPortHandleEntries()) {
             const std::string& portName = kv.first;
             int32_t portHandle = kv.second;
+            if (INVALID_DS_HANDLE == portHandle) {
+                LOGWARN("Invalid handle for port '%s'", portName.c_str());
+                continue;
+            }
 
             // By default all the ports enabled.
             bool isPortPersistenceValEnabled = true;
@@ -669,10 +656,6 @@ namespace Plugin {
             }
         }
         DeviceSettingsClientHelper::Close();
-        _videoPortHandles.clear();
-        _audioPortHandles.clear();
-        _displayHandles.clear();
-        _videoDeviceHandle = -1;
         _registeredDsEventHandlers = false;
 
         DisplaySettings::_instance = nullptr;
@@ -779,27 +762,9 @@ namespace Plugin {
 
         // --- VideoPort sub-interface ---
         {
+            LoadVideoPortConfig(_vpConfigStore);
             auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
             if (vp != nullptr) {
-                // Load port config once into cached member store (1-arg member fn)
-                LoadVideoPortConfig(_vpConfigStore);
-
-                //COMRPC_TODO: consider moving this into a helper fn to avoid code duplication with AudioPort init
-                _videoPortHandles.clear();
-                std::vector<VideoPortEntry> entries;
-                if (_vpConfigStore.BuildVideoPortEntries(entries)) {
-                    for (const VideoPortEntry& e : entries) {
-                        int32_t handle = INVALID_DS_HANDLE;
-                        Core::hresult rc = vp->GetVideoPort(e.type, e.index, handle);
-                        if (rc == Core::ERROR_NONE) {
-                            _videoPortHandles[e.name] = handle;
-                            LOGINFO("VideoPort '%s' → handle=%d", e.name.c_str(), handle);
-                        }
-                        else {
-                            LOGERR("Failed to acquire VideoPort '%s' handle, Error=%d", e.name.c_str(), rc);
-                        }
-                    }
-                }
                 vp->Register(&_DSVideoPortNotification);
                 vp->Release();
             }
@@ -810,26 +775,9 @@ namespace Plugin {
 
         // --- Audio sub-interface ---
         {
+            LoadAudioConfig(_audioConfigStore);
             auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
             if (audio != nullptr) {
-                // Load audio config into cached member store (1-arg member fn)
-                LoadAudioConfig(_audioConfigStore);
-
-                _audioPortHandles.clear();
-                std::vector<AudioPortEntry> entries;
-                if (_audioConfigStore.getAudioPortEntries(entries)) {
-                    for (const AudioPortEntry& e : entries) {
-                        int32_t handle = INVALID_DS_HANDLE;
-                        Core::hresult rc = audio->GetAudioPort(e.type, e.index, handle);
-                        if (rc == Core::ERROR_NONE) {
-                            _audioPortHandles[e.name] = handle;
-                            LOGINFO("AudioPort '%s' → handle=%d", e.name.c_str(), handle);
-                        }
-                        else {
-                            LOGERR("Failed to acquire AudioPort '%s' handle, Error=%d", e.name.c_str(), rc);
-                        }
-                    }
-                }
                 audio->Register(&_DSAudioNotification);
                 audio->Release();
             }
@@ -853,12 +801,9 @@ namespace Plugin {
 
         // --- VideoDevice sub-interface ---
         {
+            LoadVideoDeviceConfig(_vdConfigStore);
             auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
             if (vd != nullptr) {
-                auto hr = vd->GetVideoDeviceHandle(0, _videoDeviceHandle);
-                if (hr != Core::ERROR_NONE) {
-                    LOGERR("Failed to acquire VideoDevice handle, Error=%d", hr);
-                }
                 vd->Register(&_DSVideoDeviceNotification);
                 vd->Release();
             }
@@ -896,10 +841,6 @@ namespace Plugin {
     void DisplaySettings::OnDeviceSettingsDeactivated()
     {
         LOGINFO("DisplaySettings: OnDeviceSettingsDeactivated — invalidating cached handles");
-        _videoPortHandles.clear();
-        _audioPortHandles.clear();
-        _displayHandles.clear();
-        _videoDeviceHandle = -1;
         _vpConfigStore.Clear();
         _audioConfigStore.Clear();
         _registeredDsEventHandlers = false;
@@ -1135,7 +1076,7 @@ namespace Plugin {
         {
             auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
             if (audio != nullptr) {
-                for (const auto& kv : _audioPortHandles) {
+                for (const auto& kv : getAudioPortHandleEntries()) {
                     const std::string& portName = kv.first;
                     int32_t portHandle = kv.second;
                     if (isAudioOutputPortConnected(audio, portName, portHandle)) {
@@ -1346,7 +1287,7 @@ namespace Plugin {
         {
             auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
             if (audio != nullptr) {
-                for (const auto& kv : _audioPortHandles) {
+                for (const auto& kv : getAudioPortHandleEntries()) {
                     vectorSet(supportedAudioPorts, kv.first);
                 }
                 audio->Release();
@@ -1468,47 +1409,54 @@ namespace Plugin {
             auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
             if (vd != nullptr) {
                 Exchange::IDeviceSettingsVideoDevice::VideoZoom dfcZoom = Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_UNKNOWN;
-                auto hr = vd->GetVideoDeviceDFC(_videoDeviceHandle, dfcZoom);
-                if (hr == Core::ERROR_NONE) {
-                    switch (dfcZoom) {
-                    case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_NONE:
-                        zoomSetting = "NONE";
-                        break;
-                    case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_FULL:
-                        zoomSetting = "FULL";
-                        break;
-                    case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_LB_16_9:
-                        zoomSetting = "LB_16_9";
-                        break;
-                    case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_LB_14_9:
-                        zoomSetting = "LB_14_9";
-                        break;
-                    case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_CCO:
-                        zoomSetting = "CCO";
-                        break;
-                    case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_PAN_SCAN:
-                        zoomSetting = "PAN_SCAN";
-                        break;
-                    case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_PLATFORM:
-                        zoomSetting = "PLATFORM";
-                        break;
-                    case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_16_9_ZOOM:
-                        zoomSetting = "16_9_ZOOM";
-                        break;
-                    case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_PILLARBOX_4_3:
-                        zoomSetting = "PILLARBOX_4_3";
-                        break;
-                    case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_WIDE_4_3:
-                        zoomSetting = "WIDE_4_3";
-                        break;
-                    default:
-                        LOGERR("Unknown DFC zoom value %d", static_cast<int>(dfcZoom));
-                        success = false;
-                        break;
-                    }
-                } else {
-                    LOGERR("GetVideoDeviceDFC failed, Error=%d", static_cast<int>(hr));
+                int videoDeviceHandle = getCachedVideoDeviceHandle(0);
+                if (INVALID_DS_HANDLE == videoDeviceHandle) {
+                    LOGERR("No valid video device handle found");
                     success = false;
+                }
+                else {
+                    auto hr = vd->GetVideoDeviceDFC(videoDeviceHandle, dfcZoom);
+                    if (hr == Core::ERROR_NONE) {
+                        switch (dfcZoom) {
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_NONE:
+                            zoomSetting = "NONE";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_FULL:
+                            zoomSetting = "FULL";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_LB_16_9:
+                            zoomSetting = "LB_16_9";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_LB_14_9:
+                            zoomSetting = "LB_14_9";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_CCO:
+                            zoomSetting = "CCO";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_PAN_SCAN:
+                            zoomSetting = "PAN_SCAN";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_PLATFORM:
+                            zoomSetting = "PLATFORM";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_16_9_ZOOM:
+                            zoomSetting = "16_9_ZOOM";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_PILLARBOX_4_3:
+                            zoomSetting = "PILLARBOX_4_3";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_WIDE_4_3:
+                            zoomSetting = "WIDE_4_3";
+                            break;
+                        default:
+                            LOGERR("Unknown DFC zoom value %d", static_cast<int>(dfcZoom));
+                            success = false;
+                            break;
+                        }
+                    } else {
+                        LOGERR("GetVideoDeviceDFC failed, Error=%d", static_cast<int>(hr));
+                        success = false;
+                    }
                 }
                 vd->Release();
             } else {
@@ -1559,10 +1507,17 @@ namespace Plugin {
                     success = false;
                 }
                 if (success) {
-                    auto hr = vd->SetVideoDeviceDFC(_videoDeviceHandle, dfcZoom);
-                    if (hr != Core::ERROR_NONE) {
-                        LOGERR("SetVideoDeviceDFC failed for '%s', Error=%d", zoomSetting.c_str(), static_cast<int>(hr));
+                    int videoDeviceHandle = getCachedVideoDeviceHandle(0);
+                    if (INVALID_DS_HANDLE == videoDeviceHandle) {
+                        LOGERR("No valid video device handle found");
                         success = false;
+                    }
+                    else {
+                        auto hr = vd->SetVideoDeviceDFC(videoDeviceHandle, dfcZoom);
+                        if (hr != Core::ERROR_NONE) {
+                            LOGERR("SetVideoDeviceDFC failed for '%s', Error=%d", zoomSetting.c_str(), static_cast<int>(hr));
+                            success = false;
+                        }
                     }
                 }
                 vd->Release();
@@ -1717,7 +1672,7 @@ namespace Plugin {
                 audioPort = "HDMI0";
             } else {
                 audioPort = "HDMI0"; // DS_IARM: keeps HDMI0 as default even in else branch
-                for (const auto& kv : _videoPortHandles) {
+                for (const auto& kv : getVideoPortHandleEntries()) {
                     if (isDisplayConnected(kv.first)) {
                         audioPort = "SPDIF0";
                         break;
@@ -2291,27 +2246,34 @@ namespace Plugin {
 
         JsonArray hdrCapabilities;
         int capabilities = stbHDRcapabilitiesCache;
+    
         if (!isStbHDRcapabilitiesCache) {
             capabilities = 0; // dsHDRSTANDARD_NONE = 0
             {
-                auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
-                if (vd != nullptr) {
-                    int32_t caps = 0;
-                    Core::hresult comResult = vd->GetHDRCapabilities(_videoDeviceHandle, caps);
-                    if (comResult == Core::ERROR_NONE) {
-                        capabilities = caps;
-                    }
-                    else {
-                        LOGERR("GetHDRCapabilities failed for video device handle %d, Error=%d", _videoDeviceHandle, static_cast<int>(comResult));
-                    }
-                    vd->Release();
+                int cachedVideoDeviceHandle = getCachedVideoDeviceHandle(0);
+                if (INVALID_DS_HANDLE == cachedVideoDeviceHandle) {
+                    LOGERR("No video device handle found for index 0");
                 }
                 else {
-                    LOGERR("IDeviceSettingsVideoDevice not available");
+                    auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+                    if (vd != nullptr) {
+                        int32_t caps = 0;
+                        Core::hresult comResult = vd->GetHDRCapabilities(cachedVideoDeviceHandle, caps);
+                        if (comResult == Core::ERROR_NONE) {
+                            capabilities = caps;
+                        }
+                        else {
+                            LOGERR("GetHDRCapabilities failed for video device handle %d, Error=%d", cachedVideoDeviceHandle, static_cast<int>(comResult));
+                        }
+                        vd->Release();
+                    }
+                    else {
+                        LOGERR("IDeviceSettingsVideoDevice not available");
+                    }
+                    stbHDRcapabilitiesCache = capabilities;
+                    isStbHDRcapabilitiesCache = true;
                 }
             }
-            stbHDRcapabilitiesCache = capabilities;
-            isStbHDRcapabilitiesCache = true;
         } else {
             LOGINFO("Using getSettopHDRSupport cache \n");
         }
@@ -2628,16 +2590,15 @@ namespace Plugin {
             if (audio != nullptr) {
                 int32_t audioHandle = -1;
 
-                if (_audioPortHandles.count("HDMI0")) {
+                if (hasAudioPortHandle("HDMI0")) {
                     // STB profile: use HDMI0 audio port
                     audioHandle = getCachedAudioPortHandle("HDMI0");
                 } else {
                     // TV profile: first enabled+connected port in priority order
                     const std::string priority[] = {"HDMI_ARC0", "HEADPHONE0", "SPDIF0", "SPEAKER0"};
                     for (const auto& portName : priority) {
-                        auto it = _audioPortHandles.find(portName);
-                        if (it == _audioPortHandles.end()) continue;
-                        int32_t handle = it->second;
+                        if (!hasAudioPortHandle(portName)) continue;
+                        int32_t handle = getCachedAudioPortHandle(portName);
                         bool enabled = false;
                         Core::hresult comResult = audio->IsAudioPortEnabled(handle, enabled);
                         if (comResult == Core::ERROR_NONE && enabled) {
@@ -4456,7 +4417,7 @@ namespace Plugin {
             } else {
                 // DS_IARM: default to HDMI0, switch to SPDIF0 only if another display is connected
                 audioPort = "HDMI0";
-                for (const auto& vp : _videoPortHandles) {
+                for (const auto& vp : getVideoPortHandleEntries()) {
                     if (isDisplayConnected(vp.first)) {
                         audioPort = "SPDIF0";
                         break;
@@ -4528,7 +4489,7 @@ namespace Plugin {
             } else {
                 // DS_IARM: default to HDMI0, switch to SPDIF0 only if another display is connected
                 audioPort = "HDMI0";
-                for (const auto& vp : _videoPortHandles) {
+                for (const auto& vp : getVideoPortHandleEntries()) {
                     if (isDisplayConnected(vp.first)) {
                         audioPort = "SPDIF0";
                         break;
@@ -4571,7 +4532,7 @@ namespace Plugin {
 
         // DS_IARM: validate audioPort if specified — return error for unknown ports
         if (audioPort != "NULL") {
-            isValidAudioPort = (_audioPortHandles.find(audioPort) != _audioPortHandles.end());
+            isValidAudioPort = hasAudioPortHandle(audioPort);
             if (!isValidAudioPort) {
                 LOGERR("getSinkAtmosCapability failure: Unsupported Audio Port!!!");
                 returnResponse(false);
@@ -5036,18 +4997,24 @@ namespace Plugin {
             auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
             if (vd != nullptr) {
                 int32_t formats = 0;
-                Core::hresult comResult = vd->GetSupportedVideoCodingFormats(_videoDeviceHandle, formats);
-                if (comResult == Core::ERROR_NONE) {
-                    if (formats & static_cast<int32_t>(VideoCodec::DS_VIDEO_CODEC_MPEGHPART2))
-                        supportedFormats.Add("HEVC");
-                    if (formats & static_cast<int32_t>(VideoCodec::DS_VIDEO_CODEC_MPEG4PART10))
-                        supportedFormats.Add("H264");
-                    if (formats & static_cast<int32_t>(VideoCodec::DS_VIDEO_CODEC_MPEG2))
-                        supportedFormats.Add("MPEG2");
-                    success = true;
+                int videoDeviceHandle = getCachedVideoDeviceHandle(0); // DS_IARM: device::Host::getInstance().getVideoDeviceHandle(0)
+                if (INVALID_DS_HANDLE == videoDeviceHandle) {
+                    LOGERR("Failed to get video device handle for index 0");
                 }
                 else {
-                    LOGERR("GetSupportedVideoCodingFormats failed, Error=%d", static_cast<int>(comResult));
+                    Core::hresult comResult = vd->GetSupportedVideoCodingFormats(videoDeviceHandle, formats);
+                    if (comResult == Core::ERROR_NONE) {
+                        if (formats & static_cast<int32_t>(VideoCodec::DS_VIDEO_CODEC_MPEGHPART2))
+                            supportedFormats.Add("HEVC");
+                        if (formats & static_cast<int32_t>(VideoCodec::DS_VIDEO_CODEC_MPEG4PART10))
+                            supportedFormats.Add("H264");
+                        if (formats & static_cast<int32_t>(VideoCodec::DS_VIDEO_CODEC_MPEG2))
+                            supportedFormats.Add("MPEG2");
+                        success = true;
+                    }
+                    else {
+                        LOGERR("GetSupportedVideoCodingFormats failed, Error=%d", static_cast<int>(comResult));
+                    }
                 }
                 vd->Release();
             }
@@ -5095,45 +5062,51 @@ namespace Plugin {
             auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
             if (vd != nullptr) {
                 Exchange::IDeviceSettingsVideoDevice::IDeviceSettingsVideoCodecProfileSupportIterator* iter = nullptr;
-                Core::hresult comResult = vd->GetCodecInfo(_videoDeviceHandle, vc, iter);
-                if (comResult == Core::ERROR_NONE && iter != nullptr) {
-                    JsonArray entries;
-                    Exchange::IDeviceSettingsVideoDevice::VideoCodecProfileSupport ps{};
-                    int entryIndex = 0;
-                    while (iter->Next(ps)) {
-                        JsonObject item;
-                        item["index"] = entryIndex + 1; // 1-based index (matches DS_IARM TR-069 usage)
-                        // DS_IARM: hevcProfileToString() maps enum → "MAIN"/"MAIN 10"/"MAIN STILL PICTURE"
-                        // for non-HEVC returns std::to_string(profile)
-                        if (vc == Exchange::IDeviceSettingsVideoDevice::VideoCodec::DS_VIDEO_CODEC_MPEGHPART2) {
-                            switch (ps.profile) {
-                            case Exchange::IDeviceSettingsVideoDevice::VideoCodecHEVCProfile::DS_VIDEO_CODEC_HEVC_PROFILE_MAIN:
-                                item["profile"] = string("MAIN");
-                                break;
-                            case Exchange::IDeviceSettingsVideoDevice::VideoCodecHEVCProfile::DS_VIDEO_CODEC_HEVC_PROFILE_MAIN10:
-                                item["profile"] = string("MAIN 10");
-                                break;
-                            case Exchange::IDeviceSettingsVideoDevice::VideoCodecHEVCProfile::DS_VIDEO_CODEC_HEVC_PROFILE_MAIN_STILLPICTURE:
-                                item["profile"] = string("MAIN STILL PICTURE");
-                                break;
-                            default:
-                                item["profile"] = string("UNKNOWN");
-                                break;
-                            }
-                        } else {
-                            item["profile"] = std::to_string(static_cast<int>(ps.profile));
-                        }
-                        item["level"] = ps.level;
-                        entries.Add(item);
-                        entryIndex++;
-                    }
-                    response["numberOfEntries"] = static_cast<int>(entries.Length());
-                    response["entries"] = entries;
-                    iter->Release();
-                    success = true;
+                int videoDeviceHandle = getCachedVideoDeviceHandle(0); // DS_IARM: device::Host::getInstance().getVideoDeviceHandle(0)
+                if (INVALID_DS_HANDLE == videoDeviceHandle) {
+                    LOGERR("Failed to get video device handle for index 0");
                 }
                 else {
-                    LOGERR("GetCodecInfo failed for codec='%s', Error=%d", codec.c_str(), static_cast<int>(comResult));
+                    Core::hresult comResult = vd->GetCodecInfo(videoDeviceHandle, vc, iter);
+                    if (comResult == Core::ERROR_NONE && iter != nullptr) {
+                        JsonArray entries;
+                        Exchange::IDeviceSettingsVideoDevice::VideoCodecProfileSupport ps{};
+                        int entryIndex = 0;
+                        while (iter->Next(ps)) {
+                            JsonObject item;
+                            item["index"] = entryIndex + 1; // 1-based index (matches DS_IARM TR-069 usage)
+                            // DS_IARM: hevcProfileToString() maps enum → "MAIN"/"MAIN 10"/"MAIN STILL PICTURE"
+                            // for non-HEVC returns std::to_string(profile)
+                            if (vc == Exchange::IDeviceSettingsVideoDevice::VideoCodec::DS_VIDEO_CODEC_MPEGHPART2) {
+                                switch (ps.profile) {
+                                case Exchange::IDeviceSettingsVideoDevice::VideoCodecHEVCProfile::DS_VIDEO_CODEC_HEVC_PROFILE_MAIN:
+                                    item["profile"] = string("MAIN");
+                                    break;
+                                case Exchange::IDeviceSettingsVideoDevice::VideoCodecHEVCProfile::DS_VIDEO_CODEC_HEVC_PROFILE_MAIN10:
+                                    item["profile"] = string("MAIN 10");
+                                    break;
+                                case Exchange::IDeviceSettingsVideoDevice::VideoCodecHEVCProfile::DS_VIDEO_CODEC_HEVC_PROFILE_MAIN_STILLPICTURE:
+                                    item["profile"] = string("MAIN STILL PICTURE");
+                                    break;
+                                default:
+                                    item["profile"] = string("UNKNOWN");
+                                    break;
+                                }
+                            } else {
+                                item["profile"] = std::to_string(static_cast<int>(ps.profile));
+                            }
+                            item["level"] = ps.level;
+                            entries.Add(item);
+                            entryIndex++;
+                        }
+                        response["numberOfEntries"] = static_cast<int>(entries.Length());
+                        response["entries"] = entries;
+                        iter->Release();
+                        success = true;
+                    }
+                    else {
+                        LOGERR("GetCodecInfo failed for codec='%s', Error=%d", codec.c_str(), static_cast<int>(comResult));
+                    }
                 }
                 vd->Release();
             }
@@ -6077,7 +6050,7 @@ namespace Plugin {
         else {
             LOGINFO("%s: Current Power state: %d\n", __FUNCTION__, newState);
             try {
-                bool hdmi_arc_supported = (_audioPortHandles.count("HDMI_ARC0") > 0);
+                bool hdmi_arc_supported = hasAudioPortHandle("HDMI_ARC0");
 
                 if (hdmi_arc_supported) {
                     LOGINFO("Current Arc/eArc states m_currentArcRoutingState = %d, m_hdmiInAudioDeviceConnected =%d, m_arcEarcAudioEnabled =%d, m_hdmiInAudioDeviceType = %d\n", DisplaySettings::_instance->m_currentArcRoutingState, DisplaySettings::_instance->m_hdmiInAudioDeviceConnected,
@@ -6098,14 +6071,14 @@ namespace Plugin {
 
                             if (DisplaySettings::_instance->m_arcEarcAudioEnabled == true) {
                                 // COM-RPC: disable ARC
-                                const auto arcDIt = _audioPortHandles.find("HDMI_ARC0");
+                                const int32_t arcDHandle = getCachedAudioPortHandle("HDMI_ARC0");
                                 auto* arcDAudio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
-                                if (arcDAudio != nullptr && arcDIt != _audioPortHandles.end()) {
+                                if (arcDAudio != nullptr && INVALID_DS_HANDLE != arcDHandle) {
                                     LOGINFO("%s: Disable ARC/eARC Audio\n", __FUNCTION__);
                                     Exchange::IDeviceSettingsAudio::AudioARCStatus arcDSt;
                                     arcDSt.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
                                     arcDSt.status = false;
-                                    Core::hresult comResult = arcDAudio->EnableARC(arcDIt->second, arcDSt);
+                                    Core::hresult comResult = arcDAudio->EnableARC(arcDHandle, arcDSt);
                                     if (comResult != Core::ERROR_NONE) {
                                         LOGERR("Failed to disable ARC/eARC Audio, Error=%d", static_cast<int>(comResult));
                                     }
@@ -6328,14 +6301,14 @@ namespace Plugin {
                 Exchange::IDeviceSettingsAudio::StereoMode comRpcMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
                 int32_t comRpcStereoAuto = 0;
                 {
-                    const auto arcAIt = _audioPortHandles.find("HDMI_ARC0");
+                    const int32_t arcAHandle = getCachedAudioPortHandle("HDMI_ARC0");
                     auto* arcAAudio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
-                    if (arcAAudio != nullptr && arcAIt != _audioPortHandles.end()) {
-                        Core::hresult comResult = arcAAudio->GetStereoMode(arcAIt->second, comRpcMode);
+                    if (arcAAudio != nullptr && INVALID_DS_HANDLE != arcAHandle) {
+                        Core::hresult comResult = arcAAudio->GetStereoMode(arcAHandle, comRpcMode);
                         if (comResult != Core::ERROR_NONE) {
                             LOGWARN("GetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
                         }
-                        comResult = arcAAudio->GetStereoAuto(arcAIt->second, comRpcStereoAuto);
+                        comResult = arcAAudio->GetStereoAuto(arcAHandle, comRpcStereoAuto);
                         if (comResult != Core::ERROR_NONE) {
                             LOGWARN("GetStereoAuto failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
                         }
@@ -6460,15 +6433,14 @@ namespace Plugin {
                     setAudioDeviceSADState(AUDIO_DEVICE_SAD_RECEIVED);
                     m_requestSadRetrigger = false;
                     // COM-RPC: acquire HDMI_ARC0 handle for SAD/ARC operations
-                    const auto arcIt = _audioPortHandles.find("HDMI_ARC0");
+                    const int32_t arcHandle = getCachedAudioPortHandle("HDMI_ARC0");
                     auto* arcAudio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
-                    if (arcAudio == nullptr || arcIt == _audioPortHandles.end()) {
+                    if (arcAudio == nullptr || INVALID_DS_HANDLE == arcHandle) {
                         LOGERR("HDMI_ARC0 handle unavailable");
                         if (arcAudio)
                             arcAudio->Release();
                         return;
                     }
-                    int32_t arcHandle = arcIt->second;
                     LOGINFO("Total Short Audio Descriptors received from connected ARC device: %d\n", shortAudioDescriptorList.Length());
                     if (shortAudioDescriptorList.Length() <= 0) {
                         LOGERR("Not setting SAD. No SAD returned by connected ARC device\n");
@@ -6755,11 +6727,11 @@ namespace Plugin {
                 Core::hresult comResult = Core::ERROR_NONE;
                 // COM-RPC: get supported ARC types
                 {
-                    const auto arcPIt = _audioPortHandles.find("HDMI_ARC0");
+                    const int32_t arcPHandle = getCachedAudioPortHandle("HDMI_ARC0");
                     auto* arcPAudio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
-                    if (arcPAudio != nullptr && arcPIt != _audioPortHandles.end()) {
+                    if (arcPAudio != nullptr && INVALID_DS_HANDLE != arcPHandle) {
                         int32_t arcTypes = 0;
-                        comResult = arcPAudio->GetSupportedARCTypes(arcPIt->second, arcTypes);
+                        comResult = arcPAudio->GetSupportedARCTypes(arcPHandle, arcTypes);
                         if (comResult != Core::ERROR_NONE) {
                             LOGWARN("GetSupportedARCTypes failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
                         }
@@ -6814,11 +6786,11 @@ namespace Plugin {
             Core::hresult comResult = Core::ERROR_NONE;
             // COM-RPC: get supported ARC types
             {
-                const auto arcCIt = _audioPortHandles.find("HDMI_ARC0");
+                const int32_t arcCHandle = getCachedAudioPortHandle("HDMI_ARC0");
                 auto* arcCAudio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
-                if (arcCAudio != nullptr && arcCIt != _audioPortHandles.end()) {
+                if (arcCAudio != nullptr && INVALID_DS_HANDLE != arcCHandle) {
                     int32_t arcTypes = 0;
-                    comResult = arcCAudio->GetSupportedARCTypes(arcCIt->second, arcTypes);
+                    comResult = arcCAudio->GetSupportedARCTypes(arcCHandle, arcTypes);
                     if (comResult != Core::ERROR_NONE) {
                         LOGWARN("GetSupportedARCTypes failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
                     } else {
@@ -7316,7 +7288,7 @@ namespace Plugin {
     void DisplaySettings::getConnectedVideoDisplaysHelper(vector<string>& connectedDisplays)
     {
         // COM-RPC path: iterate over cached video port handles and check connectivity
-        for (const auto& kv : _videoPortHandles) {
+        for (const auto& kv : getVideoPortHandleEntries()) {
             if (isDisplayConnected(kv.first)) {
                 const std::string& portName = kv.first;
                 if (Utils::String::stringContains(portName, "HDMI") && !Utils::String::stringContains(portName, "HDMI_ARC")) {
@@ -7501,24 +7473,30 @@ namespace Plugin {
             auto* vd = AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
             if (vd != nullptr) {
                 int32_t capabilities = 0;
-                Core::hresult comResult = vd->GetHDRCapabilities(_videoDeviceHandle, capabilities);
-                if (comResult == Core::ERROR_NONE) {
-                    using HS = Exchange::IDeviceSettingsVideoPort::HDRStandard;
-                    if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_HDR10))
-                        videoFormats.Add("HDR10");
-                    if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_HLG))
-                        videoFormats.Add("HLG");
-                    if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_DOLBYVISION))
-                        videoFormats.Add("DV");
-                    if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_TECHNICOLORPRIME))
-                        videoFormats.Add("Technicolor Prime");
-                    if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_HDR10PLUS))
-                        videoFormats.Add("HDR10PLUS");
-                    if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_SDR))
-                        videoFormats.Add("SDR");
+                int videoDeviceHandle = getCachedVideoDeviceHandle(0);
+                if (INVALID_DS_HANDLE == videoDeviceHandle) {
+                    LOGERR("Failed to get video device handle for index 0");
                 }
                 else {
-                    LOGERR("GetHDRCapabilities failed for videoDeviceHandle=%d, Error=%d", _videoDeviceHandle, static_cast<int>(comResult));
+                    Core::hresult comResult = vd->GetHDRCapabilities(videoDeviceHandle, capabilities);
+                    if (comResult == Core::ERROR_NONE) {
+                        using HS = Exchange::IDeviceSettingsVideoPort::HDRStandard;
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_HDR10))
+                            videoFormats.Add("HDR10");
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_HLG))
+                            videoFormats.Add("HLG");
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_DOLBYVISION))
+                            videoFormats.Add("DV");
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_TECHNICOLORPRIME))
+                            videoFormats.Add("Technicolor Prime");
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_HDR10PLUS))
+                            videoFormats.Add("HDR10PLUS");
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_SDR))
+                            videoFormats.Add("SDR");
+                    }
+                    else {
+                        LOGERR("GetHDRCapabilities failed for videoDeviceHandle=%d, Error=%d", videoDeviceHandle, static_cast<int>(comResult));
+                    }
                 }
                 vd->Release();
             }
