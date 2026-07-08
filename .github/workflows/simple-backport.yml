@@ -1,0 +1,151 @@
+name: Simple Branch Backport
+
+on:
+  push:
+    branches:
+      - feature/Github_POC   # keeps workflow visible in Actions sidebar
+  workflow_dispatch:
+    inputs:
+
+      source_branch:
+        description: "Feature branch with your changes (e.g. feature/Github_POC)"
+        required: true
+        type: string
+
+      support_branch:
+        description: "Release branch to apply changes into (e.g. support/8.3.4.0)"
+        required: true
+        type: string
+
+      new_branch_name:
+        description: "New branch name to create on top of support branch (e.g. feature/RDKEMW-21092)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  backport:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RDKCM_RDKE }}
+
+      - name: Configure Git
+        run: |
+          git config user.name  "GitHub Actions [Backport]"
+          git config user.email "github-actions@users.noreply.github.com"
+
+      # ── STEP 1: Check support branch exists ─────────────────────────────────
+      - name: Check support branch exists
+        env:
+          SUPPORT: ${{ github.event.inputs.support_branch }}
+        run: |
+          echo "Checking if support branch '$SUPPORT' exists..."
+
+          if ! git ls-remote --exit-code --heads origin "$SUPPORT" > /dev/null 2>&1; then
+            echo ""
+            echo "❌ Branch not found: '$SUPPORT'"
+            echo "   Please check the branch name and try again."
+            exit 1
+          fi
+
+          echo "✅ Branch '$SUPPORT' found."
+
+      # ── STEP 2: Get commits from source branch ───────────────────────────────
+      - name: Get commits to apply
+        id: get_commits
+        env:
+          SOURCE: ${{ github.event.inputs.source_branch }}
+        run: |
+          echo "Fetching source branch '$SOURCE'..."
+          git fetch origin "$SOURCE"
+          git fetch origin develop
+
+          # Commits in source_branch that are NOT in develop
+          COMMITS=$(git log --reverse --pretty=format:"%H" "origin/develop..origin/$SOURCE")
+
+          if [ -z "$COMMITS" ]; then
+            echo "❌ No new commits found in '$SOURCE' compared to develop."
+            exit 1
+          fi
+
+          COUNT=$(echo "$COMMITS" | wc -l)
+          echo ""
+          echo "Found $COUNT commit(s):"
+          git log --oneline "origin/develop..origin/$SOURCE"
+
+          echo "commits=$(echo "$COMMITS" | tr '\n' ',')" >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      # ── STEP 3: Create new branch on top of support ──────────────────────────
+      - name: Create new branch on support
+        id: create_branch
+        env:
+          SUPPORT:    ${{ github.event.inputs.support_branch }}
+          NEW_BRANCH: ${{ github.event.inputs.new_branch_name }}
+        run: |
+          echo "Fetching '$SUPPORT'..."
+          git fetch origin "$SUPPORT"
+
+          echo "Creating '$NEW_BRANCH' from 'origin/$SUPPORT'..."
+          git checkout -b "$NEW_BRANCH" "origin/$SUPPORT"
+          echo "✅ Created '$NEW_BRANCH' on top of '$SUPPORT'."
+
+      # ── STEP 4: Apply (cherry-pick) commits ─────────────────────────────────
+      - name: Apply changes via cherry-pick
+        id: cherry_pick
+        env:
+          COMMITS_CSV: ${{ steps.get_commits.outputs.commits }}
+          COMMIT_COUNT: ${{ steps.get_commits.outputs.count }}
+          SOURCE: ${{ github.event.inputs.source_branch }}
+        run: |
+          echo "Applying $COMMIT_COUNT commit(s) from '$SOURCE'..."
+          echo ""
+
+          IFS=',' read -ra COMMIT_LIST <<< "$COMMITS_CSV"
+          for SHA in "${COMMIT_LIST[@]}"; do
+            [ -z "$SHA" ] && continue
+            SHORT="${SHA:0:7}"
+            echo "  Applying $SHORT..."
+
+            if ! git cherry-pick "$SHA" 2>&1; then
+              echo ""
+              echo "❌ CONFLICT detected on commit $SHORT"
+              echo ""
+              echo "Root cause:"
+              echo "  The changes in commit $SHORT conflict with existing code in the support branch."
+              echo ""
+              echo "Conflicting files:"
+              git diff --name-only --diff-filter=U | sed 's/^/  - /'
+              echo ""
+              echo "Status: FAILED — cherry-pick aborted"
+              git cherry-pick --abort 2>/dev/null || true
+              exit 1
+            fi
+
+            echo "  ✅ Applied $SHORT"
+          done
+
+          echo ""
+          echo "✅ All $COMMIT_COUNT commit(s) applied successfully."
+
+      # ── STEP 5: Push the new branch ─────────────────────────────────────────
+      - name: Push new branch
+        env:
+          NEW_BRANCH: ${{ github.event.inputs.new_branch_name }}
+        run: |
+          echo "Pushing '$NEW_BRANCH'..."
+          git push origin "$NEW_BRANCH"
+          echo ""
+          echo "✅ SUCCESS"
+          echo "   Branch '$NEW_BRANCH' is now on GitHub with your changes applied."
+          echo "   You can open a PR from '$NEW_BRANCH' into '${{ github.event.inputs.support_branch }}'."
