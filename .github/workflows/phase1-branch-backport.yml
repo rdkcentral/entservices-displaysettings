@@ -80,6 +80,9 @@ permissions:
 jobs:
   backport:
     runs-on: ubuntu-latest
+    # Only run when manually triggered via workflow_dispatch
+    # The push trigger above is only to make this workflow visible in the Actions sidebar
+    if: github.event_name == 'workflow_dispatch'
 
     steps:
 
