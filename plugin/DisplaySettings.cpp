@@ -566,23 +566,27 @@ namespace WPEFramework {
                 LOGWARN("Current power state %d", m_powerState);
             }
             LOGWARN ("DisplaySettings::Initialize completes line:%d", __LINE__);
-             _remotStoreObject = service->QueryInterfaceByCallsign<Exchange::ISystemMode>("org.rdk.SystemMode");
-
-	    ASSERT (nullptr != _remotStoreObject);
-
-
-	    if(_remotStoreObject)
-	    {
-               const string& callsign = "org.rdk.DisplaySettings";
-		    const string& systemMode = "DEVICE_OPTIMIZE";
-	            _remotStoreObject->ClientActivated(callsign,systemMode);
-                    _remotStoreObject->Release();
-                    _remotStoreObject = nullptr;		    
-	    }
-            else
-            {
-                    Utils::String::updateSystemModeFile( "DEVICE_OPTIMIZE", "callsign", "org.rdk.DisplaySettings","add") ;
-            }
+            
+            // Defer SystemMode registration until after plugin activation completes
+            // Due to Thunder patch RDKEMW-15242, QueryInterface only works when State() == ACTIVATED
+            // Submit job to worker pool - it will execute AFTER Initialize() returns and plugin is activated
+            m_service->Submit(PluginHost::IShell::Job::Create(m_service,
+                [this]() {
+                    // This lambda executes in worker thread AFTER Initialize() completes
+                    Exchange::ISystemMode* _remotStoreObject = 
+                        m_service->QueryInterfaceByCallsign<Exchange::ISystemMode>("org.rdk.SystemMode");
+                    
+                    if(_remotStoreObject) {
+                        const string callsign = "org.rdk.DisplaySettings";
+                        const string systemMode = "DEVICE_OPTIMIZE";
+                        _remotStoreObject->ClientActivated(callsign, systemMode);
+                        _remotStoreObject->Release();
+                    } else {
+                        // Fallback: SystemMode not available yet, write directly to file
+                        Utils::String::updateSystemModeFile("DEVICE_OPTIMIZE", "callsign", 
+                                                           "org.rdk.DisplaySettings", "add");
+                    }
+                }));
 
             // On success return empty, to indicate there is no error text.
             return (string());
