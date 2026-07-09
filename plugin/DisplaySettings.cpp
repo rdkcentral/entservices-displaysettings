@@ -1442,10 +1442,11 @@ namespace WPEFramework {
             LOGINFOMETHOD();
             string audioPort = parameters["audioPort"].String();//missing or empty string and we will set all ports
 
+			
             returnIfParamNotFound(parameters, "soundMode");
             string soundMode = parameters["soundMode"].String();
             Utils::String::toLower(soundMode);
-
+            LOGINFO("preeja audioPort = %s input soundmode %s\n", audioPort.c_str(), soundMode.c_str());
             bool hasPersist = parameters.HasLabel("persist");
             bool persist = hasPersist ? parameters["persist"].Boolean() : true;
             if (!hasPersist) LOGINFO("persist: true");
@@ -1494,7 +1495,7 @@ namespace WPEFramework {
                 returnResponse(false);
             }
 
-            LOGWARN("display = %s, input mode = %s!", audioPort.c_str(), soundMode.c_str());
+            LOGWARN("display = %s, input mode = %s! stereoAuto %d", audioPort.c_str(), soundMode.c_str(), stereoAuto);
 
             try
             {
@@ -1507,6 +1508,7 @@ namespace WPEFramework {
                         /* Auto mode is only for HDMI and DS5 and non-Passthru*/
                         if (aPort.getType().getId() == device::AudioOutputPortType::kHDMI && (!(mode == device::AudioStereoMode::kPassThru)))
                         {
+							 LOGINFO("preeja setting stereo auto to %d", stereoAuto);
                             aPort.setStereoAuto(stereoAuto, persist);
                             if (stereoAuto)
                             {
@@ -1528,7 +1530,8 @@ namespace WPEFramework {
                         }
 			else if (aPort.getType().getId() == device::AudioOutputPortType::kARC) {
 		            if(((mode == device::AudioStereoMode::kSurround) || (mode == device::AudioStereoMode::kPassThru) || (mode == device::AudioStereoMode::kStereo)) && (stereoAuto == false)) {
-				    aPort.setStereoAuto(false, persist);
+				         LOGINFO("preeja setting stereo auto to false");
+						aPort.setStereoAuto(false, persist);
 
 				    if((m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_ARC) && (m_hdmiInAudioDeviceConnected == true)) {
 					if (mode == device::AudioStereoMode::kPassThru) {
@@ -1554,6 +1557,7 @@ namespace WPEFramework {
 			    else { //Auto Mode
 
 				if(m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_eARC) {
+					LOGINFO("preeja stereoauto %d",stereoAuto );
 				    aPort.setStereoAuto(stereoAuto, persist); //setStereoAuto true
 				}
 				else if ((m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_ARC) && (m_hdmiInAudioDeviceConnected == true)) {
@@ -1564,6 +1568,7 @@ namespace WPEFramework {
                                         m_AudioDeviceSADState  = AUDIO_DEVICE_SAD_REQUESTED;
                                         LOGINFO("setSoundMode Auto: SAD Requested\n");
 				    }
+					LOGINFO("preeja setting stereo auto to %d", stereoAuto);
 				    aPort.setStereoAuto(stereoAuto, persist); //setStereoAuto true
 				}
 			   }
@@ -1571,10 +1576,12 @@ namespace WPEFramework {
                         else if ((aPort.getType().getId() == device::AudioOutputPortType::kSPDIF) || (aPort.getType().getId() == device::AudioOutputPortType::kHEADPHONE))
                         {
 			    if(stereoAuto == false) {
+					            LOGINFO("preeja setting stereo auto to false");
                                 aPort.setStereoAuto(false, persist);
                                 aPort.setStereoMode(mode.toString(), persist);
 			    }
 			    else{
+					LOGINFO("preeja setting stereo auto to true");
 			        aPort.setStereoAuto(true, persist);
 			    }
                         }
@@ -1583,20 +1590,24 @@ namespace WPEFramework {
 		    else {
                         if (aPort.getType().getId() == device::AudioOutputPortType::kARC) {
                             if(((mode == device::AudioStereoMode::kPassThru) || (mode == device::AudioStereoMode::kStereo) || (mode == device::AudioStereoMode::kSurround)) && (stereoAuto == false)) {
-                                aPort.setStereoAuto(false, persist);
+                               LOGINFO("preeja setting stereo auto to false");
+								aPort.setStereoAuto(false, persist);
                                 aPort.setStereoMode(mode.toString(), persist);
                             }
                             else { //Auto Mode
+								LOGINFO("preeja setting stereo auto to %d", stereoAuto);
                                 aPort.setStereoAuto(stereoAuto, persist);
                             }
                         }else if (aPort.getType().getId() == device::AudioOutputPortType::kHDMI) {
                             if (!(mode == device::AudioStereoMode::kPassThru))
                             {
+								
                                 aPort.setStereoAuto(stereoAuto, persist);
-                                LOGINFO("setting stereoAuto= %d  \n ",stereoAuto);
+                                LOGINFO("preeja setting stereoAuto= %d  \n ",stereoAuto);
                             }
                             else
                             {
+								LOGINFO("preeja setting stereo auto to false");
                                 aPort.setStereoAuto(false, persist);
                             }
                             LOGINFO("setting sound mode = %s  \n ", mode.toString().c_str());
