@@ -1153,7 +1153,7 @@ namespace Plugin {
         {
             // Use cached config store — no COM-RPC config reload per request
             std::vector<VideoPortEntry> entries;
-            if (_vpConfigStore.BuildVideoPortEntries(entries)) {
+            if (_vpConfigStore.getVideoPortEntries(entries)) {
                 for (const VideoPortEntry& e : entries) {
                     vectorSet(supportedVideoDisplays, e.name);
                 }
@@ -1260,7 +1260,7 @@ namespace Plugin {
             // Get resolutions for all entries in the config store (union = STB output capability)
             std::set<std::string> seen;
             std::vector<VideoPortEntry> entries;
-            if (_vpConfigStore.BuildVideoPortEntries(entries)) {
+            if (_vpConfigStore.getVideoPortEntries(entries)) {
                 for (const VideoPortEntry& e : entries) {
                     std::vector<VideoPortResolution> portResolutions;
                     if (_vpConfigStore.GetResolutionsForType(e.type, portResolutions)) {
