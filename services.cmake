@@ -68,6 +68,10 @@ endif()
 
 add_definitions (-DENABLE_DEEP_SLEEP)
 
+if(BUILD_ENABLE_APP_CONTROL_AUDIOPORT_INIT)
+   add_definitions (-DAPP_CONTROL_AUDIOPORT_INIT)
+endif()
+
 if (ENABLE_RFC_MANAGER)
     message("Using binary for RFC Maintenance task")
     add_definitions (-DENABLE_RFC_MANAGER=ON)
