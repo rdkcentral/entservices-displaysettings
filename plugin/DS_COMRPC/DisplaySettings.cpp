@@ -1745,11 +1745,11 @@ namespace Plugin {
                                 modeString = "AUTO (Stereo)";
                             }
                         }
-                        else if (stereoMode == Exchange::IDeviceSettingsAudio::StereoMode::DS_VIDEO_PORT_SURROUNDMODE_DD) {
+                        else if (stereoMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_DD) {
                             LOGINFO("HDMI0 is in dolby digital Mode");
                             modeString.append("DOLBYDIGITAL");
                         }
-                        else if (stereoMode == Exchange::IDeviceSettingsAudio::StereoMode::DS_VIDEO_PORT_SURROUNDMODE_DDPLUS) {
+                        else if (stereoMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_DDPLUS) {
                             LOGINFO("HDMI0 is in dolby digital plus Mode");
                             modeString.append("DOLBYDIGITALPLUS");
                         }
