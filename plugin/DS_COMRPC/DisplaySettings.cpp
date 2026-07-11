@@ -1179,61 +1179,60 @@ namespace Plugin {
                 if (vp != nullptr) {
                     int32_t tvResolutions = 0;
                     auto hr = vp->GetTVSupportedResolutions(videoHandle, tvResolutions);
-                    if (hr == Core::ERROR_NONE) {
-                        if (!tvResolutions)
-                            supportedTvResolutions.emplace_back("none");
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_480I)) {
-                            supportedTvResolutions.emplace_back("480i");
-                            supportedTvResolutions.emplace_back("480i60");
-                        }
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_480P)) {
-                            supportedTvResolutions.emplace_back("480p");
-                            supportedTvResolutions.emplace_back("480p60");
-                        }
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_576I))
-                            supportedTvResolutions.emplace_back("576i50");
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_576P))
-                            supportedTvResolutions.emplace_back("576p50");
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_720P50))
-                            supportedTvResolutions.emplace_back("720p50");
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_720P)) {
-                            supportedTvResolutions.emplace_back("720p");
-                            supportedTvResolutions.emplace_back("720p60");
-                        }
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P24))
-                            supportedTvResolutions.emplace_back("1080p24");
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080I25))
-                            supportedTvResolutions.emplace_back("1080p25");
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P30))
-                            supportedTvResolutions.emplace_back("1080p30");
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080I50))
-                            supportedTvResolutions.emplace_back("1080i50");
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P50))
-                            supportedTvResolutions.emplace_back("1080p50");
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080I)) {
-                            supportedTvResolutions.emplace_back("1080i");
-                            supportedTvResolutions.emplace_back("1080i60");
-                        }
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P)) {
-                            supportedTvResolutions.emplace_back("1080p");
-                            supportedTvResolutions.emplace_back("1080p60");
-                        }
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P60))
-                            supportedTvResolutions.emplace_back("1080p60");
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P24))
-                            supportedTvResolutions.emplace_back("2160p24");
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P25))
-                            supportedTvResolutions.emplace_back("2160p25");
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P30))
-                            supportedTvResolutions.emplace_back("2160p30");
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P50))
-                            supportedTvResolutions.emplace_back("2160p50");
-                        if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P60))
-                            supportedTvResolutions.emplace_back("2160p60");
-                    }
-                    else {
+                    if (hr != Core::ERROR_NONE) {
                         LOGERR("Failed to get TV supported resolutions for video port '%s' (handle=%d), Error=%d", videoDisplay.c_str(), videoHandle, hr);
                     }
+
+                    if (!tvResolutions)
+                        supportedTvResolutions.emplace_back("none");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_480I)) {
+                        supportedTvResolutions.emplace_back("480i");
+                        supportedTvResolutions.emplace_back("480i60");
+                    }
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_480P)) {
+                        supportedTvResolutions.emplace_back("480p");
+                        supportedTvResolutions.emplace_back("480p60");
+                    }
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_576I))
+                        supportedTvResolutions.emplace_back("576i50");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_576P))
+                        supportedTvResolutions.emplace_back("576p50");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_720P50))
+                        supportedTvResolutions.emplace_back("720p50");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_720P)) {
+                        supportedTvResolutions.emplace_back("720p");
+                        supportedTvResolutions.emplace_back("720p60");
+                    }
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P24))
+                        supportedTvResolutions.emplace_back("1080p24");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080I25))
+                        supportedTvResolutions.emplace_back("1080p25");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P30))
+                        supportedTvResolutions.emplace_back("1080p30");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080I50))
+                        supportedTvResolutions.emplace_back("1080i50");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P50))
+                        supportedTvResolutions.emplace_back("1080p50");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080I)) {
+                        supportedTvResolutions.emplace_back("1080i");
+                        supportedTvResolutions.emplace_back("1080i60");
+                    }
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P)) {
+                        supportedTvResolutions.emplace_back("1080p");
+                        supportedTvResolutions.emplace_back("1080p60");
+                    }
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P60))
+                        supportedTvResolutions.emplace_back("1080p60");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P24))
+                        supportedTvResolutions.emplace_back("2160p24");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P25))
+                        supportedTvResolutions.emplace_back("2160p25");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P30))
+                        supportedTvResolutions.emplace_back("2160p30");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P50))
+                        supportedTvResolutions.emplace_back("2160p50");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P60))
+                        supportedTvResolutions.emplace_back("2160p60");
                     vp->Release();
                 }
                 else {
@@ -1667,8 +1666,9 @@ namespace Plugin {
 
         // DS_IARM: if audioPort is still empty, determine HDMI0 vs SPDIF0 based on display connectivity
         if (audioPort.empty()) {
+            string videoDisplay = _vpConfigStore.GetDefaultVideoPortName();
             // DS_IARM: default to HDMI0, switch to SPDIF0 only if another display is connected
-            if (isDisplayConnected("HDMI0")) {
+            if (!videoDisplay.empty() && isDisplayConnected(videoDisplay)) {
                 audioPort = "HDMI0";
             } else {
                 audioPort = "HDMI0"; // DS_IARM: keeps HDMI0 as default even in else branch
@@ -1681,8 +1681,9 @@ namespace Plugin {
             }
         }
 
+        LOGINFO("Determined audioPort: '%s'", audioPort.c_str());
+
         string modeString("");
-        bool success = true;
         {
             auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
             if (audio != nullptr) {
@@ -1691,7 +1692,6 @@ namespace Plugin {
                 bool portConnected = isAudioOutputPortConnected(audio, audioPort, audioHandle);
                 if (INVALID_DS_HANDLE == audioHandle) {
                     LOGERR("No audio handle found for audioPort '%s'", audioPort.c_str());
-                    success = false;
                 }
 
                 // Determine mode string — mirrors DS_IARM per-type logic
@@ -1719,25 +1719,23 @@ namespace Plugin {
                             // DS_IARM: vPort.getDisplay().getSurroundMode() determines DD/DDPlus/Stereo
                             // COM-RPC: GetVideoPortDisplaySurroundMode on the HDMI video port handle
                             VideoPortSurroundMode surroundMode = VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_NONE;
-                            const int32_t vpHandle = getCachedVideoPortHandle(audioPort);
+                            string videoDisplay = _vpConfigStore.GetDefaultVideoPortName();
+                            const int32_t vpHandle = getCachedVideoPortHandle(videoDisplay);
                             if (INVALID_DS_HANDLE != vpHandle) {
                                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                                 if (vp != nullptr) {
                                     auto hr = vp->GetVideoPortDisplaySurroundMode(vpHandle, surroundMode);
                                     if (hr != Core::ERROR_NONE) {
                                         LOGERR("GetVideoPortDisplaySurroundMode failed for video port handle %d, Error=%d", vpHandle, static_cast<int>(hr));
-                                        success = false;
                                     }
                                     vp->Release();
                                 }
                                 else {
                                     LOGERR("Failed to acquire IDeviceSettingsVideoPort interface");
-                                    success = false;
                                 }
                             }
                             else {
-                                LOGERR("No video port handle found for audioPort '%s'", audioPort.c_str());
-                                success = false;
+                                LOGERR("No video port handle found for videoDisplay '%s'", videoDisplay.c_str());
                             }
                             if (surroundMode == VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_DDPLUS) {
                                 modeString = "AUTO (Dolby Digital Plus)";
@@ -1746,7 +1744,16 @@ namespace Plugin {
                             } else {
                                 modeString = "AUTO (Stereo)";
                             }
-                        } else {
+                        }
+                        else if (stereoMode == Exchange::IDeviceSettingsAudio::StereoMode::DS_VIDEO_PORT_SURROUNDMODE_DD) {
+                            LOGINFO("HDMI0 is in dolby digital Mode");
+                            modeString.append("DOLBYDIGITAL");
+                        }
+                        else if (stereoMode == Exchange::IDeviceSettingsAudio::StereoMode::DS_VIDEO_PORT_SURROUNDMODE_DDPLUS) {
+                            LOGINFO("HDMI0 is in dolby digital plus Mode");
+                            modeString.append("DOLBYDIGITALPLUS");
+                        }
+                        else {
                             // DS_IARM: modeString.append(mode.toString())
                             // COM-RPC: StereoModeToString() mirrors AudioStereoMode::toString()
                             modeString = StereoModeToString(stereoMode);
@@ -1787,12 +1794,12 @@ namespace Plugin {
                 audio->Release();
             } else {
                 LOGERR("IDeviceSettingsAudio not available");
-                success = false;
+                modeString = StereoModeToString(Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO); // safe default
             }
         }
         LOGWARN("audioPort = %s, mode = %s!", audioPort.c_str(), modeString.c_str());
         response["soundMode"] = modeString;
-        returnResponse(success);
+        returnResponse(true);
     }
 
     uint32_t DisplaySettings::setSoundMode(const JsonObject& parameters, JsonObject& response)
@@ -1871,7 +1878,8 @@ namespace Plugin {
                                     // DS_IARM: if (getSurroundMode()) comMode = kSurround; else comMode = kStereo
                                     // COM-RPC: GetVideoPortDisplaySurroundMode on the HDMI video port handle
                                     VideoPortSurroundMode surroundMode = VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_NONE;
-                                    const int32_t vpHandle = getCachedVideoPortHandle(audioPort);
+                                    std::string videoDisplay = _vpConfigStore.GetDefaultVideoPortName();
+                                    const int32_t vpHandle = getCachedVideoPortHandle(videoDisplay);
                                     if (INVALID_DS_HANDLE != vpHandle) {
                                         auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                                         if (vp != nullptr) {
@@ -1888,7 +1896,7 @@ namespace Plugin {
                                         }
                                     }
                                     else {
-                                        LOGERR("No video port handle found for audioPort '%s'", audioPort.c_str());
+                                        LOGERR("No video port handle found for videoDisplay '%s'", videoDisplay.c_str());
                                         success = false;
                                     }
 
@@ -4435,12 +4443,10 @@ namespace Plugin {
                 auto* audio = AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                 if (audio != nullptr) {
                     Core::hresult comResult = audio->GetAudioDelay(audioHandle, audioDelayMs);
-                    if (comResult == Core::ERROR_NONE) {
-                        response["audioDelay"] = std::to_string(audioDelayMs);
-                    } else {
+                    if (comResult != Core::ERROR_NONE) {
                         LOGERR("GetAudioDelay failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
-                        success = false;
                     }
+                    response["audioDelay"] = std::to_string(audioDelayMs);
                     audio->Release();
                 } else {
                     LOGERR("IDeviceSettingsAudio not available");
@@ -5067,9 +5073,9 @@ namespace Plugin {
                     LOGERR("Failed to get video device handle for index 0");
                 }
                 else {
+                    JsonArray entries;
                     Core::hresult comResult = vd->GetCodecInfo(videoDeviceHandle, vc, iter);
                     if (comResult == Core::ERROR_NONE && iter != nullptr) {
-                        JsonArray entries;
                         Exchange::IDeviceSettingsVideoDevice::VideoCodecProfileSupport ps{};
                         int entryIndex = 0;
                         while (iter->Next(ps)) {
@@ -5099,14 +5105,14 @@ namespace Plugin {
                             entries.Add(item);
                             entryIndex++;
                         }
-                        response["numberOfEntries"] = static_cast<int>(entries.Length());
-                        response["entries"] = entries;
                         iter->Release();
-                        success = true;
                     }
                     else {
                         LOGERR("GetCodecInfo failed for codec='%s', Error=%d", codec.c_str(), static_cast<int>(comResult));
                     }
+                    response["numberOfEntries"] = static_cast<int>(entries.Length());
+                    response["entries"] = entries;
+                    success = true;
                 }
                 vd->Release();
             }
@@ -5267,21 +5273,19 @@ namespace Plugin {
                 if (vp != nullptr) {
                     uint32_t capabilities = 0;
                     Core::hresult comResult = vp->GetColorDepthCapabilities(videoHandle, capabilities);
-                    if (comResult == Core::ERROR_NONE) {
-                        if (!capabilities)
-                            colorDepthCapabilities.emplace_back("none");
-                        if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_8BIT))
-                            colorDepthCapabilities.emplace_back("8 Bit");
-                        if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_10BIT))
-                            colorDepthCapabilities.emplace_back("10 Bit");
-                        if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_12BIT))
-                            colorDepthCapabilities.emplace_back("12 Bit");
-                        if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_AUTO))
-                            colorDepthCapabilities.emplace_back("Auto");
-                    }
-                    else {
+                    if (comResult != Core::ERROR_NONE) {
                         LOGERR("GetColorDepthCapabilities failed for videoDisplay='%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comResult));
                     }
+                    if (!capabilities)
+                        colorDepthCapabilities.emplace_back("none");
+                    if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_8BIT))
+                        colorDepthCapabilities.emplace_back("8 Bit");
+                    if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_10BIT))
+                        colorDepthCapabilities.emplace_back("10 Bit");
+                    if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_12BIT))
+                        colorDepthCapabilities.emplace_back("12 Bit");
+                    if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_AUTO))
+                        colorDepthCapabilities.emplace_back("Auto");
                     vp->Release();
                 }
                 else {
@@ -5622,7 +5626,6 @@ namespace Plugin {
                     Core::hresult comResult = audio->SetAudioEnablePersist(audioHandle, pEnable, audioPort);
                     if (comResult != Core::ERROR_NONE) {
                         LOGERR("SetAudioEnablePersist failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
-                        success = false;
                     }
 
                     LOGWARN("Calling DisplaySettings::setEnableAudioPort audioPort:%s pEnable:%d \n", audioPort.c_str(), pEnable);
@@ -5643,12 +5646,10 @@ namespace Plugin {
                                 comResult = audio->SetAudioMute(audioHandle, true);
                                 if (comResult != Core::ERROR_NONE) {
                                     LOGWARN("SetAudioMute failed, Error=%d\n", static_cast<int>(comResult));
-                                    success = false;
                                 }
                             }
                             else {
                                 LOGWARN("IsAudioMuted failed, Error=%d\n", static_cast<int>(comResult));
-                                success = false;
                             }
                         }
                     } else {
@@ -5666,7 +5667,6 @@ namespace Plugin {
                                         comResult = audio->EnableARC(audioHandle, arcSt);
                                         if (comResult != Core::ERROR_NONE) {
                                             LOGWARN("EnableARC failed for eARC, Error=%d\n", static_cast<int>(comResult));
-                                            success = false;
                                         }
                                         else {
                                             LOGINFO("EnableARC success for eARC\n");
