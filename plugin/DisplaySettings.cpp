@@ -526,7 +526,6 @@ namespace WPEFramework {
 
         const string DisplaySettings::Initialize(PluginHost::IShell* service)
         {
-	    Exchange::ISystemMode* _remotStoreObject = nullptr;
             ASSERT(service != nullptr);
             ASSERT(m_service == nullptr);
 
@@ -566,23 +565,10 @@ namespace WPEFramework {
                 LOGWARN("Current power state %d", m_powerState);
             }
             LOGWARN ("DisplaySettings::Initialize completes line:%d", __LINE__);
-             _remotStoreObject = service->QueryInterfaceByCallsign<Exchange::ISystemMode>("org.rdk.SystemMode");
-
-	    ASSERT (nullptr != _remotStoreObject);
-
-
-	    if(_remotStoreObject)
-	    {
-               const string& callsign = "org.rdk.DisplaySettings";
-		    const string& systemMode = "DEVICE_OPTIMIZE";
-	            _remotStoreObject->ClientActivated(callsign,systemMode);
-                    _remotStoreObject->Release();
-                    _remotStoreObject = nullptr;		    
-	    }
-            else
-            {
-                    Utils::String::updateSystemModeFile( "DEVICE_OPTIMIZE", "callsign", "org.rdk.DisplaySettings","add") ;
-            }
+            
+            // Approach 1: No explicit registration needed
+            // SystemMode will automatically discover this plugin via IPlugin::INotification
+            // when it activates, and query for IDeviceOptimizeStateActivator interface
 
             // On success return empty, to indicate there is no error text.
             return (string());
@@ -590,7 +576,6 @@ namespace WPEFramework {
 
         void DisplaySettings::Deinitialize(PluginHost::IShell* service)
         {
-            Exchange::ISystemMode* _remotStoreObject1 = nullptr;
             LOGINFO("Enetering DisplaySettings::Deinitialize");
             if (_powerManagerPlugin) {
 		// Unregister from PowerManagerPlugin Notification
@@ -599,27 +584,10 @@ namespace WPEFramework {
             }
 
             _registeredEventHandlers = false;
-            //During DisplaySettings plugin  activation the SystemMode may not be added .But it will be added /tmp/SystemMode.txt . If after 5 min SystemMode got activated then SystemMode fill the client map from /tmp/SystemMode.txt. In this case if we deactivate DisplaySettings then _remotStoreObject will be null here . So we try to QueryInterface the ISystemMode one more time 
-		if(_remotStoreObject1 == nullptr)
-		{
-				_remotStoreObject1 = service->QueryInterfaceByCallsign<Exchange::ISystemMode>("org.rdk.SystemMode");
-
-		}
-
-		ASSERT (nullptr != _remotStoreObject1);
-
-		if(_remotStoreObject1)
-		{
-			const string& callsign = "org.rdk.DisplaySettings";
-			const string& systemMode = "DEVICE_OPTIMIZE";
-			_remotStoreObject1->ClientDeactivated(callsign,systemMode);
-	                _remotStoreObject1->Release();
-	                _remotStoreObject1 = nullptr;		
-		}
-		else
-		{
-			Utils::String::updateSystemModeFile( "DEVICE_OPTIMIZE", "callsign", "org.rdk.DisplaySettings","delete") ;
-		}
+            
+            // Approach 1: No cleanup needed for SystemMode
+            // Thunder automatically calls SystemMode::OnPluginDeactivated() when this plugin deactivates
+            // SystemMode handles all cleanup: Release(), map erase, file update
 
             {
 
