@@ -526,7 +526,6 @@ namespace WPEFramework {
 
         const string DisplaySettings::Initialize(PluginHost::IShell* service)
         {
-	    Exchange::ISystemMode* _remotStoreObject = nullptr;
             ASSERT(service != nullptr);
             ASSERT(m_service == nullptr);
 
@@ -569,9 +568,14 @@ namespace WPEFramework {
             
             // Defer SystemMode registration until after plugin activation completes
             // Due to Thunder patch RDKEMW-15242, QueryInterface only works when State() == ACTIVATED
-            // Submit job to worker pool - it will execute AFTER Initialize() returns and plugin is activated
-            m_service->Submit(PluginHost::IShell::Job::Create(m_service,
+            // Submit job to worker pool - executes AFTER Initialize() returns and State becomes ACTIVATED
+#ifndef USE_THUNDER_R4
+            Core::IWorkerPool::Instance().Submit(Core::ProxyType<Core::IDispatchType<void>>(Core::ProxyType<Job>::Create(
                 [this]() {
+#else
+            Core::IWorkerPool::Instance().Submit(Core::ProxyType<Core::IDispatch>(Core::ProxyType<Job>::Create(
+                [this]() {
+#endif
                     // This lambda executes in worker thread AFTER Initialize() completes
                     Exchange::ISystemMode* _remotStoreObject = 
                         m_service->QueryInterfaceByCallsign<Exchange::ISystemMode>("org.rdk.SystemMode");
@@ -586,7 +590,7 @@ namespace WPEFramework {
                         Utils::String::updateSystemModeFile("DEVICE_OPTIMIZE", "callsign", 
                                                            "org.rdk.DisplaySettings", "add");
                     }
-                }));
+                })));
 
             // On success return empty, to indicate there is no error text.
             return (string());
