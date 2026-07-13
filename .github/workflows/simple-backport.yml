@@ -116,7 +116,7 @@ jobs:
           git checkout -b "$NEW_BRANCH" "origin/$SUPPORT"
           echo "✅ Created '$NEW_BRANCH' on top of '$SUPPORT'."
 
-      # ── STEP 4: Apply commits (cherry-pick with auto path fix) ─────────────
+      # ── STEP 4: Apply commits ─────────────────────────────────────────────
       - name: Apply changes via cherry-pick
         id: cherry_pick
         env:
@@ -124,8 +124,7 @@ jobs:
           COMMIT_COUNT: ${{ steps.get_commits.outputs.count }}
           SOURCE:       ${{ github.event.inputs.source_branch }}
         run: |
-          set +e   # handle all errors manually — do NOT let bash auto-exit
-
+          set +e
           echo "Applying $COMMIT_COUNT commit(s) from '$SOURCE'..."
           echo ""
 
@@ -133,86 +132,74 @@ jobs:
           for SHA in "${COMMIT_LIST[@]}"; do
             [ -z "$SHA" ] && continue
             SHORT="${SHA:0:7}"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "  Applying $SHORT..."
 
-            # ── Try normal cherry-pick ────────────────────────────────────────
+            # ── Try direct cherry-pick first ─────────────────────────────────
             CHERRY_OUTPUT=$(git cherry-pick "$SHA" 2>&1)
             CHERRY_EXIT=$?
-            echo "  cherry-pick exit=$CHERRY_EXIT"
 
             if [ "$CHERRY_EXIT" -eq 0 ]; then
               echo "  ✅ Applied $SHORT (direct cherry-pick)"
               continue
             fi
 
-            echo "  cherry-pick output: $CHERRY_OUTPUT"
+            echo "  cherry-pick failed (exit=$CHERRY_EXIT)"
             git cherry-pick --abort 2>/dev/null
 
-            # ── Path mismatch (file deleted in target = different path) ───────
-            if echo "$CHERRY_OUTPUT" | grep -q "modify/delete\|deleted in HEAD"; then
-              echo "  ⚠️  Path mismatch — searching file by name..."
+            # ── Get list of files changed in this commit ──────────────────────
+            CHANGED_FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$' | grep -v '^\.github/')
+            echo "  Files in commit: $(echo $CHANGED_FILES | tr '\n' ' ')"
 
-              CHANGED_FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$')
-              echo "  Files in commit: $CHANGED_FILES"
-              ALL_OK=true
+            ALL_OK=true
+            for ORIG_FILE in $CHANGED_FILES; do
+              BASENAME=$(basename "$ORIG_FILE")
+              echo ""
+              echo "  Processing: $ORIG_FILE  (filename: $BASENAME)"
 
-              for ORIG_FILE in $CHANGED_FILES; do
-                BASENAME=$(basename "$ORIG_FILE")
-                echo "  Looking for: $BASENAME"
+              # ── Find file by NAME in current branch ───────────────────────
+              TARGET_FILE=$(find . -name "$BASENAME" \
+                -not -path "./.git/*" \
+                -not -path "./.github/*" \
+                2>/dev/null | head -1 | sed 's|^\./||')
 
-                TARGET_FILE=$(find . -name "$BASENAME" \
-                  -not -path "./.git/*" \
-                  -not -path "./.github/*" \
-                  2>/dev/null | head -1 | sed 's|^\./||')
+              echo "  Found at:   ${TARGET_FILE:-NOT FOUND}"
 
-                echo "  Found at: $TARGET_FILE"
-
-                if [ -z "$TARGET_FILE" ]; then
-                  echo "❌ '$BASENAME' not found in support branch — file may not exist yet in this release."
-                  ALL_OK=false
-                  break
-                fi
-
-                # Rewrite patch path and apply
-                PATCH=$(git show "$SHA" -- "$ORIG_FILE" | \
-                  sed "s|a/$ORIG_FILE|a/$TARGET_FILE|g; s|b/$ORIG_FILE|b/$TARGET_FILE|g")
-
-                echo "$PATCH" | git apply --3way -
-                APPLY_EXIT=$?
-                echo "  git apply exit=$APPLY_EXIT"
-
-                if [ "$APPLY_EXIT" -ne 0 ]; then
-                  echo ""
-                  echo "❌ CONFLICT after path fix on commit $SHORT"
-                  echo "Root cause: Same lines changed differently in '$TARGET_FILE' vs support branch"
-                  echo "Conflicting files:"
-                  git diff --name-only --diff-filter=U | sed 's/^/  - /'
-                  echo "Status: FAILED"
-                  ALL_OK=false
-                  break
-                fi
-
-                git add "$TARGET_FILE"
-                echo "  ✅ Patch applied: $ORIG_FILE → $TARGET_FILE"
-              done
-
-              if [ "$ALL_OK" = false ]; then
-                exit 1
+              if [ -z "$TARGET_FILE" ]; then
+                echo "  ⚠️  Skipping '$BASENAME' — not in support branch (may not exist in this release)"
+                continue
               fi
 
-              git commit -m "$(git log -1 --format='%s' $SHA)"
-              echo "  ✅ Applied $SHORT (path-adapted)"
+              # ── Extract old→new lines from the diff ───────────────────────
+              FILE_DIFF=$(git show "$SHA" -- "$ORIG_FILE")
+              OLD_LINE=$(echo "$FILE_DIFF" | grep '^-' | grep -v '^---' | sed 's/^-//')
+              NEW_LINE=$(echo "$FILE_DIFF" | grep '^+' | grep -v '^+++' | sed 's/^+//')
 
-            else
-              # ── Real content conflict ─────────────────────────────────────
+              echo "  OLD: $OLD_LINE"
+              echo "  NEW: $NEW_LINE"
+
+              # ── Apply: replace old line with new line using Python ────────
+              python3 -c "import sys; fp,old,new=sys.argv[1],sys.argv[2],sys.argv[3]; c=open(fp).read(); ok=old.strip() in c; print('NOT FOUND: '+repr(old.strip())) if not ok else open(fp,'w').write(c.replace(old,new,1)) or print('Applied to '+fp); sys.exit(0 if ok else 1)" "$TARGET_FILE" "$OLD_LINE" "$NEW_LINE"
+
+              APPLY_EXIT=$?
+              if [ "$APPLY_EXIT" -ne 0 ]; then
+                echo "  ❌ Failed to apply change to $TARGET_FILE"
+                ALL_OK=false
+                break
+              fi
+
+              git add "$TARGET_FILE"
+            done
+
+            if [ "$ALL_OK" = false ]; then
               echo ""
-              echo "❌ CONFLICT on commit $SHORT"
-              echo "Root cause: Changes conflict with existing code in support branch."
-              echo "Conflicting files:"
-              git diff --name-only --diff-filter=U | sed 's/^/  - /'
-              echo "Status: FAILED"
+              echo "❌ FAILED — could not apply commit $SHORT"
               exit 1
             fi
+
+            git commit -m "$(git log -1 --format='%s' $SHA) [backported]"
+            echo ""
+            echo "  ✅ Applied $SHORT (content-based, path-adapted)"
           done
 
           echo ""
