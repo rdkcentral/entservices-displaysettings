@@ -6325,7 +6325,7 @@ void DisplaySettings::sendMsgThread()
 		}
 		if( 0 == (int)connectedDisplays.size())
 		{
-			LOGWARN("No display connected to device (or)device's powerstate is not ON");
+			LOGWARN("No display connected to the device (or)device's powerstate is not ON");
             return Core::ERROR_GENERAL;
 		}
         return Core::ERROR_NONE;
@@ -6556,7 +6556,7 @@ void DisplaySettings::sendMsgThread()
 
         void DisplaySettings::OnVideoFormatUpdate(dsHDRStandard_t videoFormatHDR)
         {
-            LOGINFO("The Received OnVideoFormatUpdate callback. Video format: %d", videoFormatHDR);
+            LOGINFO("Received OnVideoFormatUpdate callback. Video format: %d", videoFormatHDR);
             if(DisplaySettings::_instance) {
                 DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
             }
