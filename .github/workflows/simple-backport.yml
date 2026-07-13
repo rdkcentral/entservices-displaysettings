@@ -22,6 +22,12 @@ on:
         required: true
         type: string
 
+      specific_commits:
+        description: "OPTIONAL: Comma-separated specific commit SHAs to apply (e.g. 9e4c2b6,a1b2c3d). Leave empty to apply ALL new commits from source branch."
+        required: false
+        type: string
+        default: ""
+
 permissions:
   contents: write
   pull-requests: write
@@ -64,13 +70,23 @@ jobs:
       - name: Get commits to apply
         id: get_commits
         env:
-          SOURCE: ${{ github.event.inputs.source_branch }}
+          SOURCE:   ${{ github.event.inputs.source_branch }}
+          SPECIFIC: ${{ github.event.inputs.specific_commits }}
         run: |
+          # ── If user provided specific commit SHAs, use those directly ────────
+          if [ -n "$SPECIFIC" ]; then
+            echo "Using specific commits provided by user: $SPECIFIC"
+            COUNT=$(echo "$SPECIFIC" | tr ',' '\n' | grep -c '.')
+            echo "commits=$SPECIFIC" >> "$GITHUB_OUTPUT"
+            echo "count=$COUNT"      >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # ── Otherwise, auto-detect all new commits vs develop ─────────────────
           echo "Fetching source branch '$SOURCE'..."
           git fetch origin "$SOURCE"
           git fetch origin develop
 
-          # Commits in source_branch that are NOT in develop
           COMMITS=$(git log --reverse --pretty=format:"%H" "origin/develop..origin/$SOURCE")
 
           if [ -z "$COMMITS" ]; then
