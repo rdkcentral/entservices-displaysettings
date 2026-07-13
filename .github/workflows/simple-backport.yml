@@ -170,16 +170,29 @@ jobs:
                 continue
               fi
 
-              # ── Extract old→new lines from the diff ───────────────────────
-              FILE_DIFF=$(git show "$SHA" -- "$ORIG_FILE")
-              OLD_LINE=$(echo "$FILE_DIFF" | grep '^-' | grep -v '^---' | sed 's/^-//')
-              NEW_LINE=$(echo "$FILE_DIFF" | grep '^+' | grep -v '^+++' | sed 's/^+//')
-
-              echo "  OLD: $OLD_LINE"
-              echo "  NEW: $NEW_LINE"
-
-              # ── Apply: replace old line with new line using Python ────────
-              python3 -c "import sys; fp,old,new=sys.argv[1],sys.argv[2],sys.argv[3]; c=open(fp).read(); ok=old.strip() in c; print('NOT FOUND: '+repr(old.strip())) if not ok else open(fp,'w').write(c.replace(old,new,1)) or print('Applied to '+fp); sys.exit(0 if ok else 1)" "$TARGET_FILE" "$OLD_LINE" "$NEW_LINE"
+              # ── Apply each changed line individually (one substitution per hunk) ──
+              printf '%s\n' \
+                'import sys,subprocess' \
+                'sha,orig,target=sys.argv[1],sys.argv[2],sys.argv[3]' \
+                'res=subprocess.run(["git","show",sha,"--",orig],capture_output=True,text=True)' \
+                'lines=res.stdout.split("\n")' \
+                'content=open(target).read()' \
+                'applied=0;skipped=0;i=0' \
+                'while i<len(lines):' \
+                '  l=lines[i];nxt=lines[i+1] if i+1<len(lines) else ""' \
+                '  if l.startswith("-") and not l.startswith("---") and nxt.startswith("+") and not nxt.startswith("+++"):' \
+                '    old,new=l[1:],nxt[1:]' \
+                '    if old!=new:' \
+                '      if old in content:' \
+                '        content=content.replace(old,new,1);applied+=1;print("  Replaced: "+repr(old.strip()[:80]))' \
+                '      else:' \
+                '        print("  SKIP (not in target branch): "+repr(old.strip()[:80]));skipped+=1' \
+                '    i+=2;continue' \
+                '  i+=1' \
+                'if applied>0: open(target,"w").write(content)' \
+                'print("  applied="+str(applied)+" skipped="+str(skipped))' \
+                > /tmp/apply_patch.py
+              python3 /tmp/apply_patch.py "$SHA" "$ORIG_FILE" "$TARGET_FILE"
 
               APPLY_EXIT=$?
               if [ "$APPLY_EXIT" -ne 0 ]; then
