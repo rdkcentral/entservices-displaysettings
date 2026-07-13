@@ -124,6 +124,8 @@ jobs:
           COMMIT_COUNT: ${{ steps.get_commits.outputs.count }}
           SOURCE:       ${{ github.event.inputs.source_branch }}
         run: |
+          set +e   # handle all errors manually — do NOT let bash auto-exit
+
           echo "Applying $COMMIT_COUNT commit(s) from '$SOURCE'..."
           echo ""
 
@@ -133,72 +135,65 @@ jobs:
             SHORT="${SHA:0:7}"
             echo "  Applying $SHORT..."
 
-            # ── Try normal cherry-pick first ─────────────────────────────────
+            # ── Try normal cherry-pick ────────────────────────────────────────
             CHERRY_OUTPUT=$(git cherry-pick "$SHA" 2>&1)
             CHERRY_EXIT=$?
+            echo "  cherry-pick exit=$CHERRY_EXIT"
 
-            if [ $CHERRY_EXIT -eq 0 ]; then
+            if [ "$CHERRY_EXIT" -eq 0 ]; then
               echo "  ✅ Applied $SHORT (direct cherry-pick)"
               continue
             fi
 
-            # Cherry-pick failed — abort before trying alternate approach
-            git cherry-pick --abort 2>/dev/null || true
+            echo "  cherry-pick output: $CHERRY_OUTPUT"
+            git cherry-pick --abort 2>/dev/null
 
-            # ── Check if failure is a path mismatch (modify/delete) ──────────
-            if echo "$CHERRY_OUTPUT" | grep -q "modify/delete"; then
-              echo "  ⚠️  Path mismatch detected — searching by filename..."
+            # ── Path mismatch (file deleted in target = different path) ───────
+            if echo "$CHERRY_OUTPUT" | grep -q "modify/delete\|deleted in HEAD"; then
+              echo "  ⚠️  Path mismatch — searching file by name..."
 
-              # Get all files changed in this commit
               CHANGED_FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$')
+              echo "  Files in commit: $CHANGED_FILES"
               ALL_OK=true
 
               for ORIG_FILE in $CHANGED_FILES; do
                 BASENAME=$(basename "$ORIG_FILE")
-                echo "  Searching for '$BASENAME' in target branch..."
+                echo "  Looking for: $BASENAME"
 
-                # Find the file by name (skip .git and .github dirs)
                 TARGET_FILE=$(find . -name "$BASENAME" \
                   -not -path "./.git/*" \
                   -not -path "./.github/*" \
-                  | head -1 | sed 's|^\./||')
+                  2>/dev/null | head -1 | sed 's|^\./||')
+
+                echo "  Found at: $TARGET_FILE"
 
                 if [ -z "$TARGET_FILE" ]; then
-                  echo ""
-                  echo "❌ File '$BASENAME' not found in target branch."
-                  echo "   Root cause: '$ORIG_FILE' was added in a newer version"
-                  echo "   of develop and does not exist in this support branch."
-                  echo "   Status: FAILED"
+                  echo "❌ '$BASENAME' not found in support branch — file may not exist yet in this release."
                   ALL_OK=false
                   break
                 fi
 
-                echo "  Found: '$ORIG_FILE' → '$TARGET_FILE'"
+                # Rewrite patch path and apply
+                PATCH=$(git show "$SHA" -- "$ORIG_FILE" | \
+                  sed "s|a/$ORIG_FILE|a/$TARGET_FILE|g; s|b/$ORIG_FILE|b/$TARGET_FILE|g")
 
-                # Rewrite patch: replace original path with found path, then apply
-                git show "$SHA" -- "$ORIG_FILE" \
-                  | sed "s|a/$ORIG_FILE|a/$TARGET_FILE|g; \
-                         s|b/$ORIG_FILE|b/$TARGET_FILE|g" \
-                  | git apply --3way - 2>&1
+                echo "$PATCH" | git apply --3way -
+                APPLY_EXIT=$?
+                echo "  git apply exit=$APPLY_EXIT"
 
-                if [ $? -ne 0 ]; then
+                if [ "$APPLY_EXIT" -ne 0 ]; then
                   echo ""
                   echo "❌ CONFLICT after path fix on commit $SHORT"
-                  echo ""
-                  echo "Root cause:"
-                  echo "  The same lines were changed differently in '$TARGET_FILE'"
-                  echo "  between your commit and the support branch version."
-                  echo ""
+                  echo "Root cause: Same lines changed differently in '$TARGET_FILE' vs support branch"
                   echo "Conflicting files:"
                   git diff --name-only --diff-filter=U | sed 's/^/  - /'
-                  echo ""
-                  echo "Status: FAILED — manual resolution needed"
+                  echo "Status: FAILED"
                   ALL_OK=false
                   break
                 fi
 
                 git add "$TARGET_FILE"
-                echo "  ✅ Patch applied to '$TARGET_FILE'"
+                echo "  ✅ Patch applied: $ORIG_FILE → $TARGET_FILE"
               done
 
               if [ "$ALL_OK" = false ]; then
@@ -209,17 +204,13 @@ jobs:
               echo "  ✅ Applied $SHORT (path-adapted)"
 
             else
-              # ── Other conflict (content conflict) ───────────────────────────
+              # ── Real content conflict ─────────────────────────────────────
               echo ""
-              echo "❌ CONFLICT detected on commit $SHORT"
-              echo ""
-              echo "Root cause:"
-              echo "  The changes in commit $SHORT conflict with existing code in the support branch."
-              echo ""
+              echo "❌ CONFLICT on commit $SHORT"
+              echo "Root cause: Changes conflict with existing code in support branch."
               echo "Conflicting files:"
               git diff --name-only --diff-filter=U | sed 's/^/  - /'
-              echo ""
-              echo "Status: FAILED — cherry-pick aborted"
+              echo "Status: FAILED"
               exit 1
             fi
           done
