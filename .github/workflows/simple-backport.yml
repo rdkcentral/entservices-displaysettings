@@ -116,13 +116,13 @@ jobs:
           git checkout -b "$NEW_BRANCH" "origin/$SUPPORT"
           echo "✅ Created '$NEW_BRANCH' on top of '$SUPPORT'."
 
-      # ── STEP 4: Apply (cherry-pick) commits ─────────────────────────────────
+      # ── STEP 4: Apply commits (cherry-pick with auto path fix) ─────────────
       - name: Apply changes via cherry-pick
         id: cherry_pick
         env:
-          COMMITS_CSV: ${{ steps.get_commits.outputs.commits }}
+          COMMITS_CSV:  ${{ steps.get_commits.outputs.commits }}
           COMMIT_COUNT: ${{ steps.get_commits.outputs.count }}
-          SOURCE: ${{ github.event.inputs.source_branch }}
+          SOURCE:       ${{ github.event.inputs.source_branch }}
         run: |
           echo "Applying $COMMIT_COUNT commit(s) from '$SOURCE'..."
           echo ""
@@ -133,7 +133,83 @@ jobs:
             SHORT="${SHA:0:7}"
             echo "  Applying $SHORT..."
 
-            if ! git cherry-pick "$SHA" 2>&1; then
+            # ── Try normal cherry-pick first ─────────────────────────────────
+            CHERRY_OUTPUT=$(git cherry-pick "$SHA" 2>&1)
+            CHERRY_EXIT=$?
+
+            if [ $CHERRY_EXIT -eq 0 ]; then
+              echo "  ✅ Applied $SHORT (direct cherry-pick)"
+              continue
+            fi
+
+            # Cherry-pick failed — abort before trying alternate approach
+            git cherry-pick --abort 2>/dev/null || true
+
+            # ── Check if failure is a path mismatch (modify/delete) ──────────
+            if echo "$CHERRY_OUTPUT" | grep -q "modify/delete"; then
+              echo "  ⚠️  Path mismatch detected — searching by filename..."
+
+              # Get all files changed in this commit
+              CHANGED_FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$')
+              ALL_OK=true
+
+              for ORIG_FILE in $CHANGED_FILES; do
+                BASENAME=$(basename "$ORIG_FILE")
+                echo "  Searching for '$BASENAME' in target branch..."
+
+                # Find the file by name (skip .git and .github dirs)
+                TARGET_FILE=$(find . -name "$BASENAME" \
+                  -not -path "./.git/*" \
+                  -not -path "./.github/*" \
+                  | head -1 | sed 's|^\./||')
+
+                if [ -z "$TARGET_FILE" ]; then
+                  echo ""
+                  echo "❌ File '$BASENAME' not found in target branch."
+                  echo "   Root cause: '$ORIG_FILE' was added in a newer version"
+                  echo "   of develop and does not exist in this support branch."
+                  echo "   Status: FAILED"
+                  ALL_OK=false
+                  break
+                fi
+
+                echo "  Found: '$ORIG_FILE' → '$TARGET_FILE'"
+
+                # Rewrite patch: replace original path with found path, then apply
+                git show "$SHA" -- "$ORIG_FILE" \
+                  | sed "s|a/$ORIG_FILE|a/$TARGET_FILE|g; \
+                         s|b/$ORIG_FILE|b/$TARGET_FILE|g" \
+                  | git apply --3way - 2>&1
+
+                if [ $? -ne 0 ]; then
+                  echo ""
+                  echo "❌ CONFLICT after path fix on commit $SHORT"
+                  echo ""
+                  echo "Root cause:"
+                  echo "  The same lines were changed differently in '$TARGET_FILE'"
+                  echo "  between your commit and the support branch version."
+                  echo ""
+                  echo "Conflicting files:"
+                  git diff --name-only --diff-filter=U | sed 's/^/  - /'
+                  echo ""
+                  echo "Status: FAILED — manual resolution needed"
+                  ALL_OK=false
+                  break
+                fi
+
+                git add "$TARGET_FILE"
+                echo "  ✅ Patch applied to '$TARGET_FILE'"
+              done
+
+              if [ "$ALL_OK" = false ]; then
+                exit 1
+              fi
+
+              git commit -m "$(git log -1 --format='%s' $SHA)"
+              echo "  ✅ Applied $SHORT (path-adapted)"
+
+            else
+              # ── Other conflict (content conflict) ───────────────────────────
               echo ""
               echo "❌ CONFLICT detected on commit $SHORT"
               echo ""
@@ -144,11 +220,8 @@ jobs:
               git diff --name-only --diff-filter=U | sed 's/^/  - /'
               echo ""
               echo "Status: FAILED — cherry-pick aborted"
-              git cherry-pick --abort 2>/dev/null || true
               exit 1
             fi
-
-            echo "  ✅ Applied $SHORT"
           done
 
           echo ""
