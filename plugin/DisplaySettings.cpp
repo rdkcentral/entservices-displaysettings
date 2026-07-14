@@ -565,10 +565,6 @@ namespace WPEFramework {
                 LOGWARN("Current power state %d", m_powerState);
             }
             LOGWARN ("DisplaySettings::Initialize completes line:%d", __LINE__);
-            
-            // Approach 1: No explicit registration needed
-            // SystemMode will automatically discover this plugin via IPlugin::INotification
-            // when it activates, and query for IDeviceOptimizeStateActivator interface
 
             // On success return empty, to indicate there is no error text.
             return (string());
@@ -584,10 +580,6 @@ namespace WPEFramework {
             }
 
             _registeredEventHandlers = false;
-            
-            // Approach 1: No cleanup needed for SystemMode
-            // Thunder automatically calls SystemMode::OnPluginDeactivated() when this plugin deactivates
-            // SystemMode handles all cleanup: Release(), map erase, file update
 
             {
 
