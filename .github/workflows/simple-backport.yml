@@ -28,6 +28,18 @@ on:
         type: string
         default: ""
 
+      pr_title:
+        description: "PR title (e.g. RDKEMW-21092: Fix log message in Request)"
+        required: false
+        type: string
+        default: ""
+
+      pr_body:
+        description: "PR description / change summary"
+        required: false
+        type: string
+        default: "Automated backport created by simple-backport workflow."
+
 permissions:
   contents: write
   pull-requests: write
@@ -229,3 +241,40 @@ jobs:
           echo "✅ SUCCESS"
           echo "   Branch '$NEW_BRANCH' is now on GitHub with your changes applied."
           echo "   You can open a PR from '$NEW_BRANCH' into '${{ github.event.inputs.support_branch }}'."
+
+      # ── STEP 6: Create Pull Request ─────────────────────────────────────────
+      - name: Create Pull Request
+        env:
+          NEW_BRANCH:   ${{ github.event.inputs.new_branch_name }}
+          BASE_BRANCH:  ${{ github.event.inputs.support_branch }}
+          PR_TITLE:     ${{ github.event.inputs.pr_title }}
+          PR_BODY:      ${{ github.event.inputs.pr_body }}
+          GH_TOKEN:     ${{ secrets.RDKCM_RDKE }}
+        run: |
+          set +e
+          # Use new_branch_name as title if pr_title is empty
+          TITLE="${PR_TITLE:-Backport ${NEW_BRANCH} into ${BASE_BRANCH}}"
+          BODY="${PR_BODY:-Automated backport created by simple-backport workflow.}"
+
+          echo "Creating PR: '$TITLE'"
+          echo "  head: $NEW_BRANCH  →  base: $BASE_BRANCH"
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/pulls \
+            -d "{\"title\":\"$TITLE\",\"body\":\"$BODY\",\"head\":\"$NEW_BRANCH\",\"base\":\"$BASE_BRANCH\"}")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY_RESP=$(echo "$RESPONSE" | head -n -1)
+
+          if [ "$HTTP_CODE" = "201" ]; then
+            PR_URL=$(echo "$BODY_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['html_url'])")
+            echo ""
+            echo "✅ PR created successfully!"
+            echo "   $PR_URL"
+          else
+            echo "⚠️  PR creation returned HTTP $HTTP_CODE"
+            echo "   (Branch is pushed. Create PR manually if needed)"
+            echo "   $BODY_RESP"
+          fi
