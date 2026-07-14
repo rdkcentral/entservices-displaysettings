@@ -114,8 +114,8 @@ jobs:
           echo "commits=$(echo "$COMMITS" | tr '\n' ',')" >> "$GITHUB_OUTPUT"
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
 
-      # ── STEP 3: Create new branch on top of support ──────────────────────────
-      - name: Create new branch on support
+      # ── STEP 3: Create or checkout branch on top of support ─────────────────
+      - name: Create or checkout branch on support
         id: create_branch
         env:
           SUPPORT:    ${{ github.event.inputs.support_branch }}
@@ -124,9 +124,19 @@ jobs:
           echo "Fetching '$SUPPORT'..."
           git fetch origin "$SUPPORT"
 
-          echo "Creating '$NEW_BRANCH' from 'origin/$SUPPORT'..."
-          git checkout -b "$NEW_BRANCH" "origin/$SUPPORT"
-          echo "✅ Created '$NEW_BRANCH' on top of '$SUPPORT'."
+          if git ls-remote --exit-code --heads origin "$NEW_BRANCH" > /dev/null 2>&1; then
+            echo "Branch '$NEW_BRANCH' already exists on remote — checking it out..."
+            git fetch origin "$NEW_BRANCH"
+            git checkout "$NEW_BRANCH"
+            git reset --hard "origin/$NEW_BRANCH"
+            echo "branch_existed=true" >> "$GITHUB_OUTPUT"
+            echo "✅ Checked out existing '$NEW_BRANCH'."
+          else
+            echo "Creating '$NEW_BRANCH' from 'origin/$SUPPORT'..."
+            git checkout -b "$NEW_BRANCH" "origin/$SUPPORT"
+            echo "branch_existed=false" >> "$GITHUB_OUTPUT"
+            echo "✅ Created '$NEW_BRANCH' on top of '$SUPPORT'."
+          fi
 
       # ── STEP 4: Apply commits ─────────────────────────────────────────────
       - name: Apply changes via cherry-pick
@@ -273,6 +283,10 @@ jobs:
             echo ""
             echo "✅ PR created successfully!"
             echo "   $PR_URL"
+          elif [ "$HTTP_CODE" = "422" ]; then
+            echo ""
+            echo "✅ PR already exists for '$NEW_BRANCH' → '$BASE_BRANCH'"
+            echo "   New commit was pushed to the branch and appears in the existing PR automatically."
           else
             echo "⚠️  PR creation returned HTTP $HTTP_CODE"
             echo "   (Branch is pushed. Create PR manually if needed)"
