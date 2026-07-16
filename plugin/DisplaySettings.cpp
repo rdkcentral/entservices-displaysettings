@@ -1441,12 +1441,10 @@ namespace WPEFramework {
         {   //sample servicemanager response:
             LOGINFOMETHOD();
             string audioPort = parameters["audioPort"].String();//missing or empty string and we will set all ports
-
 			
             returnIfParamNotFound(parameters, "soundMode");
             string soundMode = parameters["soundMode"].String();
             Utils::String::toLower(soundMode);
-            LOGINFO("preeja audioPort = %s input soundmode %s\n", audioPort.c_str(), soundMode.c_str());
             bool hasPersist = parameters.HasLabel("persist");
             bool persist = hasPersist ? parameters["persist"].Boolean() : true;
             if (!hasPersist) LOGINFO("persist: true");
@@ -1479,8 +1477,7 @@ namespace WPEFramework {
                 stereoAuto = true;
 				
                 mode = device::AudioStereoMode::kSurround;
-				LOGINFO("setting sound mode = %s  \n ", mode.toString().c_str());
-            }
+			}
             else if (soundMode == "dolby digital 5.1")
                 mode = device::AudioStereoMode::kSurround;
             else
@@ -1495,7 +1492,7 @@ namespace WPEFramework {
                 returnResponse(false);
             }
 
-            LOGWARN("display = %s, input mode = %s! stereoAuto %d", audioPort.c_str(), soundMode.c_str(), stereoAuto);
+            LOGWARN("display = %s, mode = %s!", audioPort.c_str(), soundMode.c_str());
 
             try
             {
@@ -1508,8 +1505,7 @@ namespace WPEFramework {
                         /* Auto mode is only for HDMI and DS5 and non-Passthru*/
                         if (aPort.getType().getId() == device::AudioOutputPortType::kHDMI && (!(mode == device::AudioStereoMode::kPassThru)))
                         {
-							 LOGINFO("preeja setting stereo auto to %d", stereoAuto);
-                            aPort.setStereoAuto(stereoAuto, persist);
+							aPort.setStereoAuto(stereoAuto, persist);
                             if (stereoAuto)
                             {
                                 std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
@@ -1530,9 +1526,8 @@ namespace WPEFramework {
                         }
 			else if (aPort.getType().getId() == device::AudioOutputPortType::kARC) {
 		            if(((mode == device::AudioStereoMode::kSurround) || (mode == device::AudioStereoMode::kPassThru) || (mode == device::AudioStereoMode::kStereo)) && (stereoAuto == false)) {
-				         LOGINFO("preeja setting stereo auto to false");
-						aPort.setStereoAuto(false, persist);
-
+				        aPort.setStereoAuto(false, persist);
+						
 				    if((m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_ARC) && (m_hdmiInAudioDeviceConnected == true)) {
 					if (mode == device::AudioStereoMode::kPassThru) {
 					    if (m_AudioDeviceSADState  == AUDIO_DEVICE_SAD_CLEARED || \
@@ -1557,8 +1552,7 @@ namespace WPEFramework {
 			    else { //Auto Mode
 
 				if(m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_eARC) {
-					LOGINFO("preeja stereoauto %d",stereoAuto );
-				    aPort.setStereoAuto(stereoAuto, persist); //setStereoAuto true
+					aPort.setStereoAuto(stereoAuto, persist); //setStereoAuto true
 				}
 				else if ((m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_ARC) && (m_hdmiInAudioDeviceConnected == true)) {
 				    if (m_AudioDeviceSADState  == AUDIO_DEVICE_SAD_CLEARED ||\
@@ -1568,8 +1562,7 @@ namespace WPEFramework {
                                         m_AudioDeviceSADState  = AUDIO_DEVICE_SAD_REQUESTED;
                                         LOGINFO("setSoundMode Auto: SAD Requested\n");
 				    }
-					LOGINFO("preeja setting stereo auto to %d", stereoAuto);
-				    aPort.setStereoAuto(stereoAuto, persist); //setStereoAuto true
+					aPort.setStereoAuto(stereoAuto, persist); //setStereoAuto true
 				}
 				aPort.setStereoMode(mode.toString(), persist);
 			   }
@@ -1577,13 +1570,11 @@ namespace WPEFramework {
                         else if ((aPort.getType().getId() == device::AudioOutputPortType::kSPDIF) || (aPort.getType().getId() == device::AudioOutputPortType::kHEADPHONE))
                         {
 			    if(stereoAuto == false) {
-					            LOGINFO("preeja setting stereo auto to false");
-                                aPort.setStereoAuto(false, persist);
+					            aPort.setStereoAuto(false, persist);
                                 aPort.setStereoMode(mode.toString(), persist);
 			    }
 			    else{
-					LOGINFO("preeja setting stereo auto to true");
-			        aPort.setStereoAuto(true, persist);
+					aPort.setStereoAuto(true, persist);
 			    }
                         }
 
@@ -1591,13 +1582,11 @@ namespace WPEFramework {
 		    else {
                         if (aPort.getType().getId() == device::AudioOutputPortType::kARC) {
                             if(((mode == device::AudioStereoMode::kPassThru) || (mode == device::AudioStereoMode::kStereo) || (mode == device::AudioStereoMode::kSurround)) && (stereoAuto == false)) {
-                               LOGINFO("preeja setting stereo auto to false");
-								aPort.setStereoAuto(false, persist);
+                                aPort.setStereoAuto(false, persist);
                                 aPort.setStereoMode(mode.toString(), persist);
                             }
                             else { //Auto Mode
-								LOGINFO("preeja setting stereo auto to %d", stereoAuto);
-                                aPort.setStereoAuto(stereoAuto, persist);
+								aPort.setStereoAuto(stereoAuto, persist);
                                 aPort.setStereoMode(mode.toString(), persist);
                             }
                         }else if (aPort.getType().getId() == device::AudioOutputPortType::kHDMI) {
@@ -1605,12 +1594,10 @@ namespace WPEFramework {
                             {
 								
                                 aPort.setStereoAuto(stereoAuto, persist);
-                                LOGINFO("preeja setting stereoAuto= %d  \n ",stereoAuto);
                             }
                             else
                             {
-								LOGINFO("preeja setting stereo auto to false");
-                                aPort.setStereoAuto(false, persist);
+								aPort.setStereoAuto(false, persist);
                             }
                             LOGINFO("setting sound mode = %s  \n ", mode.toString().c_str());
                             aPort.setStereoMode(mode.toString(), persist);
@@ -1640,7 +1627,6 @@ namespace WPEFramework {
             //TODO(MROLLINS) -- so this is interesting.  ServiceManager had a settingChanged event that I guess handled settings from many services.
             //Does that mean we need to save our setting back to another plugin that would own settings (and this settingsChanged event) ?
             //ServiceManager::getInstance()->saveSetting(this, SETTING_DISPLAY_SERVICE_SOUND_MODE, soundMode);
-           LOGINFO("final sound mode = %s  \n ", mode.toString().c_str());
             returnResponse(success);
         }
 
