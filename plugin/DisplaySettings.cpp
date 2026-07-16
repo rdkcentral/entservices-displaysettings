@@ -1441,11 +1441,11 @@ namespace WPEFramework {
         {   //sample servicemanager response:
             LOGINFOMETHOD();
             string audioPort = parameters["audioPort"].String();//missing or empty string and we will set all ports
-			
             returnIfParamNotFound(parameters, "soundMode");
             string soundMode = parameters["soundMode"].String();
             Utils::String::toLower(soundMode);
             bool hasPersist = parameters.HasLabel("persist");
+			
             bool persist = hasPersist ? parameters["persist"].Boolean() : true;
             if (!hasPersist) LOGINFO("persist: true");
 
