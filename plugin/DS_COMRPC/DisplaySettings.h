@@ -275,9 +275,6 @@ namespace WPEFramework {
             Core::Sink<DSVideoDeviceNotification>    _DSVideoDeviceNotification;
             Core::Sink<DSHDMIInNotification>         _DSHDMIInNotification;
 
-            // COM-RPC: DeviceSettingsClientHelper overrides
-            // NOTE: _videoPortHandles, _audioPortHandles, _displayHandles, _videoDeviceHandle,
-            // _vpConfigStore, _audioConfigStore are inherited from DeviceSettingsClientHelper.
             void OnDeviceSettingsActivated() override;
             void OnDeviceSettingsDeactivated() override;
 
