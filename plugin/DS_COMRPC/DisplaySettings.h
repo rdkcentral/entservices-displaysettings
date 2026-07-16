@@ -32,7 +32,7 @@
 #include <interfaces/IPowerManager.h>
 #include "PowerManagerInterface.h"
 
-// COM-RPC path: DeviceSettingsInterface.h brings in DeviceSettingsClientHelper
+// COM-RPC path: DeviceSettingsInterface.h brings in DSHelper
 // (which inherits PluginSmartInterfaceType<IDeviceSettings>) plus all DS
 // sub-interface headers.
 #include "DeviceSettingsInterface.h"
@@ -56,7 +56,7 @@ namespace WPEFramework {
 		// will receive a JSONRPC message as a notification, in case this method is called.
         class DisplaySettings : public PluginHost::IPlugin, public PluginHost::JSONRPC, Exchange::IDeviceOptimizeStateActivator
                                 // COM-RPC: single root IDeviceSettings link; sub-interfaces via AcquireSubInterface<T>()
-                                , public DeviceSettingsClientHelper
+                                , public DSHelper
         {
         private:
             typedef Core::JSON::String JString;

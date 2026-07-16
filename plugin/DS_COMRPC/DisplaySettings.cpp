@@ -94,7 +94,6 @@ using ThermalTemperature = WPEFramework::Exchange::IPowerManager::ThermalTempera
     for (uint8_t i = 1; GetHandler(i); i++) \
     Utils::Synchro::RegisterLockedApiForHandler(GetHandler(i), __VA_ARGS__)
 
-namespace DSHelper = WPEFramework::Plugin::DeviceSettingsClientHelper;
 namespace WPEFramework {
 
 namespace {
@@ -747,7 +746,7 @@ namespace Plugin {
     }
 
     // ====================================================================
-    // COM-RPC: DeviceSettingsClientHelper overrides
+    // COM-RPC: DSHelper overrides
     // Called by the framework when the DeviceSettings plugin activates or
     // deactivates (including after a restart).
     // ====================================================================
@@ -755,7 +754,7 @@ namespace Plugin {
     void DisplaySettings::OnDeviceSettingsActivated()
     {
         LOGINFO("DisplaySettings: OnDeviceSettingsActivated — registering DS sub-interface notifications");
-        // Config is already loaded by DeviceSettingsClientHelper::Operational(true)
+        // Config is already loaded by DSHelper::Operational(true)
         // before this override is called. Do NOT call LoadAllConfigs() here.
 
         // --- VideoPort sub-interface ---
@@ -1315,7 +1314,7 @@ namespace Plugin {
                             uint32_t modeMask = typeCfg.supportedStereoModeMask;
                             // DS_IARM: for (j : aPorts.at(i).getSupportedStereoModes()) { name = .getName(); ... }
                             // COM-RPC: each port type has its own supportedStereoModeMask; iterate
-                            //          KnownStereoModes() (DeviceSettingsClientHelper.h) and check each bit.
+                            //          KnownStereoModes() (DSHelper.h) and check each bit.
                             for (const auto& m : KnownStereoModes()) {
                                 if (!(modeMask & (1u << static_cast<uint32_t>(m)))) continue;
                                 if (m == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND) {
