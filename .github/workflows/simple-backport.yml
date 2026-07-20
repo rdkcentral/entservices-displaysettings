@@ -86,6 +86,7 @@ jobs:
           SUPPORT:  ${{ github.event.inputs.support_branch }}
           SPECIFIC: ${{ github.event.inputs.specific_commits }}
         run: |
+          set +e
           # ── If user provided specific commit SHAs, use those directly ────────
           if [ -n "$SPECIFIC" ]; then
             echo "Using specific commits provided by user: $SPECIFIC"
