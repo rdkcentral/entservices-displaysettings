@@ -113,18 +113,33 @@ jobs:
                 | grep -E "(^|/)${BASENAME}$" | head -1)
               [ -z "$TARGET_PATH" ] && ALREADY_APPLIED=false && break
 
-              # Sample up to 3 new lines from this commit
+              # Sample up to 3 added lines from this commit
               PLUS_LINES=$(git show "$SHA" -- "$ORIG_FILE" \
                 | grep '^+' | grep -v '^+++' | sed 's/^+//' \
                 | grep -v '^[[:space:]]*$' | head -3)
 
-              while IFS= read -r line; do
-                if [ -n "$line" ] && \
-                   ! git show "origin/$SUPPORT:$TARGET_PATH" | grep -qF "$line"; then
-                  ALREADY_APPLIED=false
-                  break
-                fi
-              done <<< "$PLUS_LINES"
+              # Sample up to 3 deleted lines from this commit
+              MINUS_LINES=$(git show "$SHA" -- "$ORIG_FILE" \
+                | grep '^-' | grep -v '^---' | sed 's/^-//' \
+                | grep -v '^[[:space:]]*$' | head -3)
+
+              if [ -n "$PLUS_LINES" ]; then
+                # Has additions: check if added lines exist in support
+                while IFS= read -r line; do
+                  if [ -n "$line" ] && \
+                     ! git show "origin/$SUPPORT:$TARGET_PATH" | grep -qF "$line"; then
+                    ALREADY_APPLIED=false; break
+                  fi
+                done <<< "$PLUS_LINES"
+              elif [ -n "$MINUS_LINES" ]; then
+                # Pure deletion: check if deleted lines STILL exist in support
+                while IFS= read -r line; do
+                  if [ -n "$line" ] && \
+                     git show "origin/$SUPPORT:$TARGET_PATH" | grep -qF "$line"; then
+                    ALREADY_APPLIED=false; break
+                  fi
+                done <<< "$MINUS_LINES"
+              fi
               [ "$ALREADY_APPLIED" = false ] && break
             done
 
