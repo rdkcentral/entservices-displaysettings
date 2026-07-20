@@ -82,9 +82,10 @@ jobs:
       - name: Get commits to apply
         id: get_commits
         env:
-          SOURCE:   ${{ github.event.inputs.source_branch }}
-          SUPPORT:  ${{ github.event.inputs.support_branch }}
-          SPECIFIC: ${{ github.event.inputs.specific_commits }}
+          SOURCE:      ${{ github.event.inputs.source_branch }}
+          SUPPORT:     ${{ github.event.inputs.support_branch }}
+          NEW_BRANCH:  ${{ github.event.inputs.new_branch_name }}
+          SPECIFIC:    ${{ github.event.inputs.specific_commits }}
         run: |
           set +e
           # ── If user provided specific commit SHAs, use those directly ────────
@@ -96,21 +97,31 @@ jobs:
             exit 0
           fi
 
-          # ── Otherwise, find latest code commit NOT yet applied to support ───
+          # ── Otherwise, find latest code commit NOT yet applied to target ───
           echo "Fetching branches..."
           git fetch origin "$SOURCE"
           git fetch origin "$SUPPORT"
+
+          # Use new_branch if it exists on remote, otherwise use support branch
+          if git ls-remote --exit-code --heads origin "$NEW_BRANCH" > /dev/null 2>&1; then
+            git fetch origin "$NEW_BRANCH"
+            CHECK_REF="origin/$NEW_BRANCH"
+            echo "Checking against target branch: $NEW_BRANCH"
+          else
+            CHECK_REF="origin/$SUPPORT"
+            echo "Checking against support branch: $SUPPORT (target branch not yet created)"
+          fi
 
           LATEST=""
           for SHA in $(git log --pretty=format:"%H" -20 "origin/$SOURCE"); do
             FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$' | grep -v '^\.github/')
             [ -z "$FILES" ] && continue   # skip .github/-only commits
 
-            # Check if this commit's new lines are already in support branch
+            # Check if this commit's changes are already in the target branch
             ALREADY_APPLIED=true
             for ORIG_FILE in $FILES; do
               BASENAME=$(basename "$ORIG_FILE")
-              TARGET_PATH=$(git ls-tree -r --name-only "origin/$SUPPORT" \
+              TARGET_PATH=$(git ls-tree -r --name-only "$CHECK_REF" \
                 | grep -E "(^|/)${BASENAME}$" | head -1)
               [ -z "$TARGET_PATH" ] && ALREADY_APPLIED=false && break
 
@@ -125,18 +136,18 @@ jobs:
                 | grep -v '^[[:space:]]*$' | head -3)
 
               if [ -n "$PLUS_LINES" ]; then
-                # Has additions: check if added lines exist in support
+                # Has additions: check if added lines exist in target
                 while IFS= read -r line; do
                   if [ -n "$line" ] && \
-                     ! git show "origin/$SUPPORT:$TARGET_PATH" | grep -qF "$line"; then
+                     ! git show "$CHECK_REF:$TARGET_PATH" | grep -qF "$line"; then
                     ALREADY_APPLIED=false; break
                   fi
                 done <<< "$PLUS_LINES"
               elif [ -n "$MINUS_LINES" ]; then
-                # Pure deletion: check if deleted lines STILL exist in support
+                # Pure deletion: check if deleted lines STILL exist in target
                 while IFS= read -r line; do
                   if [ -n "$line" ] && \
-                     git show "origin/$SUPPORT:$TARGET_PATH" | grep -qF "$line"; then
+                     git show "$CHECK_REF:$TARGET_PATH" | grep -qF "$line"; then
                     ALREADY_APPLIED=false; break
                   fi
                 done <<< "$MINUS_LINES"
@@ -148,7 +159,7 @@ jobs:
               LATEST="$SHA"
               break
             fi
-            echo "  Skipping ${SHA:0:7} — already applied to support"
+            echo "  Skipping ${SHA:0:7} — already applied to target"
           done
 
           if [ -z "$LATEST" ]; then
