@@ -192,7 +192,7 @@ jobs:
                 continue
               fi
 
-              # ── Apply each changed line individually (one substitution per hunk) ──
+              # ── Apply each changed line individually (replacements + pure additions) ──
               printf '%s\n' \
                 'import sys,subprocess' \
                 'sha,orig,target=sys.argv[1],sys.argv[2],sys.argv[3]' \
@@ -208,8 +208,18 @@ jobs:
                 '      if old in content:' \
                 '        content=content.replace(old,new,1);applied+=1;print("  Replaced: "+repr(old.strip()[:80]))' \
                 '      else:' \
-                '        print("  SKIP (not in target branch): "+repr(old.strip()[:80]));skipped+=1' \
+                '        print("  SKIP (not found): "+repr(old.strip()[:80]));skipped+=1' \
                 '    i+=2;continue' \
+                '  if l.startswith("+") and not l.startswith("+++"):' \
+                '    new_line=l[1:]' \
+                '    ctx=""' \
+                '    for j in range(i-1,max(i-15,-1),-1):' \
+                '      if lines[j].startswith(" "):ctx=lines[j][1:];break' \
+                '    if ctx and ctx in content:' \
+                '      content=content.replace(ctx,ctx+"\n"+new_line,1);applied+=1;print("  Added: "+repr(new_line.strip()[:80]))' \
+                '    else:' \
+                '      print("  SKIP (context not found for addition): "+repr(new_line.strip()[:80]));skipped+=1' \
+                '    i+=1;continue' \
                 '  i+=1' \
                 'if applied>0: open(target,"w").write(content)' \
                 'print("  applied="+str(applied)+" skipped="+str(skipped))' \
@@ -285,8 +295,14 @@ jobs:
             echo "   $PR_URL"
           elif [ "$HTTP_CODE" = "422" ]; then
             echo ""
-            echo "✅ PR already exists for '$NEW_BRANCH' → '$BASE_BRANCH'"
-            echo "   New commit was pushed to the branch and appears in the existing PR automatically."
+            ERROR_MSG=$(echo "$BODY_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); errs=d.get('errors',[]); print(errs[0].get('message',d.get('message','')) if errs else d.get('message',''))" 2>/dev/null || echo "unknown")
+            if echo "$ERROR_MSG" | grep -qi "already exists"; then
+              echo "✅ PR already exists for '$NEW_BRANCH' → '$BASE_BRANCH'"
+              echo "   New commit was pushed to the branch and appears in the existing PR automatically."
+            else
+              echo "⚠️  PR could not be created: $ERROR_MSG"
+              echo "   (Branch is pushed. Check if there are commits between '$NEW_BRANCH' and '$BASE_BRANCH')"
+            fi
           else
             echo "⚠️  PR creation returned HTTP $HTTP_CODE"
             echo "   (Branch is pushed. Create PR manually if needed)"
