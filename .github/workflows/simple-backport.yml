@@ -83,6 +83,7 @@ jobs:
         id: get_commits
         env:
           SOURCE:   ${{ github.event.inputs.source_branch }}
+          SUPPORT:  ${{ github.event.inputs.support_branch }}
           SPECIFIC: ${{ github.event.inputs.specific_commits }}
         run: |
           # ── If user provided specific commit SHAs, use those directly ────────
@@ -94,27 +95,53 @@ jobs:
             exit 0
           fi
 
-          # ── Otherwise, find latest commit that has non-.github/ changes ───
-          echo "Fetching source branch '$SOURCE'..."
+          # ── Otherwise, find latest code commit NOT yet applied to support ───
+          echo "Fetching branches..."
           git fetch origin "$SOURCE"
+          git fetch origin "$SUPPORT"
 
-          # Walk back through commits until we find one that touches real files
           LATEST=""
           for SHA in $(git log --pretty=format:"%H" -20 "origin/$SOURCE"); do
             FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$' | grep -v '^\.github/')
-            if [ -n "$FILES" ]; then
+            [ -z "$FILES" ] && continue   # skip .github/-only commits
+
+            # Check if this commit's new lines are already in support branch
+            ALREADY_APPLIED=true
+            for ORIG_FILE in $FILES; do
+              BASENAME=$(basename "$ORIG_FILE")
+              TARGET_PATH=$(git ls-tree -r --name-only "origin/$SUPPORT" \
+                | grep -E "(^|/)${BASENAME}$" | head -1)
+              [ -z "$TARGET_PATH" ] && ALREADY_APPLIED=false && break
+
+              # Sample up to 3 new lines from this commit
+              PLUS_LINES=$(git show "$SHA" -- "$ORIG_FILE" \
+                | grep '^+' | grep -v '^+++' | sed 's/^+//' \
+                | grep -v '^[[:space:]]*$' | head -3)
+
+              while IFS= read -r line; do
+                if [ -n "$line" ] && \
+                   ! git show "origin/$SUPPORT:$TARGET_PATH" | grep -qF "$line"; then
+                  ALREADY_APPLIED=false
+                  break
+                fi
+              done <<< "$PLUS_LINES"
+              [ "$ALREADY_APPLIED" = false ] && break
+            done
+
+            if [ "$ALREADY_APPLIED" = false ]; then
               LATEST="$SHA"
               break
             fi
+            echo "  Skipping ${SHA:0:7} — already applied to support"
           done
 
           if [ -z "$LATEST" ]; then
-            echo "❌ No recent commit with non-workflow file changes found in '$SOURCE'."
+            echo "❌ No unapplied code commits found in last 20 commits of '$SOURCE'."
             exit 1
           fi
 
           echo ""
-          echo "Using latest code commit from '$SOURCE':"
+          echo "Found unapplied commit:"
           git log --oneline -1 "$LATEST"
 
           echo "commits=$LATEST" >> "$GITHUB_OUTPUT"
