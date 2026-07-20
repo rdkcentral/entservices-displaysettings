@@ -6326,6 +6326,7 @@ void DisplaySettings::sendMsgThread()
 		}
 		if( 0 == (int)connectedDisplays.size())
 		{
+            LOGWARN("Simple Log added")
 			LOGWARN("[FIX]No display connected to device (or)device's powerstate is not ON");
             return Core::ERROR_GENERAL;
 		}
