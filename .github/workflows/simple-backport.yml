@@ -139,7 +139,7 @@ jobs:
           fi
 
       # ── STEP 4: Apply commits ─────────────────────────────────────────────
-      - name: Apply changes via cherry-pick
+      - name: Apply changes via patch
         id: cherry_pick
         env:
           COMMITS_CSV:  ${{ steps.get_commits.outputs.commits }}
@@ -157,19 +157,17 @@ jobs:
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "  Applying $SHORT..."
 
-            # ── Try direct cherry-pick first ─────────────────────────────────
+            # ── Try direct cherry-pick first ───────────────────────────────
             CHERRY_OUTPUT=$(git cherry-pick "$SHA" 2>&1)
             CHERRY_EXIT=$?
-
             if [ "$CHERRY_EXIT" -eq 0 ]; then
               echo "  ✅ Applied $SHORT (direct cherry-pick)"
               continue
             fi
-
-            echo "  cherry-pick failed (exit=$CHERRY_EXIT)"
+            echo "  cherry-pick failed — falling back to patch approach"
             git cherry-pick --abort 2>/dev/null
 
-            # ── Get list of files changed in this commit ──────────────────────
+            # ── Get list of files changed in this commit ──────────────────
             CHANGED_FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$' | grep -v '^\.github/')
             echo "  Files in commit: $(echo $CHANGED_FILES | tr '\n' ' ')"
 
@@ -179,61 +177,47 @@ jobs:
               echo ""
               echo "  Processing: $ORIG_FILE  (filename: $BASENAME)"
 
-              # ── Find file by NAME in current branch ───────────────────────
+              # ── Find file by NAME in current branch ────────────────────
               TARGET_FILE=$(find . -name "$BASENAME" \
                 -not -path "./.git/*" \
                 -not -path "./.github/*" \
                 2>/dev/null | head -1 | sed 's|^\./||')
-
-              echo "  Found at:   ${TARGET_FILE:-NOT FOUND}"
+              echo "  Found at: ${TARGET_FILE:-NOT FOUND}"
 
               if [ -z "$TARGET_FILE" ]; then
-                echo "  ⚠️  Skipping '$BASENAME' — not in support branch (may not exist in this release)"
+                echo "  ⚠️  Skipping '$BASENAME' — not found in support branch"
                 continue
               fi
 
-              # ── Apply each changed line individually (replacements + pure additions) ──
-              printf '%s\n' \
-                'import sys,subprocess' \
-                'sha,orig,target=sys.argv[1],sys.argv[2],sys.argv[3]' \
-                'res=subprocess.run(["git","show",sha,"--",orig],capture_output=True,text=True)' \
-                'lines=res.stdout.split("\n")' \
-                'content=open(target).read()' \
-                'applied=0;skipped=0;i=0' \
-                'while i<len(lines):' \
-                '  l=lines[i];nxt=lines[i+1] if i+1<len(lines) else ""' \
-                '  if l.startswith("-") and not l.startswith("---") and nxt.startswith("+") and not nxt.startswith("+++"):' \
-                '    old,new=l[1:],nxt[1:]' \
-                '    if old!=new:' \
-                '      if old in content:' \
-                '        content=content.replace(old,new,1);applied+=1;print("  Replaced: "+repr(old.strip()[:80]))' \
-                '      else:' \
-                '        print("  SKIP (not found): "+repr(old.strip()[:80]));skipped+=1' \
-                '    i+=2;continue' \
-                '  if l.startswith("+") and not l.startswith("+++"):' \
-                '    new_line=l[1:]' \
-                '    ctx=""' \
-                '    for j in range(i-1,max(i-15,-1),-1):' \
-                '      if lines[j].startswith(" "):ctx=lines[j][1:];break' \
-                '    if ctx and ctx in content:' \
-                '      content=content.replace(ctx,ctx+"\n"+new_line,1);applied+=1;print("  Added: "+repr(new_line.strip()[:80]))' \
-                '    else:' \
-                '      print("  SKIP (context not found for addition): "+repr(new_line.strip()[:80]));skipped+=1' \
-                '    i+=1;continue' \
-                '  i+=1' \
-                'if applied>0: open(target,"w").write(content)' \
-                'print("  applied="+str(applied)+" skipped="+str(skipped))' \
-                > /tmp/apply_patch.py
-              python3 /tmp/apply_patch.py "$SHA" "$ORIG_FILE" "$TARGET_FILE"
+              # ── Rewrite paths in diff and apply with patch --fuzz ──────
+              git show "$SHA" -- "$ORIG_FILE" \
+                | sed "s|a/$ORIG_FILE|a/$TARGET_FILE|g; s|b/$ORIG_FILE|b/$TARGET_FILE|g" \
+                | patch -p1 --fuzz=5 --ignore-whitespace 2>&1
+              PATCH_EXIT=$?
 
-              APPLY_EXIT=$?
-              if [ "$APPLY_EXIT" -ne 0 ]; then
-                echo "  ❌ Failed to apply change to $TARGET_FILE"
+              if [ "$PATCH_EXIT" -eq 0 ]; then
+                echo "  ✅ patch applied successfully"
+                git add "$TARGET_FILE"
+                continue
+              fi
+
+              # ── patch failed: check if pure addition → append to file ──
+              echo "  patch failed — checking if pure addition (new function/code)..."
+              rm -f "${TARGET_FILE}.rej" "${TARGET_FILE}.orig" 2>/dev/null
+
+              MINUS_LINES=$(git show "$SHA" -- "$ORIG_FILE" | grep '^-' | grep -v '^---' | wc -l | tr -d ' ')
+              PLUS_LINES=$(git show  "$SHA" -- "$ORIG_FILE" | grep '^+' | grep -v '^+++' | wc -l | tr -d ' ')
+
+              if [ "$MINUS_LINES" -eq 0 ] && [ "$PLUS_LINES" -gt 0 ]; then
+                echo "  Pure addition detected ($PLUS_LINES lines) — appending to end of file..."
+                git show "$SHA" -- "$ORIG_FILE" | grep '^+' | grep -v '^+++' | sed 's/^+//' >> "$TARGET_FILE"
+                echo "  ✅ Appended $PLUS_LINES line(s) to $TARGET_FILE"
+                git add "$TARGET_FILE"
+              else
+                echo "  ❌ Could not apply changes to $TARGET_FILE"
                 ALL_OK=false
                 break
               fi
-
-              git add "$TARGET_FILE"
             done
 
             if [ "$ALL_OK" = false ]; then
@@ -244,7 +228,7 @@ jobs:
 
             git commit -m "$(git log -1 --format='%s' $SHA) [backported]"
             echo ""
-            echo "  ✅ Applied $SHORT (content-based, path-adapted)"
+            echo "  ✅ Applied $SHORT"
           done
 
           echo ""
