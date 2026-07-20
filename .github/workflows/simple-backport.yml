@@ -94,20 +94,28 @@ jobs:
             exit 0
           fi
 
-          # ── Otherwise, use latest commit from source branch ─────────────────
+          # ── Otherwise, find latest commit that has non-.github/ changes ───
           echo "Fetching source branch '$SOURCE'..."
           git fetch origin "$SOURCE"
 
-          LATEST=$(git rev-parse "origin/$SOURCE")
+          # Walk back through commits until we find one that touches real files
+          LATEST=""
+          for SHA in $(git log --pretty=format:"%H" -20 "origin/$SOURCE"); do
+            FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$' | grep -v '^\.github/')
+            if [ -n "$FILES" ]; then
+              LATEST="$SHA"
+              break
+            fi
+          done
 
           if [ -z "$LATEST" ]; then
-            echo "❌ Could not get latest commit from '$SOURCE'."
+            echo "❌ No recent commit with non-workflow file changes found in '$SOURCE'."
             exit 1
           fi
 
           echo ""
-          echo "Using latest commit from '$SOURCE':"
-          git log --oneline -1 "origin/$SOURCE"
+          echo "Using latest code commit from '$SOURCE':"
+          git log --oneline -1 "$LATEST"
 
           echo "commits=$LATEST" >> "$GITHUB_OUTPUT"
           echo "count=1"         >> "$GITHUB_OUTPUT"
