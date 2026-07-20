@@ -94,25 +94,23 @@ jobs:
             exit 0
           fi
 
-          # ── Otherwise, auto-detect all new commits vs develop ─────────────────
+          # ── Otherwise, use latest commit from source branch ─────────────────
           echo "Fetching source branch '$SOURCE'..."
           git fetch origin "$SOURCE"
-          git fetch origin develop
 
-          COMMITS=$(git log --reverse --pretty=format:"%H" "origin/develop..origin/$SOURCE")
+          LATEST=$(git rev-parse "origin/$SOURCE")
 
-          if [ -z "$COMMITS" ]; then
-            echo "❌ No new commits found in '$SOURCE' compared to develop."
+          if [ -z "$LATEST" ]; then
+            echo "❌ Could not get latest commit from '$SOURCE'."
             exit 1
           fi
 
-          COUNT=$(echo "$COMMITS" | wc -l)
           echo ""
-          echo "Found $COUNT commit(s):"
-          git log --oneline "origin/develop..origin/$SOURCE"
+          echo "Using latest commit from '$SOURCE':"
+          git log --oneline -1 "origin/$SOURCE"
 
-          echo "commits=$(echo "$COMMITS" | tr '\n' ',')" >> "$GITHUB_OUTPUT"
-          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "commits=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "count=1"         >> "$GITHUB_OUTPUT"
 
       # ── STEP 3: Create or checkout branch on top of support ─────────────────
       - name: Create or checkout branch on support
@@ -190,13 +188,14 @@ jobs:
               fi
 
               # ── Rewrite paths in diff and apply with patch --fuzz ──────
-              git show "$SHA" -- "$ORIG_FILE" \
+              PATCH_OUT=$(git show "$SHA" -- "$ORIG_FILE" \
                 | sed "s|a/$ORIG_FILE|a/$TARGET_FILE|g; s|b/$ORIG_FILE|b/$TARGET_FILE|g" \
-                | patch -p1 --fuzz=5 --ignore-whitespace 2>&1
+                | patch -p1 --fuzz=5 --ignore-whitespace --forward 2>&1)
               PATCH_EXIT=$?
+              echo "$PATCH_OUT"
 
-              if [ "$PATCH_EXIT" -eq 0 ]; then
-                echo "  ✅ patch applied successfully"
+              if [ "$PATCH_EXIT" -eq 0 ] || echo "$PATCH_OUT" | grep -qi "already applied\|Skipping patch"; then
+                echo "  ✅ patch applied successfully (or already applied)"
                 git add "$TARGET_FILE"
                 continue
               fi
