@@ -315,13 +315,40 @@ jobs:
 
               if [ "$PATCH_EXIT" -eq 0 ] || echo "$PATCH_OUT" | grep -qi "already applied\|Skipping patch"; then
                 echo "  ✅ patch applied successfully (or already applied)"
+                rm -f "${TARGET_FILE}.rej" "${TARGET_FILE}.orig" 2>/dev/null
                 git add "$TARGET_FILE"
                 continue
               fi
 
+              echo "  patch failed — checking for already-applied rejected hunks..."
+
+              # ── Check if .rej hunks are already in desired state ────────
+              # When patch partially fails (some hunks succeed, some fail), the .rej
+              # file holds the failed hunks. If the + lines of every failed hunk are
+              # already present in the target file the result is already correct —
+              # treat the partial patch as a success.
+              REJ_FILE="${TARGET_FILE}.rej"
+              if [ -f "$REJ_FILE" ]; then
+                REJ_ALL_APPLIED=true
+                REJ_PLUS=$(grep '^+' "$REJ_FILE" | grep -v '^+++' | sed 's/^+//' | grep -v '^[[:space:]]*$')
+                if [ -n "$REJ_PLUS" ]; then
+                  while IFS= read -r rej_line; do
+                    if [ -n "$rej_line" ] && ! grep -qF "$rej_line" "$TARGET_FILE" 2>/dev/null; then
+                      REJ_ALL_APPLIED=false
+                      break
+                    fi
+                  done <<< "$REJ_PLUS"
+                fi
+                if [ "$REJ_ALL_APPLIED" = true ]; then
+                  echo "  ✅ patch partially applied — rejected hunks already in desired state (skipping)"
+                  rm -f "$REJ_FILE" "${TARGET_FILE}.orig" 2>/dev/null
+                  git add "$TARGET_FILE"
+                  continue
+                fi
+              fi
+
               # ── patch failed: check if pure addition → append to file ──
               echo "  patch failed — checking if pure addition (new function/code)..."
-              rm -f "${TARGET_FILE}.rej" "${TARGET_FILE}.orig" 2>/dev/null
 
               MINUS_LINES=$(git show "$SHA" -- "$ORIG_FILE" | grep '^-' | grep -v '^---' | wc -l | tr -d ' ')
               PLUS_LINES=$(git show  "$SHA" -- "$ORIG_FILE" | grep '^+' | grep -v '^+++' | wc -l | tr -d ' ')
@@ -330,6 +357,7 @@ jobs:
                 echo "  Pure addition detected ($PLUS_LINES lines) — appending to end of file..."
                 git show "$SHA" -- "$ORIG_FILE" | grep '^+' | grep -v '^+++' | sed 's/^+//' >> "$TARGET_FILE"
                 echo "  ✅ Appended $PLUS_LINES line(s) to $TARGET_FILE"
+                rm -f "${TARGET_FILE}.rej" "${TARGET_FILE}.orig" 2>/dev/null
                 git add "$TARGET_FILE"
               else
                 REJ_LINE=$(grep -m1 "^@@" "${TARGET_FILE}.rej" 2>/dev/null | grep -oE '\+[0-9]+' | tr -d '+' || echo "0")
