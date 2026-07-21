@@ -117,6 +117,13 @@ jobs:
             FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$' | grep -v '^\.github/')
             [ -z "$FILES" ] && continue   # skip .github/-only commits
 
+            # Check if this commit was already backported (even if later reverted on target)
+            # Every successful backport commit is tagged [backported:SHA] in the message.
+            if git log "$CHECK_REF" --format='%s' 2>/dev/null | grep -qF "[backported:${SHA:0:7}]"; then
+              echo "  Skipping ${SHA:0:7} — already backported (found in target branch history)"
+              continue
+            fi
+
             # Check if this commit's changes are already in the target branch
             ALREADY_APPLIED=true
             CONTEXT_MISMATCH=false
@@ -277,6 +284,7 @@ jobs:
               CHERRY_OUTPUT=$(git cherry-pick "$SHA" 2>&1)
               CHERRY_EXIT=$?
               if [ "$CHERRY_EXIT" -eq 0 ]; then
+                git commit --amend -m "$(git log -1 --format='%s') [backported:$SHORT]" 2>/dev/null || true
                 echo "  ✅ Applied $SHORT (direct cherry-pick)"
                 continue
               fi
@@ -425,7 +433,7 @@ jobs:
                 echo "  │  2. Open: $TARGET_FILE"
                 echo "  │  3. Find the conflicting area (near line $REJ_LINE)"
                 echo "  │  4. Apply the change manually that the commit wanted"
-                echo "  │  5. git add $TARGET_FILE && git commit -m \"$COMMIT_MSG [backported-manual]\""
+                echo "  │  5. git add $TARGET_FILE && git commit -m \"$COMMIT_MSG [backported:$SHORT]\""
                 echo "  │  6. git push origin $(git rev-parse --abbrev-ref HEAD)"
                 echo "  └──────────────────────────────────────────────────────────────────────────┘"
                 echo "  ╔══════════════════════════════════════════════════════════════════════════╗"
@@ -443,7 +451,7 @@ jobs:
               exit 1
             fi
 
-            git commit -m "$(git log -1 --format='%s' $SHA) [backported]"
+            git commit -m "$(git log -1 --format='%s' $SHA) [backported:$SHORT]"
             echo ""
             echo "  ✅ Applied $SHORT"
           done
