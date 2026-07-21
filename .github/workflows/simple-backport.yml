@@ -117,9 +117,12 @@ jobs:
             FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$' | grep -v '^\.github/')
             [ -z "$FILES" ] && continue   # skip .github/-only commits
 
-            # Check if this commit was already backported (even if later reverted on target)
-            # Every successful backport commit is tagged [backported:SHA] in the message.
-            if git log "$CHECK_REF" --format='%s' 2>/dev/null | grep -qF "[backported:${SHA:0:7}]"; then
+            # Check if this commit was already backported (even if later reverted on target).
+            # Supports both old format "[backported]" and new format "[backported:SHA]".
+            _SRC_MSG=$(git log -1 --format='%s' "$SHA")
+            _TARGET_LOG=$(git log "$CHECK_REF" --format='%s' 2>/dev/null)
+            if echo "$_TARGET_LOG" | grep -qF "${_SRC_MSG} [backported" || \
+               echo "$_TARGET_LOG" | grep -qF "[backported:${SHA:0:7}]"; then
               echo "  Skipping ${SHA:0:7} — already backported (found in target branch history)"
               continue
             fi
