@@ -360,43 +360,76 @@ jobs:
                 rm -f "${TARGET_FILE}.rej" "${TARGET_FILE}.orig" 2>/dev/null
                 git add "$TARGET_FILE"
               else
+                COMMIT_MSG=$(git log -1 --format='%s' "$SHA")
                 REJ_LINE=$(grep -m1 "^@@" "${TARGET_FILE}.rej" 2>/dev/null | grep -oE '\+[0-9]+' | tr -d '+' || echo "0")
 
                 echo ""
-                echo "  ⚠️  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                echo "  ⚠️  MERGE CONFLICT DETECTED"
-                echo "  ⚠️  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                echo "  File   : $TARGET_FILE"
-                echo "  Commit : $SHA"
+                echo "  ╔══════════════════════════════════════════════════════════════════════════╗"
+                echo "  ║                      ⚠️  MERGE CONFLICT DETECTED                        ║"
+                echo "  ╚══════════════════════════════════════════════════════════════════════════╝"
                 echo ""
-                echo "  ┌─ WHAT THE COMMIT EXPECTED (lines to remove / add) ──────────────────────┐"
+                echo "  ┌─ CONFLICT OVERVIEW ──────────────────────────────────────────────────────┐"
+                echo "  │  Commit SHA   : $SHA"
+                echo "  │  Commit Msg   : $COMMIT_MSG"
+                echo "  │  Source branch: $SOURCE"
+                echo "  │  Target branch: $(git rev-parse --abbrev-ref HEAD)"
+                echo "  │  Source file  : $ORIG_FILE"
+                echo "  │  Target file  : $TARGET_FILE"
+                echo "  └──────────────────────────────────────────────────────────────────────────┘"
+                echo ""
+                echo "  ┌─ WHAT THE SOURCE COMMIT WANTS TO DO ────────────────────────────────────┐"
+                echo "  │  (from $SOURCE : $ORIG_FILE)"
                 git show "$SHA" -- "$ORIG_FILE" | grep '^[-+]' | grep -v '^---\|^+++' | head -20 \
-                  | sed 's/^-/  REMOVE: /; s/^+/  ADD:    /'
-                echo "  └─────────────────────────────────────────────────────────────────────────┘"
+                  | sed 's/^-/  │  REMOVE: /; s/^+/  │  ADD:    /'
+                echo "  └──────────────────────────────────────────────────────────────────────────┘"
                 echo ""
-                echo "  ┌─ WHAT THE TARGET FILE ACTUALLY HAS (line $REJ_LINE in $TARGET_FILE) ────┐"
+                echo "  ┌─ WHAT THE TARGET FILE ACTUALLY HAS ─────────────────────────────────────┐"
+                echo "  │  (from $(git rev-parse --abbrev-ref HEAD) : $TARGET_FILE  — around line $REJ_LINE)"
                 if [ "$REJ_LINE" -gt 0 ]; then
-                  START=$((REJ_LINE > 3 ? REJ_LINE - 3 : 1))
-                  END=$((REJ_LINE + 5))
+                  START=$((REJ_LINE > 5 ? REJ_LINE - 5 : 1))
+                  END=$((REJ_LINE + 7))
                   sed -n "${START},${END}p" "$TARGET_FILE" \
                     | nl -ba -v "$START" \
-                    | sed "s/^/  /"
+                    | sed "s/^/  │  /"
                 else
-                  echo "  (could not determine conflict line)"
+                  echo "  │  (could not determine conflict line — .rej parse failed)"
                 fi
-                echo "  └─────────────────────────────────────────────────────────────────────────┘"
+                echo "  └──────────────────────────────────────────────────────────────────────────┘"
                 echo ""
-                echo "  ┌─ SAME LINE COMPARISON ───────────────────────────────────────────────────┐"
-                EXPECTED_LINE=$(git show "$SHA" -- "$ORIG_FILE" | grep '^-' | grep -v '^---' | head -1 | sed 's/^-//' | sed 's/^[[:space:]]*//')
+                echo "  ┌─ LINE-BY-LINE CONFLICT DETAIL ──────────────────────────────────────────┐"
+                echo "  │  For each line the commit tried to REMOVE:"
+                git show "$SHA" -- "$ORIG_FILE" | grep '^-' | grep -v '^---' | sed 's/^-//' \
+                  | grep -v '^[[:space:]]*$' | head -10 \
+                  | while IFS= read -r exp_line; do
+                      trimmed=$(echo "$exp_line" | sed 's/^[[:space:]]*//')
+                      if grep -qF "$trimmed" "$TARGET_FILE" 2>/dev/null; then
+                        echo "  │    FOUND   ✅ : $trimmed"
+                      else
+                        echo "  │    MISSING ❌ : $trimmed"
+                        echo "  │              → This line is MISSING from target — root cause of conflict"
+                      fi
+                    done
+                echo "  │"
                 if [ "$REJ_LINE" -gt 0 ]; then
                   ACTUAL_LINE=$(sed -n "${REJ_LINE}p" "$TARGET_FILE" | sed 's/^[[:space:]]*//')
-                else
-                  ACTUAL_LINE="(unknown)"
+                  EXPECTED_LINE=$(git show "$SHA" -- "$ORIG_FILE" | grep '^-' | grep -v '^---' | head -1 | sed 's/^-//' | sed 's/^[[:space:]]*//')
+                  echo "  │  Side-by-side at conflict line $REJ_LINE:"
+                  echo "  │    SOURCE EXPECTED : $EXPECTED_LINE"
+                  echo "  │    TARGET HAS      : $ACTUAL_LINE"
                 fi
-                echo "  EXPECTED : $EXPECTED_LINE"
-                echo "  ACTUAL   : $ACTUAL_LINE"
-                echo "  └─────────────────────────────────────────────────────────────────────────┘"
-                echo "  ⚠️  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo "  └──────────────────────────────────────────────────────────────────────────┘"
+                echo ""
+                echo "  ┌─ HOW TO FIX MANUALLY ────────────────────────────────────────────────────┐"
+                echo "  │  1. git checkout $(git rev-parse --abbrev-ref HEAD)"
+                echo "  │  2. Open: $TARGET_FILE"
+                echo "  │  3. Find the conflicting area (near line $REJ_LINE)"
+                echo "  │  4. Apply the change manually that the commit wanted"
+                echo "  │  5. git add $TARGET_FILE && git commit -m \"$COMMIT_MSG [backported-manual]\""
+                echo "  │  6. git push origin $(git rev-parse --abbrev-ref HEAD)"
+                echo "  └──────────────────────────────────────────────────────────────────────────┘"
+                echo "  ╔══════════════════════════════════════════════════════════════════════════╗"
+                echo "  ║  ❌ FAILED — manual resolution required (see above)                     ║"
+                echo "  ╚══════════════════════════════════════════════════════════════════════════╝"
                 rm -f "${TARGET_FILE}.rej" "${TARGET_FILE}.orig" 2>/dev/null
                 ALL_OK=false
                 break
