@@ -119,6 +119,7 @@ jobs:
 
             # Check if this commit's changes are already in the target branch
             ALREADY_APPLIED=true
+            CONTEXT_MISMATCH=false
             for ORIG_FILE in $FILES; do
               BASENAME=$(basename "$ORIG_FILE")
               TARGET_PATH=$(git ls-tree -r --name-only "$CHECK_REF" \
@@ -143,6 +144,22 @@ jobs:
                     ALREADY_APPLIED=false; break
                   fi
                 done <<< "$PLUS_LINES"
+
+                # If not applied: also check if the ORIGINAL content (-lines) exists.
+                # If neither + nor - lines found → this is a mid-chain commit whose
+                # prerequisite was never applied → skip it (context mismatch).
+                if [ "$ALREADY_APPLIED" = false ] && [ -n "$MINUS_LINES" ]; then
+                  MINUS_FOUND=false
+                  while IFS= read -r line; do
+                    if [ -n "$line" ] && \
+                       git show "$CHECK_REF:$TARGET_PATH" | grep -qF "$line"; then
+                      MINUS_FOUND=true; break
+                    fi
+                  done <<< "$MINUS_LINES"
+                  if [ "$MINUS_FOUND" = false ]; then
+                    CONTEXT_MISMATCH=true
+                  fi
+                fi
               elif [ -n "$MINUS_LINES" ]; then
                 # Pure deletion: check if deleted lines STILL exist in target
                 while IFS= read -r line; do
@@ -154,6 +171,12 @@ jobs:
               fi
               [ "$ALREADY_APPLIED" = false ] && break
             done
+
+            if [ "$ALREADY_APPLIED" = false ] && [ "$CONTEXT_MISMATCH" = true ]; then
+              echo "  Skipping ${SHA:0:7} — context mismatch (prerequisite commit not yet in target)"
+              CONTEXT_MISMATCH=false
+              continue
+            fi
 
             if [ "$ALREADY_APPLIED" = false ]; then
               LATEST="$SHA"
