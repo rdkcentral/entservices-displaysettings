@@ -389,6 +389,9 @@ jobs:
               else
                 COMMIT_MSG=$(git log -1 --format='%s' "$SHA")
                 REJ_LINE=$(grep -m1 "^@@" "${TARGET_FILE}.rej" 2>/dev/null | grep -oE '\+[0-9]+' | tr -d '+' || echo "0")
+                # Adjust REJ_LINE by the patch offset (e.g. "offset -208 lines" shifts the conflict location)
+                _OFFSET=$(echo "$PATCH_OUT" | grep -oE 'offset -?[0-9]+ lines?' | head -1 | grep -oE '-?[0-9]+' | head -1 || true)
+                [ -n "$_OFFSET" ] && [ "$_OFFSET" != "0" ] && REJ_LINE=$((REJ_LINE + _OFFSET)) || true
 
                 echo ""
                 echo "  ╔══════════════════════════════════════════════════════════════════════════╗"
@@ -441,6 +444,13 @@ jobs:
                   # Read EXPECTED from the .rej file (failed hunk only, not the full diff)
                   EXPECTED_LINE=$(grep '^-' "${TARGET_FILE}.rej" 2>/dev/null | grep -v '^---' | head -1 | sed 's/^-//' | sed 's/^[[:space:]]*//')
                   ACTUAL_LINE=$(sed -n "${REJ_LINE}p" "$TARGET_FILE" | sed 's/^[[:space:]]*//')
+                  # Fallback: if line is empty, search nearby (±5 lines) for non-blank content
+                  if [ -z "$ACTUAL_LINE" ]; then
+                    _S=$((REJ_LINE > 5 ? REJ_LINE - 5 : 1))
+                    _E=$((REJ_LINE + 5))
+                    ACTUAL_LINE=$(sed -n "${_S},${_E}p" "$TARGET_FILE" | grep -v '^[[:space:]]*$' | head -1 | sed 's/^[[:space:]]*//')
+                    [ -z "$ACTUAL_LINE" ] && ACTUAL_LINE="(could not determine)"
+                  fi
                   echo "  │  Side-by-side at conflict line $REJ_LINE:"
                   echo "  │    SOURCE EXPECTED : $EXPECTED_LINE"
                   echo "  │    TARGET HAS      : $ACTUAL_LINE"
