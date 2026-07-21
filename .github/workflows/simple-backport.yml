@@ -411,8 +411,9 @@ jobs:
                     done
                 echo "  │"
                 if [ "$REJ_LINE" -gt 0 ]; then
+                  # Read EXPECTED from the .rej file (failed hunk only, not the full diff)
+                  EXPECTED_LINE=$(grep '^-' "${TARGET_FILE}.rej" 2>/dev/null | grep -v '^---' | head -1 | sed 's/^-//' | sed 's/^[[:space:]]*//')
                   ACTUAL_LINE=$(sed -n "${REJ_LINE}p" "$TARGET_FILE" | sed 's/^[[:space:]]*//')
-                  EXPECTED_LINE=$(git show "$SHA" -- "$ORIG_FILE" | grep '^-' | grep -v '^---' | head -1 | sed 's/^-//' | sed 's/^[[:space:]]*//')
                   echo "  │  Side-by-side at conflict line $REJ_LINE:"
                   echo "  │    SOURCE EXPECTED : $EXPECTED_LINE"
                   echo "  │    TARGET HAS      : $ACTUAL_LINE"
