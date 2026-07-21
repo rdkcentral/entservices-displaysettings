@@ -275,28 +275,43 @@ jobs:
                 echo "  ✅ Appended $PLUS_LINES line(s) to $TARGET_FILE"
                 git add "$TARGET_FILE"
               else
-                echo ""
-                echo "  ⚠️  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                echo "  ⚠️  MERGE CONFLICT DETECTED"
-                echo "  ⚠️  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                echo "  File        : $TARGET_FILE"
-                echo "  Commit      : $SHA"
-                echo ""
-                echo "  ── What the commit tried to change ───────────────────────"
-                git show "$SHA" -- "$ORIG_FILE" | grep '^[-+]' | grep -v '^---\|^+++' | head -20
-                echo ""
-                echo "  ── Rejected hunk (what patch could not apply) ────────────"
-                cat "${TARGET_FILE}.rej" 2>/dev/null || echo "  (no .rej file)"
-                echo ""
-                echo "  ── Current content of file at conflict area ──────────────"
                 REJ_LINE=$(grep -m1 "^@@" "${TARGET_FILE}.rej" 2>/dev/null | grep -oE '\+[0-9]+' | tr -d '+' || echo "0")
-                if [ "$REJ_LINE" -gt 3 ]; then
-                  START=$((REJ_LINE - 3))
-                  END=$((REJ_LINE + 10))
-                  echo "  (around line $REJ_LINE in $TARGET_FILE)"
-                  sed -n "${START},${END}p" "$TARGET_FILE"
+
+                echo ""
+                echo "  ⚠️  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo "  ⚠️  MERGE CONFLICT DETECTED"
+                echo "  ⚠️  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo "  File   : $TARGET_FILE"
+                echo "  Commit : $SHA"
+                echo ""
+                echo "  ┌─ WHAT THE COMMIT EXPECTED (lines to remove / add) ──────────────────────┐"
+                git show "$SHA" -- "$ORIG_FILE" | grep '^[-+]' | grep -v '^---\|^+++' | head -20 \
+                  | sed 's/^-/  REMOVE: /; s/^+/  ADD:    /'
+                echo "  └─────────────────────────────────────────────────────────────────────────┘"
+                echo ""
+                echo "  ┌─ WHAT THE TARGET FILE ACTUALLY HAS (line $REJ_LINE in $TARGET_FILE) ────┐"
+                if [ "$REJ_LINE" -gt 0 ]; then
+                  START=$((REJ_LINE > 3 ? REJ_LINE - 3 : 1))
+                  END=$((REJ_LINE + 5))
+                  sed -n "${START},${END}p" "$TARGET_FILE" \
+                    | nl -ba -v "$START" \
+                    | sed "s/^/  /"
+                else
+                  echo "  (could not determine conflict line)"
                 fi
-                echo "  ⚠️  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo "  └─────────────────────────────────────────────────────────────────────────┘"
+                echo ""
+                echo "  ┌─ SAME LINE COMPARISON ───────────────────────────────────────────────────┐"
+                EXPECTED_LINE=$(git show "$SHA" -- "$ORIG_FILE" | grep '^-' | grep -v '^---' | head -1 | sed 's/^-//' | sed 's/^[[:space:]]*//')
+                if [ "$REJ_LINE" -gt 0 ]; then
+                  ACTUAL_LINE=$(sed -n "${REJ_LINE}p" "$TARGET_FILE" | sed 's/^[[:space:]]*//')
+                else
+                  ACTUAL_LINE="(unknown)"
+                fi
+                echo "  EXPECTED : $EXPECTED_LINE"
+                echo "  ACTUAL   : $ACTUAL_LINE"
+                echo "  └─────────────────────────────────────────────────────────────────────────┘"
+                echo "  ⚠️  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 rm -f "${TARGET_FILE}.rej" "${TARGET_FILE}.orig" 2>/dev/null
                 ALL_OK=false
                 break
