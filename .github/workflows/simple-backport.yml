@@ -217,15 +217,49 @@ jobs:
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "  Applying $SHORT..."
 
-            # ── Try direct cherry-pick first ───────────────────────────────
-            CHERRY_OUTPUT=$(git cherry-pick "$SHA" 2>&1)
-            CHERRY_EXIT=$?
-            if [ "$CHERRY_EXIT" -eq 0 ]; then
-              echo "  ✅ Applied $SHORT (direct cherry-pick)"
+            # ── Pre-check: scan files before cherry-pick ──────────────────
+            PRECHECK_FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$' | grep -v '^\.github/')
+            SKIP_CHERRY_PICK=false
+            PRE_ALREADY_APPLIED=true
+
+            for PC_FILE in $PRECHECK_FILES; do
+              PC_BASE=$(basename "$PC_FILE")
+              PC_TARGET=$(find . -name "$PC_BASE" -not -path "./.git/*" -not -path "./.github/*" 2>/dev/null | head -1 | sed 's|^\./||')
+              [ -z "$PC_TARGET" ] && PRE_ALREADY_APPLIED=false && continue
+
+              PC_PLUS=$(git show "$SHA" -- "$PC_FILE" | grep '^+' | grep -v '^+++' | sed 's/^+//' | grep -v '^[[:space:]]*$' | head -1)
+              PC_MINUS=$(git show "$SHA" -- "$PC_FILE" | grep '^-' | grep -v '^---' | sed 's/^-//' | grep -v '^[[:space:]]*$' | head -1)
+
+              # Check if new content (+) already in target → applied
+              if [ -n "$PC_PLUS" ] && ! grep -qF "$PC_PLUS" "$PC_TARGET" 2>/dev/null; then
+                PRE_ALREADY_APPLIED=false
+              fi
+
+              # If change not yet applied: check if original content (-) is missing too → conflict risk
+              if [ "$PRE_ALREADY_APPLIED" = false ] && [ -n "$PC_MINUS" ] && ! grep -qF "$PC_MINUS" "$PC_TARGET" 2>/dev/null; then
+                echo "  ⚠️  Pre-check: original content not found in $PC_TARGET"
+                echo "     Expected : $PC_MINUS"
+                echo "     Target may have conflicting content — skipping cherry-pick, using patch"
+                SKIP_CHERRY_PICK=true
+              fi
+            done
+
+            if [ "$PRE_ALREADY_APPLIED" = true ]; then
+              echo "  ✅ $SHORT already applied — skipping"
               continue
             fi
-            echo "  cherry-pick failed — falling back to patch approach"
-            git cherry-pick --abort 2>/dev/null
+
+            # ── Try direct cherry-pick (only if pre-check says safe) ──────
+            if [ "$SKIP_CHERRY_PICK" = false ]; then
+              CHERRY_OUTPUT=$(git cherry-pick "$SHA" 2>&1)
+              CHERRY_EXIT=$?
+              if [ "$CHERRY_EXIT" -eq 0 ]; then
+                echo "  ✅ Applied $SHORT (direct cherry-pick)"
+                continue
+              fi
+              echo "  cherry-pick failed — falling back to patch approach"
+              git cherry-pick --abort 2>/dev/null
+            fi
 
             # ── Get list of files changed in this commit ──────────────────
             CHANGED_FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$' | grep -v '^\.github/')
