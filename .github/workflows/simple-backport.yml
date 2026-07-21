@@ -167,7 +167,23 @@ jobs:
                     fi
                   done <<< "$MINUS_LINES"
                   if [ "$MINUS_FOUND" = false ]; then
-                    CONTEXT_MISMATCH=true
+                    # Before declaring mid-chain skip: check target's git HISTORY.
+                    # If the missing -lines were ever committed to target (applied then
+                    # later changed/reverted), this is a real conflict — not mid-chain.
+                    WAS_IN_HISTORY=false
+                    while IFS= read -r chk_line; do
+                      trimmed=$(echo "$chk_line" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+                      if [ -n "$trimmed" ] && \
+                         git log "$CHECK_REF" -S"$trimmed" --oneline -- "$TARGET_PATH" 2>/dev/null \
+                         | grep -q .; then
+                        WAS_IN_HISTORY=true; break
+                      fi
+                    done <<< "$MINUS_LINES"
+                    if [ "$WAS_IN_HISTORY" = false ]; then
+                      CONTEXT_MISMATCH=true   # truly never applied → real mid-chain → skip
+                    fi
+                    # If WAS_IN_HISTORY=true: context existed before but diverged
+                    # → treat as conflict candidate, do not skip
                   fi
                 fi
               elif [ -n "$MINUS_LINES" ]; then
