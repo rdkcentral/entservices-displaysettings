@@ -389,9 +389,19 @@ jobs:
               else
                 COMMIT_MSG=$(git log -1 --format='%s' "$SHA")
                 REJ_LINE=$(grep -m1 "^@@" "${TARGET_FILE}.rej" 2>/dev/null | grep -oE '\+[0-9]+' | tr -d '+' || echo "0")
-                # Adjust REJ_LINE by the patch offset (e.g. "offset -208 lines" shifts the conflict location)
-                _OFFSET=$(echo "$PATCH_OUT" | grep -oE 'offset -?[0-9]+ lines?' | head -1 | grep -oE '-?[0-9]+' | head -1 || true)
+                # Adjust REJ_LINE by patch offset (e.g. "offset -208 lines" → shift location)
+                # Use [-0-9] instead of -? to avoid grep '?' quantifier issues on some runners
+                _OFFSET=$(echo "$PATCH_OUT" | grep -oE 'offset [-0-9]+ line' | grep -oE '[-0-9]+' | head -1 || true)
                 [ -n "$_OFFSET" ] && [ "$_OFFSET" != "0" ] && REJ_LINE=$((REJ_LINE + _OFFSET)) || true
+                # If REJ_LINE is beyond end of file, locate conflict via context lines in .rej
+                _FILE_LINES=$(wc -l < "$TARGET_FILE" 2>/dev/null || echo "0")
+                if [ "$REJ_LINE" -gt "$_FILE_LINES" ] || [ "$REJ_LINE" -eq 0 ]; then
+                  _CTX=$(grep -m1 '^ ' "${TARGET_FILE}.rej" 2>/dev/null | sed 's/^ //' | sed 's/^[[:space:]]*//')
+                  if [ -n "$_CTX" ]; then
+                    _FOUND=$(grep -nF "$_CTX" "$TARGET_FILE" 2>/dev/null | head -1 | cut -d: -f1)
+                    [ -n "$_FOUND" ] && REJ_LINE="$_FOUND"
+                  fi
+                fi
 
                 echo ""
                 echo "  ╔══════════════════════════════════════════════════════════════════════════╗"
