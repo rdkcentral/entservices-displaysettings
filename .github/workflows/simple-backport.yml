@@ -254,6 +254,10 @@ jobs:
           COMMITS_CSV:  ${{ steps.get_commits.outputs.commits }}
           COMMIT_COUNT: ${{ steps.get_commits.outputs.count }}
           SOURCE:       ${{ github.event.inputs.source_branch }}
+          MODELS_TOKEN: ${{ secrets.MODELS_TOKEN }}
+          BP_TOK:       ${{ secrets.RDKCM_RDKE }}
+          BP_REPO:      ${{ github.repository }}
+          BP_RUNID:     ${{ github.run_id }}
         run: |
           set +e
           echo "Applying $COMMIT_COUNT commit(s) from '$SOURCE'..."
@@ -501,6 +505,57 @@ jobs:
                 echo "  ╔══════════════════════════════════════════════════════════════════════════╗"
                 echo "  ║  ❌ FAILED — manual resolution required (see above)                     ║"
                 echo "  ╚══════════════════════════════════════════════════════════════════════════╝"
+
+                # ── 🤖 AI Suggestion + 🌐 Interactive Conflict Viewer ──────────────────
+                export BP_CM="$COMMIT_MSG" BP_SHORT="$SHORT" BP_SHA="$SHA"
+                export BP_TF="$TARGET_FILE" BP_RL="$REJ_LINE"
+                export BP_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+                export BP_SD="$(git show "$SHA" -- "$ORIG_FILE" | grep '^[-+]' | grep -v '^---\|^+++' | head -20 || true)"
+                if [ "$REJ_LINE" -gt 0 ]; then
+                  _TS=$((REJ_LINE > 5 ? REJ_LINE - 5 : 1)); _TE=$((REJ_LINE + 10))
+                  export BP_TC="$(sed -n "${_TS},${_TE}p" "$TARGET_FILE" || true)"
+                else
+                  export BP_TC=""
+                fi
+
+                python3 .github/scripts/conflict_viewer.py || true
+                _AI_SUGGESTION="$(cat /tmp/bp_ai.txt 2>/dev/null || echo '(not available)')"
+                _VIEWER_URLS="$(cat /tmp/bp_url.txt 2>/dev/null || true)"
+                _VIEWER_PAGES="$(echo "$_VIEWER_URLS" | grep '^PAGES=' | cut -d= -f2-)"
+                _VIEWER_RAW="$(echo "$_VIEWER_URLS" | grep '^RAW=' | cut -d= -f2-)"
+                _VIEWER_GH="$(echo "$_VIEWER_URLS" | grep '^GITHUB=' | cut -d= -f2-)"
+
+                echo ""
+                echo "  ┌─ 🤖 AI RESOLUTION SUGGESTION ───────────────────────────────────────────┐"
+                echo "$_AI_SUGGESTION" | head -20 | sed 's/^/  │  /'
+                echo "  └──────────────────────────────────────────────────────────────────────────┘"
+                echo ""
+                echo "  ┌─ 🌐 INTERACTIVE CONFLICT VIEWER ────────────────────────────────────────┐"
+                if [ -n "$_VIEWER_GH" ]; then
+                  echo "  │  GitHub URL   : $_VIEWER_GH"
+                  echo "  │  Raw HTML     : $_VIEWER_RAW"
+                  echo "  │  GitHub Pages : $_VIEWER_PAGES"
+                  echo "  │  (Enable GitHub Pages on conflict-reports branch to use the Pages URL)"
+                else
+                  echo "  │  (HTML viewer unavailable — check BP_TOK has contents:write access)"
+                fi
+                echo "  └──────────────────────────────────────────────────────────────────────────┘"
+                echo ""
+
+                # Write to the workflow run Summary tab (always visible in Actions UI)
+                {
+                  printf '## \u26a0\ufe0f Backport Conflict: `%s`\n\n' "$SHORT"
+                  printf '| Field | Value |\n|---|---|\n'
+                  printf '| **Commit** | `%s` |\n' "$SHORT"
+                  printf '| **Message** | %s |\n' "$COMMIT_MSG"
+                  printf '| **File** | `%s` |\n' "$TARGET_FILE"
+                  printf '| **Conflict Line** | `%s` |\n\n' "$REJ_LINE"
+                  printf '### Source diff\n```diff\n%s\n```\n\n' "$BP_SD"
+                  printf '### Target file (around line %s)\n```\n%s\n```\n\n' "$REJ_LINE" "$BP_TC"
+                  printf '### \U0001f916 AI Suggestion\n```\n%s\n```\n\n' "$_AI_SUGGESTION"
+                  [ -n "$_VIEWER_GH" ] && printf '### \U0001f310 Interactive Viewer\n[Open on GitHub](%s) &nbsp;\u00b7&nbsp; [Raw HTML](%s)\n\n' "$_VIEWER_GH" "$_VIEWER_RAW"
+                } >> "$GITHUB_STEP_SUMMARY"
+
                 rm -f "${TARGET_FILE}.rej" "${TARGET_FILE}.orig" 2>/dev/null
                 ALL_OK=false
                 break
