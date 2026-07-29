@@ -40,6 +40,12 @@ on:
         type: string
         default: "Automated backport created by simple-backport workflow."
 
+      ai_token:
+        description: "OPTIONAL: Anthropic API key (sk-ant-...) for AI conflict resolution suggestions. Leave empty to skip AI."
+        required: false
+        type: string
+        default: ""
+
 permissions:
   contents: write
   pull-requests: write
@@ -254,7 +260,7 @@ jobs:
           COMMITS_CSV:  ${{ steps.get_commits.outputs.commits }}
           COMMIT_COUNT: ${{ steps.get_commits.outputs.count }}
           SOURCE:       ${{ github.event.inputs.source_branch }}
-          MODELS_TOKEN: ${{ secrets.MODELS_TOKEN }}
+          MODELS_TOKEN: ${{ github.event.inputs.ai_token }}
           BP_TOK:       ${{ secrets.RDKCM_RDKE }}
           BP_REPO:      ${{ github.repository }}
           BP_RUNID:     ${{ github.run_id }}

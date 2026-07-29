@@ -31,10 +31,10 @@ tc         = E('BP_TC',    '')   # target context lines
 repo       = E('BP_REPO',  '')
 run_id     = E('BP_RUNID', '')
 tok        = E('BP_TOK',   '')
-models_tok = E('MODELS_TOKEN', '')
+models_tok = E('MODELS_TOKEN', '')   # Anthropic API key (sk-ant-...) passed via workflow input
 
-# ── 1. Call GitHub Models API for AI suggestion ────────────────────────────
-ai_suggestion = '(Set MODELS_TOKEN secret to enable AI suggestions)'
+# ── 1. Call Anthropic Claude API for AI suggestion ─────────────────────────
+ai_suggestion = '(No ai_token provided — enter your Anthropic API key in the workflow dispatch form to enable AI suggestions)'
 if models_tok:
     prompt = (
         "Resolve this git backport conflict. Output ONLY the corrected replacement "
@@ -48,23 +48,24 @@ if models_tok:
         "Corrected replacement code:"
     )
     payload = json.dumps({
-        'model': 'gpt-4o-mini',
-        'messages': [{'role': 'user', 'content': prompt}],
-        'max_tokens': 500
+        'model': 'claude-sonnet-4-5',
+        'max_tokens': 500,
+        'messages': [{'role': 'user', 'content': prompt}]
     }).encode()
     req = U.Request(
-        'https://models.inference.ai.azure.com/chat/completions',
+        'https://api.anthropic.com/v1/messages',
         data=payload,
         headers={
-            'Authorization': f'Bearer {models_tok}',
+            'x-api-key': models_tok,
+            'anthropic-version': '2023-06-01',
             'Content-Type': 'application/json'
         }
     )
     try:
         with U.urlopen(req, timeout=25) as r:
             data = json.load(r)
-            ai_suggestion = data['choices'][0]['message']['content']
-        print('AI: suggestion received from GitHub Models API')
+            ai_suggestion = data['content'][0]['text']
+        print('AI: suggestion received from Anthropic Claude API')
     except Exception as e:
         ai_suggestion = f'(AI call failed: {e})'
         print(f'AI WARNING: {e}', file=sys.stderr)
