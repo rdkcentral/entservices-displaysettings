@@ -47,10 +47,16 @@ on:
         default: ""
 
       ollama_url:
-        description: "OPTIONAL: Ollama server URL (e.g. http://192.168.1.100:11434) for local AI suggestions. Used if ai_token is empty."
+        description: "OPTIONAL: External Ollama URL (e.g. http://192.168.1.100:11434). Leave empty to use Ollama installed on the runner automatically."
         required: false
         type: string
         default: ""
+
+      auto_apply:
+        description: "OPTIONAL: If 'true', automatically apply the AI-suggested fix and commit it when a conflict is detected."
+        required: false
+        type: string
+        default: "false"
 
 permissions:
   contents: write
@@ -58,7 +64,7 @@ permissions:
 
 jobs:
   backport:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest   # change to [self-hosted] when using ollama_url (private LAN Ollama)
     if: github.event_name == 'workflow_dispatch'
 
     steps:
@@ -259,18 +265,31 @@ jobs:
             echo "✅ Created '$NEW_BRANCH' on top of '$SUPPORT'."
           fi
 
+      # ── STEP 3b: Install Ollama on runner ────────────────────────────────
+      - name: Setup Ollama on runner
+        continue-on-error: true
+        run: |
+          echo "Installing Ollama on runner..."
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve &
+          sleep 5
+          echo "Pulling phi3:3.8b model (2.2GB — fits in runner memory)..."
+          ollama pull phi3:3.8b
+          echo "✅ Ollama ready at localhost:11434"
+
       # ── STEP 4: Apply commits ─────────────────────────────────────────────
       - name: Apply changes via patch
         id: cherry_pick
         env:
-          COMMITS_CSV:  ${{ steps.get_commits.outputs.commits }}
-          COMMIT_COUNT: ${{ steps.get_commits.outputs.count }}
-          SOURCE:       ${{ github.event.inputs.source_branch }}
-          MODELS_TOKEN: ${{ github.event.inputs.ai_token }}
-          OLLAMA_URL:   ${{ github.event.inputs.ollama_url }}
-          BP_TOK:       ${{ secrets.RDKCM_RDKE }}
-          BP_REPO:      ${{ github.repository }}
-          BP_RUNID:     ${{ github.run_id }}
+          COMMITS_CSV:   ${{ steps.get_commits.outputs.commits }}
+          COMMIT_COUNT:  ${{ steps.get_commits.outputs.count }}
+          SOURCE:        ${{ github.event.inputs.source_branch }}
+          MODELS_TOKEN:  ${{ github.event.inputs.ai_token }}
+          OLLAMA_URL:    ${{ github.event.inputs.ollama_url || 'http://localhost:11434' }}
+          BP_AUTO_APPLY: ${{ github.event.inputs.auto_apply }}
+          BP_TOK:        ${{ secrets.RDKCM_RDKE }}
+          BP_REPO:       ${{ github.repository }}
+          BP_RUNID:      ${{ github.run_id }}
         run: |
           set +e
           echo "Applying $COMMIT_COUNT commit(s) from '$SOURCE'..."
@@ -533,6 +552,7 @@ jobs:
 
                 python3 .github/scripts/conflict_viewer.py || true
                 _AI_SUGGESTION="$(cat /tmp/bp_ai.txt 2>/dev/null || echo '(not available)')"
+                _AUTO_APPLIED="$(cat /tmp/bp_auto_applied.txt 2>/dev/null || echo 'false')"
                 _VIEWER_URLS="$(cat /tmp/bp_url.txt 2>/dev/null || true)"
                 _VIEWER_PAGES="$(echo "$_VIEWER_URLS" | grep '^PAGES=' | cut -d= -f2-)"
                 _VIEWER_RAW="$(echo "$_VIEWER_URLS" | grep '^RAW=' | cut -d= -f2-)"
@@ -557,7 +577,7 @@ jobs:
 
                 # Write to the workflow run Summary tab (always visible in Actions UI)
                 {
-                  printf '## \u26a0\ufe0f Backport Conflict: `%s`\n\n' "$SHORT"
+                  printf '## ⚠️ Backport Conflict: `%s`\n\n' "$SHORT"
                   printf '| Field | Value |\n|---|---|\n'
                   printf '| **Commit** | `%s` |\n' "$SHORT"
                   printf '| **Message** | %s |\n' "$COMMIT_MSG"
@@ -565,11 +585,24 @@ jobs:
                   printf '| **Conflict Line** | `%s` |\n\n' "$REJ_LINE"
                   printf '### Source diff\n```diff\n%s\n```\n\n' "$BP_SD"
                   printf '### Target file (around line %s)\n```\n%s\n```\n\n' "$REJ_LINE" "$BP_TC"
-                  printf '### \U0001f916 AI Suggestion\n```\n%s\n```\n\n' "$_AI_SUGGESTION"
-                  [ -n "$_VIEWER_GH" ] && printf '### \U0001f310 Interactive Viewer\n[Open on GitHub](%s) &nbsp;\u00b7&nbsp; [Raw HTML](%s)\n\n' "$_VIEWER_GH" "$_VIEWER_RAW"
+                  printf '### 🤖 AI Suggestion\n```\n%s\n```\n\n' "$_AI_SUGGESTION"
+                  [ -n "$_VIEWER_GH" ] && printf '### 🌐 Interactive Viewer\n[Open on GitHub](%s) &nbsp;·&nbsp; [Raw HTML](%s)\n\n' "$_VIEWER_GH" "$_VIEWER_RAW"
                 } >> "$GITHUB_STEP_SUMMARY"
 
                 rm -f "${TARGET_FILE}.rej" "${TARGET_FILE}.orig" 2>/dev/null
+
+                # ── Auto-apply: if AI fixed the file, commit and continue ────
+                if [ "$_AUTO_APPLIED" = "true" ]; then
+                  echo ""
+                  echo "  ✅ AI fix auto-applied to $TARGET_FILE — committing..."
+                  git add "$TARGET_FILE"
+                  git commit -m "$COMMIT_MSG [AI-assisted fix][backported:${SHA:0:7}]"
+                  ALL_OK=true
+                  echo ""
+                  echo "✅ Applied $SHORT (AI auto-fix committed)"
+                  continue
+                fi
+
                 ALL_OK=false
                 break
               fi

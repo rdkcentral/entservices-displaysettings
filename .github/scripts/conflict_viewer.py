@@ -30,9 +30,10 @@ sd         = E('BP_SD',    '')   # source diff lines
 tc         = E('BP_TC',    '')   # target context lines
 repo       = E('BP_REPO',  '')
 run_id     = E('BP_RUNID', '')
-tok        = E('BP_TOK',   '')
-models_tok = E('MODELS_TOKEN', '')   # Anthropic API key (sk-ant-...) passed via workflow input
-ollama_url = E('OLLAMA_URL', '').rstrip('/')  # e.g. http://192.168.1.100:11434
+tok         = E('BP_TOK',        '')
+models_tok  = E('MODELS_TOKEN',  '')
+ollama_url  = E('OLLAMA_URL',    'http://localhost:11434').rstrip('/')
+auto_apply  = E('BP_AUTO_APPLY', 'false').lower() == 'true'
 
 # ── Build shared prompt ────────────────────────────────────────────────────
 _prompt = (
@@ -95,8 +96,52 @@ elif ollama_url:
         ai_suggestion = f'(Ollama call failed: {e})'
         print(f'AI WARNING (Ollama): {e}', file=sys.stderr)
 
+# ── Strip markdown code fences from any AI response ───────────────────────
+import re as _re
+ai_suggestion = _re.sub(r'```[a-zA-Z]*\n?', '', ai_suggestion).strip('`').strip()
+
 with open('/tmp/bp_ai.txt', 'w') as f:
     f.write(ai_suggestion)
+
+# ── Auto-apply AI fix to the target file ──────────────────────────────────
+auto_applied = False
+if auto_apply and ai_suggestion and not ai_suggestion.startswith('('):
+    try:
+        target_line = int(rl) if rl.isdigit() else 0
+        if target_line > 0 and os.path.isfile(tf):
+            # Extract the lines to replace: '-' lines from source diff (current file content)
+            old_lines = [l[1:] for l in sd.splitlines()
+                         if l.startswith('-') and not l.startswith('---')]
+            if old_lines:
+                with open(tf, 'r', errors='replace') as fh:
+                    file_lines = fh.readlines()
+                # Find the block to replace starting near the conflict line
+                search_start = max(0, target_line - 10)
+                search_end   = min(len(file_lines), target_line + 10)
+                matched_idx  = None
+                for idx in range(search_start, search_end):
+                    if file_lines[idx].rstrip('\n').strip() == old_lines[0].strip():
+                        matched_idx = idx
+                        break
+                if matched_idx is not None:
+                    fix_lines = [l if l.endswith('\n') else l + '\n'
+                                 for l in ai_suggestion.splitlines()]
+                    file_lines[matched_idx : matched_idx + len(old_lines)] = fix_lines
+                    with open(tf, 'w', errors='replace') as fh:
+                        fh.writelines(file_lines)
+                    auto_applied = True
+                    print(f'AUTO-APPLY: fix written to {tf} at line {matched_idx + 1}')
+                else:
+                    print('AUTO-APPLY: could not locate conflict lines in file — skipped', file=sys.stderr)
+            else:
+                print('AUTO-APPLY: no "-" lines in source diff — skipped', file=sys.stderr)
+        else:
+            print('AUTO-APPLY: invalid line number or file not found — skipped', file=sys.stderr)
+    except Exception as e:
+        print(f'AUTO-APPLY ERROR: {e}', file=sys.stderr)
+
+with open('/tmp/bp_auto_applied.txt', 'w') as f:
+    f.write('true' if auto_applied else 'false')
 
 # ── 2. Generate interactive HTML conflict viewer ───────────────────────────
 def diff_html(lines):
