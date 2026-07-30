@@ -32,25 +32,28 @@ repo       = E('BP_REPO',  '')
 run_id     = E('BP_RUNID', '')
 tok        = E('BP_TOK',   '')
 models_tok = E('MODELS_TOKEN', '')   # Anthropic API key (sk-ant-...) passed via workflow input
+ollama_url = E('OLLAMA_URL', '').rstrip('/')  # e.g. http://192.168.1.100:11434
+
+# ── Build shared prompt ────────────────────────────────────────────────────
+_prompt = (
+    "Resolve this git backport conflict. Output ONLY the corrected replacement "
+    "code lines for the target file — no explanation, no markdown, just the code.\n\n"
+    f"Commit being backported: {cm}\n"
+    f"File: {tf}   Conflict at line: {rl}\n\n"
+    f"What the commit wants to change (diff — lines starting with - are removed, + are added):\n"
+    f"{sd}\n\n"
+    f"What the target file currently has around the conflict line:\n"
+    f"{tc}\n\n"
+    "Corrected replacement code:"
+)
 
 # ── 1. Call Anthropic Claude API for AI suggestion ─────────────────────────
-ai_suggestion = '(No ai_token provided — enter your Anthropic API key in the workflow dispatch form to enable AI suggestions)'
+ai_suggestion = '(No ai_token or ollama_url provided — fill in the workflow dispatch form to enable AI suggestions)'
 if models_tok:
-    prompt = (
-        "Resolve this git backport conflict. Output ONLY the corrected replacement "
-        "code lines for the target file — no explanation, no markdown, just the code.\n\n"
-        f"Commit being backported: {cm}\n"
-        f"File: {tf}   Conflict at line: {rl}\n\n"
-        f"What the commit wants to change (diff — lines starting with - are removed, + are added):\n"
-        f"{sd}\n\n"
-        f"What the target file currently has around the conflict line:\n"
-        f"{tc}\n\n"
-        "Corrected replacement code:"
-    )
     payload = json.dumps({
         'model': 'claude-sonnet-4-5',
         'max_tokens': 500,
-        'messages': [{'role': 'user', 'content': prompt}]
+        'messages': [{'role': 'user', 'content': _prompt}]
     }).encode()
     req = U.Request(
         'https://api.anthropic.com/v1/messages',
@@ -67,8 +70,30 @@ if models_tok:
             ai_suggestion = data['content'][0]['text']
         print('AI: suggestion received from Anthropic Claude API')
     except Exception as e:
-        ai_suggestion = f'(AI call failed: {e})'
-        print(f'AI WARNING: {e}', file=sys.stderr)
+        ai_suggestion = f'(Anthropic call failed: {e})'
+        print(f'AI WARNING (Anthropic): {e}', file=sys.stderr)
+
+# ── 1b. Fallback: Ollama local model (used if Anthropic key not provided) ──
+elif ollama_url:
+    # Ollama supports OpenAI-compatible endpoint at /v1/chat/completions
+    payload = json.dumps({
+        'model': 'mistral-small:latest',
+        'messages': [{'role': 'user', 'content': _prompt}],
+        'stream': False
+    }).encode()
+    req = U.Request(
+        f'{ollama_url}/api/chat',
+        data=payload,
+        headers={'Content-Type': 'application/json'}
+    )
+    try:
+        with U.urlopen(req, timeout=60) as r:
+            data = json.load(r)
+            ai_suggestion = data['message']['content']
+        print(f'AI: suggestion received from Ollama at {ollama_url}')
+    except Exception as e:
+        ai_suggestion = f'(Ollama call failed: {e})'
+        print(f'AI WARNING (Ollama): {e}', file=sys.stderr)
 
 with open('/tmp/bp_ai.txt', 'w') as f:
     f.write(ai_suggestion)

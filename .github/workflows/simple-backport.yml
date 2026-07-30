@@ -46,6 +46,12 @@ on:
         type: string
         default: ""
 
+      ollama_url:
+        description: "OPTIONAL: Ollama server URL (e.g. http://192.168.1.100:11434) for local AI suggestions. Used if ai_token is empty."
+        required: false
+        type: string
+        default: ""
+
 permissions:
   contents: write
   pull-requests: write
@@ -261,6 +267,7 @@ jobs:
           COMMIT_COUNT: ${{ steps.get_commits.outputs.count }}
           SOURCE:       ${{ github.event.inputs.source_branch }}
           MODELS_TOKEN: ${{ github.event.inputs.ai_token }}
+          OLLAMA_URL:   ${{ github.event.inputs.ollama_url }}
           BP_TOK:       ${{ secrets.RDKCM_RDKE }}
           BP_REPO:      ${{ github.repository }}
           BP_RUNID:     ${{ github.run_id }}
