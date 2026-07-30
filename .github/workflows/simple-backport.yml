@@ -79,6 +79,8 @@ jobs:
         run: |
           git config user.name  "GitHub Actions [Backport]"
           git config user.email "github-actions@users.noreply.github.com"
+          # Save helper script to /tmp before any branch switch removes it
+          cp .github/scripts/conflict_viewer.py /tmp/conflict_viewer.py
 
       # ── STEP 1: Check support branch exists ─────────────────────────────────
       - name: Check support branch exists
@@ -550,7 +552,7 @@ jobs:
                   export BP_TC=""
                 fi
 
-                python3 .github/scripts/conflict_viewer.py || true
+                python3 /tmp/conflict_viewer.py || true
                 _AI_SUGGESTION="$(cat /tmp/bp_ai.txt 2>/dev/null || echo '(not available)')"
                 _AUTO_APPLIED="$(cat /tmp/bp_auto_applied.txt 2>/dev/null || echo 'false')"
                 _VIEWER_URLS="$(cat /tmp/bp_url.txt 2>/dev/null || true)"
