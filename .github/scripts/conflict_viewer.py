@@ -96,7 +96,7 @@ elif ollama_url:
                             headers={'Content-Type': 'application/json'})
             with U.urlopen(req, timeout=120) as r:
                 data = json.load(r)
-                return data['message']['content'], 'chat'
+                return data['message']['content'], 'chat', data
         except urllib.error.HTTPError as e:
             if e.code != 404:
                 raise
@@ -110,10 +110,29 @@ elif ollama_url:
                         headers={'Content-Type': 'application/json'})
         with U.urlopen(req, timeout=120) as r:
             data = json.load(r)
-            return data['response'], 'generate'
+            return data['response'], 'generate', data
+
+    # Also fetch Ollama version as independent proof
+    try:
+        with U.urlopen(f'{ollama_url}/api/version', timeout=5) as _r:
+            _ver = json.load(_r).get('version', '?')
+    except Exception:
+        _ver = '?'
 
     try:
-        ai_suggestion, _ep = _ollama_chat(ollama_url, _ollama_model, _prompt)
+        ai_suggestion, _ep, _raw = _ollama_chat(ollama_url, _ollama_model, _prompt)
+        _tokens   = _raw.get('eval_count', '?')
+        _dur_ms   = round(_raw.get('eval_duration', 0) / 1e6, 1)
+        _model_id = _raw.get('model', _ollama_model)
+        print('─' * 72)
+        print(f'OLLAMA PROOF — real API response metadata:')
+        print(f'  endpoint   : {ollama_url}/{_ep}')
+        print(f'  server ver : {_ver}')
+        print(f'  model      : {_model_id}')
+        print(f'  tokens gen : {_tokens}')
+        print(f'  duration   : {_dur_ms} ms')
+        print(f'  created_at : {_raw.get("created_at", "?")}')
+        print('─' * 72)
         print(f'AI: suggestion received from Ollama/{_ep} at {ollama_url}')
     except Exception as e:
         ai_suggestion = f'(Ollama call failed: {e})'
