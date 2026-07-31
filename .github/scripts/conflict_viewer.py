@@ -76,22 +76,40 @@ if models_tok:
 
 # ── 1b. Fallback: Ollama local model (used if Anthropic key not provided) ──
 elif ollama_url:
-    # Ollama supports OpenAI-compatible endpoint at /v1/chat/completions
-    payload = json.dumps({
-        'model': 'mistral-small:latest',
-        'messages': [{'role': 'user', 'content': _prompt}],
-        'stream': False
-    }).encode()
-    req = U.Request(
-        f'{ollama_url}/api/chat',
-        data=payload,
-        headers={'Content-Type': 'application/json'}
-    )
-    try:
-        with U.urlopen(req, timeout=60) as r:
+    _ollama_model = 'phi3:3.8b'
+
+    def _ollama_chat(url, model, prompt):
+        """Try /api/chat (modern Ollama), fall back to /api/generate (older)."""
+        # Try modern /api/chat endpoint first
+        payload = json.dumps({
+            'model': model,
+            'messages': [{'role': 'user', 'content': prompt}],
+            'stream': False
+        }).encode()
+        try:
+            req = U.Request(f'{url}/api/chat', data=payload,
+                            headers={'Content-Type': 'application/json'})
+            with U.urlopen(req, timeout=120) as r:
+                data = json.load(r)
+                return data['message']['content'], 'chat'
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise
+        # Fall back to /api/generate (Ollama < 0.1.14)
+        payload = json.dumps({
+            'model': model,
+            'prompt': prompt,
+            'stream': False
+        }).encode()
+        req = U.Request(f'{url}/api/generate', data=payload,
+                        headers={'Content-Type': 'application/json'})
+        with U.urlopen(req, timeout=120) as r:
             data = json.load(r)
-            ai_suggestion = data['message']['content']
-        print(f'AI: suggestion received from Ollama at {ollama_url}')
+            return data['response'], 'generate'
+
+    try:
+        ai_suggestion, _ep = _ollama_chat(ollama_url, _ollama_model, _prompt)
+        print(f'AI: suggestion received from Ollama/{_ep} at {ollama_url}')
     except Exception as e:
         ai_suggestion = f'(Ollama call failed: {e})'
         print(f'AI WARNING (Ollama): {e}', file=sys.stderr)
