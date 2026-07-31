@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Conflict: DisplaySettings/DisplaySettings.cpp</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#e6edf3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:24px;line-height:1.6}
+a{color:#58a6ff;text-decoration:none}
+h1{font-size:22px;font-weight:700;margin-bottom:4px}
+.sub{color:#8b949e;font-size:13px;margin-bottom:28px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;margin-bottom:16px;overflow:hidden}
+.ch{padding:12px 16px;border-bottom:1px solid #30363d;font-weight:600;font-size:14px}
+.cb{padding:16px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:0}
+.col{padding:12px 16px}
+.col:first-child{border-right:1px solid #30363d}
+.lbl{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+pre{font-family:'SF Mono',Consolas,monospace;font-size:12px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:12px;font-weight:600}
+.red{background:#3d1e1e;color:#f85149}
+.blue{background:#1c2a3a;color:#58a6ff}
+.meta-row{display:flex;gap:24px;flex-wrap:wrap;padding:16px}
+.meta-item{display:flex;flex-direction:column;gap:2px}
+.meta-lbl{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.05em}
+.meta-val{font-size:13px;font-family:monospace}
+.ai-pre{color:#bc8cff}
+input[type=password]{width:100%;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:10px 12px;font-size:13px;margin-bottom:12px;font-family:monospace}
+textarea{width:100%;min-height:200px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:12px;font-family:'SF Mono',Consolas,monospace;font-size:12px;resize:vertical}
+.btn{padding:10px 20px;border:none;border-radius:6px;font-weight:600;cursor:pointer;font-size:14px;margin-right:8px}
+.btn-green{background:#238636;color:#fff}
+.btn-green:hover{background:#2ea043}
+.btn-blue{background:#1f6feb;color:#fff}
+.btn-blue:hover{background:#388bfd}
+.alert{padding:10px 14px;border-radius:6px;font-size:13px;margin-top:12px}
+.alert-ok{background:#1a3a2a;color:#3fb950}
+.alert-err{background:#3d1e1e;color:#f85149}
+@media(max-width:640px){
+  .grid{grid-template-columns:1fr}
+  .col:first-child{border-right:none;border-bottom:1px solid #30363d}
+}
+</style>
+</head>
+<body>
+
+<h1>&#9888;&#65039; Backport Conflict Detected</h1>
+<p class="sub">
+  Branch: <code>feature/RDKEMW-21092-fix</code> &nbsp;&middot;&nbsp;
+  <a href="https://github.com/rdkcentral/entservices-displaysettings/actions/runs/30606540272" target="_blank">View workflow run &#8599;</a>
+</p>
+
+<div class="card">
+  <div class="ch">&#128203; Overview</div>
+  <div class="meta-row">
+    <div class="meta-item">
+      <span class="meta-lbl">Commit</span>
+      <span class="meta-val">6b57a38</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-lbl">Message</span>
+      <span class="meta-val">RDKEMW-21092:Updated Log</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-lbl">File</span>
+      <span class="meta-val">DisplaySettings/DisplaySettings.cpp</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-lbl">Conflict Line</span>
+      <span class="meta-val"><span class="badge red">~6032</span></span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-lbl">Target Branch</span>
+      <span class="meta-val"><span class="badge blue">feature/RDKEMW-21092-fix</span></span>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="ch">&#128256; Conflict Diff</div>
+  <div class="grid">
+    <div class="col">
+      <div class="lbl" style="color:#3fb950">Source commit wants to change</div>
+      <pre><span style="color:#f85149">-                    LOGINFO(&quot;Video Format: SDR\n&quot;);</span>
+<span style="color:#3fb950">+                    LOGINFO(&quot;Current is Video Format: SDR\n&quot;);</span></pre>
+    </div>
+    <div class="col">
+      <div class="lbl" style="color:#d29922">Target file currently has (around line 6032)</div>
+      <pre>        {
+            const char *strValue = &quot;NONE&quot;;
+            switch (format)
+            {
+                case dsHDRSTANDARD_SDR:
+                    LOGINFO(&quot;SDR is Video Format: SDR\n&quot;);
+                    strValue = &quot;SDR&quot;;
+                    break;
+                case dsHDRSTANDARD_HDR10:
+                    LOGINFO(&quot;Video Format: HDR10\n&quot;);
+                    strValue = &quot;HDR10&quot;;
+                    break;
+                case dsHDRSTANDARD_HDR10PLUS:
+                    LOGINFO(&quot;Video Format: HDR10PLUS\n&quot;);
+                    strValue = &quot;HDR10PLUS&quot;;
+                    break;</pre>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="ch">&#129302; AI Resolution Suggestion</div>
+  <div class="cb">
+    <pre id="ai-text" class="ai-pre">{
+            const char *strValue = &quot;NONE&quot;;
+            switch (format)
+            {
+                case dsHDRSTANDARD_SDR:
+                    LOGINFO(&quot;Current is Video Format: SDR\n&quot;);
+                    strValue = &quot;SDR&quot;;
+                    break;</pre>
+    <button class="btn btn-blue" onclick="useAI()" style="margin-top:12px">&#8592; Use this suggestion</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="ch">&#9999;&#65039; Apply Fix via GitHub API</div>
+  <div class="cb">
+    <p style="font-size:13px;color:#8b949e;margin-bottom:12px">
+      Enter a GitHub PAT with <code>repo</code> write access to commit the resolution directly.<br>
+      This replaces lines <strong>6029&ndash;6038</strong> in
+      <code>DisplaySettings/DisplaySettings.cpp</code> on branch <code>feature/RDKEMW-21092-fix</code>.
+    </p>
+    <input type="password" id="pat" placeholder="ghp_xxxx...  (GitHub Personal Access Token, repo scope)" />
+    <textarea id="code">{
+            const char *strValue = &quot;NONE&quot;;
+            switch (format)
+            {
+                case dsHDRSTANDARD_SDR:
+                    LOGINFO(&quot;Current is Video Format: SDR\n&quot;);
+                    strValue = &quot;SDR&quot;;
+                    break;</textarea>
+    <div style="margin-top:12px">
+      <button class="btn btn-blue" onclick="previewFix()">Preview</button>
+      <button class="btn btn-green" onclick="applyFix()">Apply Fix &amp; Commit</button>
+    </div>
+    <div id="status" style="display:none" class="alert"></div>
+  </div>
+</div>
+
+<script>
+var REPO   = "rdkcentral/entservices-displaysettings";
+var BRANCH = "feature/RDKEMW-21092-fix";
+var FILE   = "DisplaySettings/DisplaySettings.cpp";
+var LINE   = 6032;
+var SHORT  = "6b57a38";
+var RS     = 6029;
+var RE     = 6038;
+
+function useAI() {
+  document.getElementById('code').value = document.getElementById('ai-text').textContent;
+}
+
+function showStatus(type, msg) {
+  var el = document.getElementById('status');
+  el.style.display = 'block';
+  el.className = 'alert ' + (type === 'ok' ? 'alert-ok' : 'alert-err');
+  el.textContent = msg;
+}
+
+function previewFix() {
+  showStatus('ok',
+    'Preview: lines ' + RS + '–' + RE + ' in ' + FILE +
+    ' on branch "' + BRANCH + '" will be replaced with the code in the textarea above.');
+}
+
+async function applyFix() {
+  var pat  = document.getElementById('pat').value.trim();
+  var code = document.getElementById('code').value;
+  if (!pat)       { showStatus('err', 'Please enter your GitHub PAT'); return; }
+  if (!code.trim()) { showStatus('err', 'Please enter the resolved code'); return; }
+
+  showStatus('ok', 'Fetching current file content from GitHub...');
+
+  var hdrs = {
+    'Authorization': 'Bearer ' + pat,
+    'Accept': 'application/vnd.github+json'
+  };
+
+  try {
+    var fileUrl  = 'https://api.github.com/repos/' + REPO + '/contents/' + FILE + '?ref=' + BRANCH;
+    var fileResp = await fetch(fileUrl, { headers: hdrs });
+    if (!fileResp.ok) {
+      showStatus('err', 'Failed to fetch file: HTTP ' + fileResp.status + ' — check PAT scope and branch name');
+      return;
+    }
+    var fileData       = await fileResp.json();
+    var currentContent = atob(fileData.content.replace(/\n/g, ''));
+    var lines          = currentContent.split('\n');
+
+    var start    = Math.max(0, LINE - 4);
+    var end      = Math.min(lines.length, LINE + 7);
+    var newLines = lines.slice(0, start).concat(code.split('\n')).concat(lines.slice(end));
+    var newContent = newLines.join('\n');
+
+    showStatus('ok', 'Committing fix to branch "' + BRANCH + '"...');
+
+    var putUrl  = 'https://api.github.com/repos/' + REPO + '/contents/' + FILE;
+    var putBody = {
+      message: 'fix: resolve backport conflict in ' + FILE + ' [backported:' + SHORT + ']',
+      content: btoa(unescape(encodeURIComponent(newContent))),
+      sha:     fileData.sha,
+      branch:  BRANCH
+    };
+    var putResp = await fetch(putUrl, {
+      method:  'PUT',
+      headers: Object.assign({}, hdrs, {'Content-Type': 'application/json'}),
+      body:    JSON.stringify(putBody)
+    });
+
+    if (putResp.ok) {
+      showStatus('ok',
+        '✅ Fix committed to "' + BRANCH + '"! ' +
+        'Return to the workflow run and re-trigger it to verify the backport succeeds.');
+    } else {
+      var errTxt = await putResp.text();
+      showStatus('err', 'Commit failed: HTTP ' + putResp.status + ' — ' + errTxt);
+    }
+  } catch (err) {
+    showStatus('err', 'Error: ' + err.message);
+  }
+}
+</script>
+
+</body>
+</html>
