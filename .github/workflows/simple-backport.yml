@@ -117,7 +117,7 @@ jobs:
             exit 0
           fi
 
-          # ── Otherwise, find latest code commit NOT yet applied to target ───
+          # ── Otherwise, find ALL code commits not yet backported to target ───
           echo "Fetching branches..."
           git fetch origin "$SOURCE"
           git fetch origin "$SUPPORT"
@@ -132,106 +132,36 @@ jobs:
             echo "Checking against support branch: $SUPPORT (target branch not yet created)"
           fi
 
-          LATEST=""
+          # Build list of commits already backported (by [backported:SHA] tag)
+          TARGET_LOG=$(git log "$CHECK_REF" --format='%s' 2>/dev/null)
+
+          PENDING=""
+          COUNT=0
           for SHA in $(git log --pretty=format:"%H" -20 "origin/$SOURCE"); do
+            # Skip .github/-only commits (workflow/script changes, not code)
             FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$' | grep -v '^\.github/')
-            [ -z "$FILES" ] && continue   # skip .github/-only commits
+            [ -z "$FILES" ] && continue
 
-            # Check if this commit was already backported (even if later reverted on target).
-            # Supports both old format "[backported]" and new format "[backported:SHA]".
-            _SRC_MSG=$(git log -1 --format='%s' "$SHA")
-            _TARGET_LOG=$(git log "$CHECK_REF" --format='%s' 2>/dev/null)
-            if echo "$_TARGET_LOG" | grep -qF "${_SRC_MSG} [backported" || \
-               echo "$_TARGET_LOG" | grep -qF "[backported:${SHA:0:7}]"; then
-              echo "  Skipping ${SHA:0:7} — already backported (found in target branch history)"
+            SHORT="${SHA:0:7}"
+
+            # Skip if already tagged as backported in target branch history
+            if echo "$TARGET_LOG" | grep -qF "[backported:$SHORT]"; then
+              echo "  Skipping $SHORT — already backported (found [backported:$SHORT] in target)"
               continue
             fi
 
-            # Check if this commit's changes are already in the target branch
-            ALREADY_APPLIED=true
-            CONTEXT_MISMATCH=false
-            for ORIG_FILE in $FILES; do
-              BASENAME=$(basename "$ORIG_FILE")
-              TARGET_PATH=$(git ls-tree -r --name-only "$CHECK_REF" \
-                | grep -E "(^|/)${BASENAME}$" | head -1)
-              [ -z "$TARGET_PATH" ] && ALREADY_APPLIED=false && break
-
-              # Sample up to 3 added lines from this commit
-              PLUS_LINES=$(git show "$SHA" -- "$ORIG_FILE" \
-                | grep '^+' | grep -v '^+++' | sed 's/^+//' \
-                | grep -v '^[[:space:]]*$' | head -3)
-
-              # Sample up to 3 deleted lines from this commit
-              MINUS_LINES=$(git show "$SHA" -- "$ORIG_FILE" \
-                | grep '^-' | grep -v '^---' | sed 's/^-//' \
-                | grep -v '^[[:space:]]*$' | head -3)
-
-              if [ -n "$PLUS_LINES" ]; then
-                # Has additions: check if added lines exist in target
-                while IFS= read -r line; do
-                  if [ -n "$line" ] && \
-                     ! git show "$CHECK_REF:$TARGET_PATH" | grep -qF "$line"; then
-                    ALREADY_APPLIED=false; break
-                  fi
-                done <<< "$PLUS_LINES"
-
-                # If not applied: also check if the ORIGINAL content (-lines) exists.
-                # If neither + nor - lines found → this is a mid-chain commit whose
-                # prerequisite was never applied → skip it (context mismatch).
-                if [ "$ALREADY_APPLIED" = false ] && [ -n "$MINUS_LINES" ]; then
-                  MINUS_FOUND=false
-                  while IFS= read -r line; do
-                    if [ -n "$line" ] && \
-                       git show "$CHECK_REF:$TARGET_PATH" | grep -qF "$line"; then
-                      MINUS_FOUND=true; break
-                    fi
-                  done <<< "$MINUS_LINES"
-                  if [ "$MINUS_FOUND" = false ]; then
-                    # Before declaring mid-chain skip: check target's git HISTORY.
-                    # If the missing -lines were ever committed to target (applied then
-                    # later changed/reverted), this is a real conflict — not mid-chain.
-                    WAS_IN_HISTORY=false
-                    while IFS= read -r chk_line; do
-                      trimmed=$(echo "$chk_line" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
-                      if [ -n "$trimmed" ] && \
-                         git log "$CHECK_REF" -S"$trimmed" --oneline -- "$TARGET_PATH" 2>/dev/null \
-                         | grep -q .; then
-                        WAS_IN_HISTORY=true; break
-                      fi
-                    done <<< "$MINUS_LINES"
-                    if [ "$WAS_IN_HISTORY" = false ]; then
-                      CONTEXT_MISMATCH=true   # truly never applied → real mid-chain → skip
-                    fi
-                    # If WAS_IN_HISTORY=true: context existed before but diverged
-                    # → treat as conflict candidate, do not skip
-                  fi
-                fi
-              elif [ -n "$MINUS_LINES" ]; then
-                # Pure deletion: check if deleted lines STILL exist in target
-                while IFS= read -r line; do
-                  if [ -n "$line" ] && \
-                     git show "$CHECK_REF:$TARGET_PATH" | grep -qF "$line"; then
-                    ALREADY_APPLIED=false; break
-                  fi
-                done <<< "$MINUS_LINES"
-              fi
-              [ "$ALREADY_APPLIED" = false ] && break
-            done
-
-            if [ "$ALREADY_APPLIED" = false ] && [ "$CONTEXT_MISMATCH" = true ]; then
-              echo "  Skipping ${SHA:0:7} — context mismatch (prerequisite commit not yet in target)"
-              CONTEXT_MISMATCH=false
-              continue
+            echo "  Queued $SHORT — $(git log -1 --format='%s' "$SHA")"
+            # Prepend so that the oldest commit ends up first (git log returns newest first)
+            if [ -z "$PENDING" ]; then
+              PENDING="$SHA"
+            else
+              PENDING="$SHA,$PENDING"
             fi
-
-            if [ "$ALREADY_APPLIED" = false ]; then
-              LATEST="$SHA"
-              break
-            fi
-            echo "  Skipping ${SHA:0:7} — already applied to target"
+            COUNT=$((COUNT + 1))
           done
 
-          if [ -z "$LATEST" ]; then
+          if [ -z "$PENDING" ]; then
+            echo ""
             echo "✅ Nothing to do — all commits from '$SOURCE' are already applied to '$NEW_BRANCH'."
             echo "commits=" >> "$GITHUB_OUTPUT"
             echo "count=0"  >> "$GITHUB_OUTPUT"
@@ -239,11 +169,9 @@ jobs:
           fi
 
           echo ""
-          echo "Found unapplied commit:"
-          git log --oneline -1 "$LATEST"
-
-          echo "commits=$LATEST" >> "$GITHUB_OUTPUT"
-          echo "count=1"         >> "$GITHUB_OUTPUT"
+          echo "Found $COUNT unapplied commit(s) to apply."
+          echo "commits=$PENDING" >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT"     >> "$GITHUB_OUTPUT"
 
       # ── STEP 3: Create or checkout branch on top of support ─────────────────
       - name: Create or checkout branch on support
@@ -276,7 +204,11 @@ jobs:
           echo "Installing Ollama on runner..."
           curl -fsSL https://ollama.com/install.sh | sh
           ollama serve &
-          sleep 5
+          echo "Waiting for Ollama to be ready..."
+          for _i in $(seq 1 30); do
+            curl -sf http://localhost:11434/api/version > /dev/null && break
+            sleep 2
+          done
           echo "Pulling phi3:3.8b model (2.2GB — fits in runner memory)..."
           ollama pull phi3:3.8b
           echo "✅ Ollama ready at localhost:11434"
@@ -317,37 +249,25 @@ jobs:
               continue
             fi
 
-            # ── Pre-check: scan files before cherry-pick ──────────────────
+            # ── Pre-check: detect conflict risk (missing context) ────────
             PRECHECK_FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$' | grep -v '^\.github/')
             SKIP_CHERRY_PICK=false
-            PRE_ALREADY_APPLIED=true
 
             for PC_FILE in $PRECHECK_FILES; do
               PC_BASE=$(basename "$PC_FILE")
               PC_TARGET=$(find . -name "$PC_BASE" -not -path "./.git/*" -not -path "./.github/*" 2>/dev/null | head -1 | sed 's|^\./||')
-              [ -z "$PC_TARGET" ] && PRE_ALREADY_APPLIED=false && continue
+              [ -z "$PC_TARGET" ] && continue
 
-              PC_PLUS=$(git show "$SHA" -- "$PC_FILE" | grep '^+' | grep -v '^+++' | sed 's/^+//' | grep -v '^[[:space:]]*$' | head -1)
               PC_MINUS=$(git show "$SHA" -- "$PC_FILE" | grep '^-' | grep -v '^---' | sed 's/^-//' | grep -v '^[[:space:]]*$' | head -1)
 
-              # Check if new content (+) already in target → applied
-              if [ -n "$PC_PLUS" ] && ! grep -qF "$PC_PLUS" "$PC_TARGET" 2>/dev/null; then
-                PRE_ALREADY_APPLIED=false
-              fi
-
-              # If change not yet applied: check if original content (-) is missing too → conflict risk
-              if [ "$PRE_ALREADY_APPLIED" = false ] && [ -n "$PC_MINUS" ] && ! grep -qF "$PC_MINUS" "$PC_TARGET" 2>/dev/null; then
+              # If the line the commit wants to REMOVE is missing → conflict risk, skip cherry-pick
+              if [ -n "$PC_MINUS" ] && ! grep -qF "$PC_MINUS" "$PC_TARGET" 2>/dev/null; then
                 echo "  ⚠️  Pre-check: original content not found in $PC_TARGET"
                 echo "     Expected : $PC_MINUS"
                 echo "     Target may have conflicting content — skipping cherry-pick, using patch"
                 SKIP_CHERRY_PICK=true
               fi
             done
-
-            if [ "$PRE_ALREADY_APPLIED" = true ]; then
-              echo "  ✅ $SHORT already applied — skipping"
-              continue
-            fi
 
             # ── Try direct cherry-pick (only if pre-check says safe) ──────
             if [ "$SKIP_CHERRY_PICK" = false ]; then
@@ -597,6 +517,7 @@ jobs:
                   git add "$TARGET_FILE"
                   git commit -m "$COMMIT_MSG [AI-assisted fix][backported:${SHA:0:7}]"
                   ALL_OK=true
+                  AI_COMMITTED=true
                   echo ""
                   echo "✅ Applied $SHORT (AI auto-fix committed)"
                   continue
@@ -613,9 +534,13 @@ jobs:
               exit 1
             fi
 
-            git commit -m "$(git log -1 --format='%s' $SHA) [backported:$SHORT]"
-            echo ""
-            echo "  ✅ Applied $SHORT"
+            # Skip final commit if AI already committed for this SHA
+            if [ "${AI_COMMITTED:-false}" != "true" ]; then
+              git commit -m "$(git log -1 --format='%s' $SHA) [backported:$SHORT]"
+              echo ""
+              echo "  ✅ Applied $SHORT"
+            fi
+            AI_COMMITTED=false
           done
 
           echo ""
@@ -623,6 +548,7 @@ jobs:
 
       # ── STEP 5: Push the new branch ─────────────────────────────────────────
       - name: Push new branch
+        if: steps.get_commits.outputs.count != '0'
         env:
           NEW_BRANCH: ${{ github.event.inputs.new_branch_name }}
         run: |
@@ -635,6 +561,7 @@ jobs:
 
       # ── STEP 6: Create Pull Request ─────────────────────────────────────────
       - name: Create Pull Request
+        if: steps.get_commits.outputs.count != '0'
         env:
           NEW_BRANCH:   ${{ github.event.inputs.new_branch_name }}
           BASE_BRANCH:  ${{ github.event.inputs.support_branch }}
