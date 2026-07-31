@@ -12,8 +12,6 @@ Outputs written:
 
 import os
 import json
-import base64
-import html as H
 import urllib.request as U
 import urllib.error
 import sys
@@ -39,7 +37,15 @@ auto_apply  = E('BP_AUTO_APPLY', 'false').lower() == 'true'
 # Extract single remove/add lines for a focused prompt
 _remove = next((l[1:].strip() for l in sd.splitlines() if l.startswith('-') and not l.startswith('---')), '')
 _add    = next((l[1:].strip() for l in sd.splitlines() if l.startswith('+') and not l.startswith('+++')), '')
-_current = next((l.strip() for l in tc.splitlines() if l.strip() and not l.strip().isdigit()), '')
+
+# Read the EXACT conflict line from the file using the known line number
+try:
+    with open(tf, 'r', errors='replace') as _f:
+        _all_lines = _f.readlines()
+    _rl_int = int(rl) if str(rl).isdigit() else 0
+    _current = _all_lines[_rl_int - 1].strip() if 0 < _rl_int <= len(_all_lines) else ''
+except Exception:
+    _current = ''
 
 _prompt = (
     f"Fix this C++ git merge conflict. Answer with ONLY the single corrected line of code. "
@@ -145,9 +151,12 @@ ai_suggestion = _re.sub(r'```[a-zA-Z]*\n?', '', ai_suggestion).strip('`').strip(
 with open('/tmp/bp_ai.txt', 'w') as f:
     f.write(ai_suggestion)
 
-# ── Auto-apply: replace conflict line directly using known line number ──────
+# ── Auto-apply: use the EXACT +line from the commit, not AI-generated content ─
+# AI suggestion is shown in the log for human review only.
+# The +line is what the original developer intended — always more reliable than AI.
+# Note: auto-apply only runs when _add is available (never on AI-only suggestion).
 auto_applied = False
-if auto_apply and ai_suggestion and not ai_suggestion.startswith('('):
+if auto_apply and _add:
     try:
         target_line = int(rl) if str(rl).isdigit() else 0
         if target_line > 0 and os.path.isfile(tf):
@@ -156,12 +165,12 @@ if auto_apply and ai_suggestion and not ai_suggestion.startswith('('):
             if 0 < target_line <= len(file_lines):
                 orig = file_lines[target_line - 1]
                 indent = len(orig) - len(orig.lstrip())
-                fix_line = (' ' * indent) + ai_suggestion.strip() + '\n'
+                fix_line = (' ' * indent) + _add.strip() + '\n'
                 file_lines[target_line - 1] = fix_line
                 with open(tf, 'w', errors='replace') as fh:
                     fh.writelines(file_lines)
                 auto_applied = True
-                print(f'AUTO-APPLY: replaced line {target_line} in {tf}')
+                print(f'AUTO-APPLY: replaced line {target_line} with exact commit +line: {_add.strip()}')
             else:
                 print(f'AUTO-APPLY: line {target_line} out of range ({len(file_lines)} lines)', file=sys.stderr)
         else:

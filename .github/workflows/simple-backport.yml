@@ -304,6 +304,13 @@ jobs:
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "  Applying $SHORT..."
 
+            # ── Hard idempotency: skip if already backported in local history ─
+            # Covers both auto-discovery and specific_commits mode.
+            if git log --format='%s' HEAD | grep -qF "[backported:$SHORT]"; then
+              echo "  ✅ $SHORT already in branch history [backported:$SHORT] — skipping (no re-apply)"
+              continue
+            fi
+
             # ── Pre-check: scan files before cherry-pick ──────────────────
             PRECHECK_FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$' | grep -v '^\.github/')
             SKIP_CHERRY_PICK=false
