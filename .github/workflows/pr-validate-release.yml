@@ -1,0 +1,95 @@
+name: PR - Validate Release Version
+
+# yml1: Runs when PR is opened/updated targeting develop or support/* branches.
+# Checks that the PR description contains a valid 'release_version:' field.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+    branches:
+      - develop
+      - dummy_develop
+      - 'support/**'
+      - 'release/**'
+
+permissions:
+  pull-requests: write
+
+jobs:
+  validate-release-version:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Extract release_version from PR description
+        id: extract
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # Look for line:  release_version: 8.3.4  or  release_version: none
+          VERSION=$(echo "$PR_BODY" \
+            | grep -i 'release_version:' \
+            | head -1 \
+            | sed 's/.*release_version:[[:space:]]*//' \
+            | xargs 2>/dev/null || true)
+
+          echo "Extracted value: '$VERSION'"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Validate format
+        env:
+          VERSION:   ${{ steps.extract.outputs.version }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "PR branch  : $PR_BRANCH"
+          echo "PR number  : #$PR_NUMBER"
+          echo "release_version: '$VERSION'"
+          echo ""
+
+          # ── Field missing completely ─────────────────────────────────────────
+          if [ -z "$VERSION" ]; then
+            echo "❌  'release_version:' field is MISSING from PR description."
+            echo ""
+            echo "    Add one of these lines to your PR description:"
+            echo ""
+            echo "      release_version: none       → no backport needed"
+            echo "      release_version: 8.3.4      → backport to support/8.3.4.0"
+            echo "      release_version: 8.3.4.0    → backport to support/8.3.4.0"
+            exit 1
+          fi
+
+          # ── none → no backport needed ────────────────────────────────────────
+          if echo "$VERSION" | grep -qi '^none$'; then
+            echo "✅  release_version: none"
+            echo "    No cherry-pick to release branches is needed for this PR."
+            exit 0
+          fi
+
+          # ── Valid format X.Y.Z or X.Y.Z.W ───────────────────────────────────
+          if echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+            # Determine target support branch name
+            PARTS=$(echo "$VERSION" | tr '.' ' ' | wc -w | tr -d ' ')
+            if [ "$PARTS" -eq 3 ]; then
+              SUPPORT="support/${VERSION}.0"
+            else
+              SUPPORT="support/${VERSION}"
+            fi
+            echo "✅  release_version: $VERSION"
+            echo "    When this PR is merged → changes will be backported to: $SUPPORT"
+            exit 0
+          fi
+
+          # ── Invalid format ───────────────────────────────────────────────────
+          echo "❌  Invalid release_version format: '$VERSION'"
+          echo ""
+          echo "    Expected formats:"
+          echo "      release_version: none       → no backport"
+          echo "      release_version: 8.3.4      → backport to support/8.3.4.0"
+          echo "      release_version: 8.3.4.0    → backport to support/8.3.4.0"
+          echo ""
+          echo "    Wrong examples (will fail):"
+          echo "      release_version: 8          → too short (need X.Y.Z)"
+          echo "      release_version: 8.3        → missing patch number"
+          echo "      release_version: 8.         → incomplete"
+          exit 1
