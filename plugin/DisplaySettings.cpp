@@ -787,7 +787,7 @@ namespace WPEFramework {
             vector<string> connectedVideoDisplays;
             getConnectedVideoDisplaysHelper(connectedVideoDisplays);
             setResponseArray(response, "connectedVideoDisplays", connectedVideoDisplays);
-r:eturnResponse(true);
+            returnResponse(true);
         }
 
         uint32_t DisplaySettings::getConnectedAudioPorts(const JsonObject& parameters, JsonObject& response)
