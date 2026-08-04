@@ -1,13 +1,9 @@
 name: Conflict Resolver (Auto / Manual)
 
-# Auto-triggered when "PR - Backport to Release Branch" fails (workflow_run).
-# Data is passed via artifact uploaded by the backport workflow.
-# Can also be triggered manually via workflow_dispatch with explicit inputs.
+# Triggered automatically via workflow_dispatch API call from Cherrypick-backport.yml
+# when a cherry-pick conflict is detected.
+# Can also be triggered manually from the Actions UI.
 on:
-  workflow_run:
-    workflows: ["PR - Backport to Release Branch"]
-    types: [completed]
-
   workflow_dispatch:
     inputs:
       mode:
@@ -45,11 +41,6 @@ permissions:
 jobs:
   resolve-conflicts:
     runs-on: ubuntu-latest
-    # workflow_run: only run when backport FAILED
-    # workflow_dispatch: always run
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure')
 
     steps:
 
@@ -65,21 +56,10 @@ jobs:
           git config user.name  "GitHub Actions [Conflict Resolver]"
           git config user.email "github-actions@users.noreply.github.com"
 
-      # ── 1. Download artifact (workflow_run trigger only) ─────────────────────
-      - name: Download conflict metadata artifact
-        if: github.event_name == 'workflow_run'
-        uses: actions/download-artifact@v4
-        with:
-          name: conflict-metadata
-          path: /tmp/conflict-metadata
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.RDKCM_RDKE }}
-
-      # ── 2. Normalize inputs from artifact OR dispatch inputs ─────────────────
+      # ── 1. Read inputs (passed directly from backport workflow dispatch call) ──
       - name: Resolve inputs
         id: inputs
         env:
-          EVENT_NAME:       ${{ github.event_name }}
           D_MODE:           ${{ github.event.inputs.mode }}
           D_FEATURE_BRANCH: ${{ github.event.inputs.feature_branch }}
           D_SUPPORT_BRANCH: ${{ github.event.inputs.support_branch }}
@@ -88,51 +68,26 @@ jobs:
           D_VERSION:        ${{ github.event.inputs.version }}
           D_PR_NUMBER:      ${{ github.event.inputs.pr_number }}
         run: |
-          if [ "$EVENT_NAME" = "workflow_run" ]; then
-            DATA="/tmp/conflict-metadata/data.json"
-            if [ ! -f "$DATA" ]; then
-              echo "❌ Artifact not found — backport may not have produced conflict metadata."
-              exit 1
-            fi
-            FEATURE_BRANCH=$(jq -r '.feature_branch' "$DATA")
-            SUPPORT_BRANCH=$(jq -r '.support_branch' "$DATA")
-            MERGE_SHA=$(jq -r '.merge_sha'            "$DATA")
-            TICKET=$(jq -r '.ticket'                  "$DATA")
-            VERSION=$(jq -r '.version'                "$DATA")
-            PR_NUMBER=$(jq -r '.pr_number'            "$DATA")
-            MODE="auto"
-            echo "ℹ️  Auto-triggered by backport failure — using auto mode."
-          else
-            FEATURE_BRANCH="$D_FEATURE_BRANCH"
-            SUPPORT_BRANCH="$D_SUPPORT_BRANCH"
-            MERGE_SHA="$D_MERGE_SHA"
-            TICKET="$D_TICKET"
-            VERSION="$D_VERSION"
-            PR_NUMBER="$D_PR_NUMBER"
-            MODE="${D_MODE:-manual}"
-            echo "ℹ️  Manually triggered — mode: $MODE"
-          fi
-
-          echo "feature_branch=$FEATURE_BRANCH" >> "$GITHUB_OUTPUT"
-          echo "support_branch=$SUPPORT_BRANCH" >> "$GITHUB_OUTPUT"
-          echo "merge_sha=$MERGE_SHA"           >> "$GITHUB_OUTPUT"
-          echo "ticket=$TICKET"                 >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION"               >> "$GITHUB_OUTPUT"
-          echo "pr_number=$PR_NUMBER"           >> "$GITHUB_OUTPUT"
-          echo "mode=$MODE"                     >> "$GITHUB_OUTPUT"
+          echo "feature_branch=$D_FEATURE_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "support_branch=$D_SUPPORT_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "merge_sha=$D_MERGE_SHA"           >> "$GITHUB_OUTPUT"
+          echo "ticket=$D_TICKET"                 >> "$GITHUB_OUTPUT"
+          echo "version=$D_VERSION"               >> "$GITHUB_OUTPUT"
+          echo "pr_number=$D_PR_NUMBER"           >> "$GITHUB_OUTPUT"
+          echo "mode=${D_MODE:-auto}"             >> "$GITHUB_OUTPUT"
 
           echo ""
           echo "┌─ RESOLVER INPUTS ──────────────────────────────────────────────┐"
-          echo "│  Mode           : $MODE"
-          echo "│  Feature branch : $FEATURE_BRANCH"
-          echo "│  Support branch : $SUPPORT_BRANCH"
-          echo "│  Merge SHA      : $MERGE_SHA"
-          echo "│  Ticket         : $TICKET"
-          echo "│  Version        : $VERSION"
-          echo "│  PR number      : ${PR_NUMBER:-none}"
+          echo "│  Mode           : ${D_MODE:-auto}"
+          echo "│  Feature branch : $D_FEATURE_BRANCH"
+          echo "│  Support branch : $D_SUPPORT_BRANCH"
+          echo "│  Merge SHA      : $D_MERGE_SHA"
+          echo "│  Ticket         : $D_TICKET"
+          echo "│  Version        : $D_VERSION"
+          echo "│  PR number      : ${D_PR_NUMBER:-none}"
           echo "└────────────────────────────────────────────────────────────────┘"
 
-      # ── 3. Checkout feature branch and reproduce conflict ────────────────────
+      # ── 2. Checkout feature branch and reproduce conflict ────────────────────
       - name: Checkout feature branch and reproduce conflict
         id: conflict
         env:
@@ -184,26 +139,37 @@ jobs:
         run: |
           set +e
 
-          git diff --name-only --diff-filter=U | grep -v '^\.github/' | while read -r FILE; do
+          # ── Collect conflicted files into array (avoid subshell from pipe) ──
+          mapfile -t CONFLICT_FILES < <(git diff --name-only --diff-filter=U 2>/dev/null | grep -v '^\.github/')
+
+          echo "📋 Conflicts to resolve: ${#CONFLICT_FILES[@]} file(s)"
+
+          for FILE in "${CONFLICT_FILES[@]}"; do
             echo "🔧 Resolving: $FILE"
 
-            printf '%s' "$(git show ":1:$FILE" 2>/dev/null)" > /tmp/base.tmp
-            printf '%s' "$(git show ":2:$FILE" 2>/dev/null)" > /tmp/ours.tmp
-            printf '%s' "$(git show ":3:$FILE" 2>/dev/null)" > /tmp/theirs.tmp
+            # Extract all 3 versions cleanly
+            git show ":1:$FILE" 2>/dev/null > /tmp/base.tmp  || true
+            git show ":2:$FILE" 2>/dev/null > /tmp/ours.tmp  || true
+            git show ":3:$FILE" 2>/dev/null > /tmp/theirs.tmp || true
 
-            if diff3 -m /tmp/ours.tmp /tmp/base.tmp /tmp/theirs.tmp > "$FILE" 2>/dev/null; then
-              echo "  ✅ Auto-merged (clean): $FILE"
+            # Strategy 1: clean 3-way merge (diff3)
+            if diff3 -m /tmp/ours.tmp /tmp/base.tmp /tmp/theirs.tmp > /tmp/merged.tmp 2>/dev/null; then
+              cp /tmp/merged.tmp "$FILE"
               git add "$FILE"
+              echo "  ✅ Auto-merged (clean diff3): $FILE"
+
+            # Strategy 2: take incoming (cherry-pick side) — standard backport
+            elif [ -s /tmp/theirs.tmp ]; then
+              cp /tmp/theirs.tmp "$FILE"
+              git add "$FILE"
+              echo "  ✅ Resolved using incoming version (theirs): $FILE"
+
             else
-              if git show ":3:$FILE" > "$FILE" 2>/dev/null && [ -s "$FILE" ]; then
-                echo "  ✅ Resolved using incoming version: $FILE"
-                git add "$FILE"
-              else
-                echo "  ❌ Could not auto-resolve: $FILE"
-              fi
+              echo "  ❌ Could not auto-resolve: $FILE"
             fi
           done
 
+          # ── Check if any conflicts remain ─────────────────────────────────
           REMAINING=$(git diff --name-only --diff-filter=U 2>/dev/null | grep -v '^\.github/' || true)
 
           if [ -z "$REMAINING" ]; then
@@ -212,7 +178,7 @@ jobs:
             echo "resolved=true" >> "$GITHUB_OUTPUT"
           else
             echo "❌ Could not auto-resolve all conflicts:"
-            echo "$REMAINING" | while read -r f; do echo "  ❌ $f"; done
+            echo "$REMAINING" | while read -r f; do echo "    ❌ $f"; done
             echo "resolved=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
@@ -236,7 +202,10 @@ jobs:
           COMMENT+="**Ticket:** \`${TICKET}\`  \n**Target:** \`${SUPPORT_BRANCH}\`  \n"
           COMMENT+="**Feature branch:** \`${FEATURE_BRANCH}\`  \n\n---\n\n"
 
-          git diff --name-only --diff-filter=U | grep -v '^\.github/' | while read -r FILE; do
+          # ── Use mapfile to avoid subshell (pipe loses variable changes) ──────
+          mapfile -t MANUAL_FILES < <(git diff --name-only --diff-filter=U 2>/dev/null | grep -v '^\.github/')
+
+          for FILE in "${MANUAL_FILES[@]}"; do
             CONFLICT_SECTION=$(grep -n -A5 -B5 '<<<<<<' "$FILE" 2>/dev/null | head -80 || true)
             COMMENT+="\n### 📄 \`$FILE\`\n\n\`\`\`diff\n${CONFLICT_SECTION}\n\`\`\`\n\n"
             COMMENT+="> **Suggestion:** Accept incoming change from \`${MERGE_SHA}\`\n\n"
