@@ -1,18 +1,29 @@
 name: PR - Validate Release Version
 
-# yml1: Runs when PR is opened/updated targeting develop or support/* branches.
-# Checks that the PR description contains a valid 'release_version:' field.
+# yml1: Runs when PR is opened/updated targeting dummy_develop or support/* branches.
+# Checks that the PR description contains a valid 'release_version:' field
+# AND that the target support branch actually exists on the remote.
+#
+# Rules:
+#   release_version: none       → ✅ no backport needed
+#   release_version: 8.3.4      → ✅ valid (maps to support/8.3.4.0)
+#   release_version: 8.3.4.0    → ✅ valid (maps to support/8.3.4.0)
+#   release_version: (missing)  → ❌ field is required
+#   release_version: 8          → ❌ too short (need X.Y.Z or X.Y.Z.W)
+#   release_version: 8.3        → ❌ missing patch number
+#   release_version: support/8.3.4.0 → ❌ don't include "support/" prefix
+#   valid format but branch missing  → ❌ support branch not found on remote
 
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize]
     branches:
-      - develop
       - dummy_develop
       - 'support/**'
       - 'release/**'
 
 permissions:
+  contents: read
   pull-requests: write
 
 jobs:
@@ -21,75 +32,103 @@ jobs:
 
     steps:
 
-      - name: Extract release_version from PR description
-        id: extract
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RDKCM_RDKE }}
+
+      - name: Validate release_version
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BODY:   ${{ github.event.pull_request.body }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          # Look for line:  release_version: 8.3.4  or  release_version: none
+          # ── Extract release_version field ────────────────────────────────────
           VERSION=$(echo "$PR_BODY" \
             | grep -i 'release_version:' \
             | head -1 \
             | sed 's/.*release_version:[[:space:]]*//' \
             | xargs 2>/dev/null || true)
 
-          echo "Extracted value: '$VERSION'"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Validate format
-        env:
-          VERSION:   ${{ steps.extract.outputs.version }}
-          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          echo "PR branch  : $PR_BRANCH"
-          echo "PR number  : #$PR_NUMBER"
-          echo "release_version: '$VERSION'"
+          echo "PR branch       : $PR_BRANCH"
+          echo "PR number       : #$PR_NUMBER"
+          echo "release_version : '$VERSION'"
           echo ""
 
-          # ── Field missing completely ─────────────────────────────────────────
+          # ── Rule 1: Field must be present ────────────────────────────────────
           if [ -z "$VERSION" ]; then
-            echo "❌  'release_version:' field is MISSING from PR description."
+            echo "❌  VALIDATION FAILED: 'release_version:' field is MISSING from PR description."
             echo ""
-            echo "    Add one of these lines to your PR description:"
-            echo ""
-            echo "      release_version: none       → no backport needed"
-            echo "      release_version: 8.3.4      → backport to support/8.3.4.0"
-            echo "      release_version: 8.3.4.0    → backport to support/8.3.4.0"
+            echo "  ┌─ RULES ──────────────────────────────────────────────────────┐"
+            echo "  │  Add ONE of these lines to your PR description:              │"
+            echo "  │                                                               │"
+            echo "  │  release_version: none       → no backport needed            │"
+            echo "  │  release_version: 8.3.4      → backport to support/8.3.4.0  │"
+            echo "  │  release_version: 8.3.4.0    → backport to support/8.3.4.0  │"
+            echo "  └───────────────────────────────────────────────────────────────┘"
             exit 1
           fi
 
-          # ── none → no backport needed ────────────────────────────────────────
+          # ── Rule 2: 'none' = no backport needed ──────────────────────────────
           if echo "$VERSION" | grep -qi '^none$'; then
-            echo "✅  release_version: none"
-            echo "    No cherry-pick to release branches is needed for this PR."
+            echo "✅  release_version: none — no backport needed for this PR."
             exit 0
           fi
 
-          # ── Valid format X.Y.Z or X.Y.Z.W ───────────────────────────────────
-          if echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
-            # Determine target support branch name
-            PARTS=$(echo "$VERSION" | tr '.' ' ' | wc -w | tr -d ' ')
-            if [ "$PARTS" -eq 3 ]; then
-              SUPPORT="support/${VERSION}.0"
-            else
-              SUPPORT="support/${VERSION}"
-            fi
+          # ── Rule 3: Must not include 'support/' prefix ───────────────────────
+          if echo "$VERSION" | grep -qi '^support/'; then
+            echo "❌  VALIDATION FAILED: Do not include 'support/' prefix."
+            echo ""
+            echo "  Wrong : release_version: support/8.3.4.0"
+            echo "  Correct: release_version: 8.3.4.0"
+            exit 1
+          fi
+
+          # ── Rule 4: Must be X.Y.Z or X.Y.Z.W format ─────────────────────────
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+            echo "❌  VALIDATION FAILED: Invalid format '$VERSION'"
+            echo ""
+            echo "  ┌─ VALID FORMATS ──────────────────────────────────────────────┐"
+            echo "  │  release_version: none       → no backport                   │"
+            echo "  │  release_version: 8.3.4      → 3-part version (X.Y.Z)        │"
+            echo "  │  release_version: 8.3.4.0    → 4-part version (X.Y.Z.W)      │"
+            echo "  │                                                               │"
+            echo "  │  ❌ Wrong examples:                                           │"
+            echo "  │  release_version: 8           → too short, need X.Y.Z        │"
+            echo "  │  release_version: 8.3         → missing patch number         │"
+            echo "  │  release_version: support/8.3.4.0 → remove 'support/' prefix │"
+            echo "  └───────────────────────────────────────────────────────────────┘"
+            exit 1
+          fi
+
+          # ── Build support branch name ─────────────────────────────────────────
+          PARTS=$(echo "$VERSION" | tr '.' ' ' | wc -w | tr -d ' ')
+          if [ "$PARTS" -eq 3 ]; then
+            SUPPORT_BRANCH="support/${VERSION}.0"
+          else
+            SUPPORT_BRANCH="support/${VERSION}"
+          fi
+
+          # ── Rule 5: Support branch must exist on remote ───────────────────────
+          git fetch origin 2>/dev/null || true
+
+          if git ls-remote --exit-code --heads origin "$SUPPORT_BRANCH" > /dev/null 2>&1; then
             echo "✅  release_version: $VERSION"
-            echo "    When this PR is merged → changes will be backported to: $SUPPORT"
-            exit 0
+            echo "✅  Support branch found: $SUPPORT_BRANCH"
+            echo ""
+            echo "    When this PR is merged → changes will be backported to: $SUPPORT_BRANCH"
+          else
+            echo "❌  VALIDATION FAILED: Support branch '$SUPPORT_BRANCH' does NOT exist on remote."
+            echo ""
+            echo "    Available support branches:"
+            git branch -r | grep 'origin/support/' | sed 's/.*origin\//  /' || echo "  (none found)"
+            echo ""
+            echo "  ┌─ CHECK ──────────────────────────────────────────────────────┐"
+            echo "  │  Your release_version: $VERSION"
+            echo "  │  Maps to branch      : $SUPPORT_BRANCH  ← not found         │"
+            echo "  │                                                               │"
+            echo "  │  Use a version that matches an existing support branch above. │"
+            echo "  └───────────────────────────────────────────────────────────────┘"
+            exit 1
           fi
-
-          # ── Invalid format ───────────────────────────────────────────────────
-          echo "❌  Invalid release_version format: '$VERSION'"
-          echo ""
-          echo "    Expected formats:"
-          echo "      release_version: none       → no backport"
-          echo "      release_version: 8.3.4      → backport to support/8.3.4.0"
-          echo "      release_version: 8.3.4.0    → backport to support/8.3.4.0"
-          echo ""
-          echo "    Wrong examples (will fail):"
-          echo "      release_version: 8          → too short (need X.Y.Z)"
-          echo "      release_version: 8.3        → missing patch number"
-          echo "      release_version: 8.         → incomplete"
-          exit 1

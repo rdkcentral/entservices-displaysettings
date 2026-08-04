@@ -9,7 +9,6 @@ on:
   pull_request:
     types: [closed]
     branches:
-      - develop
       - dummy_develop
       - 'support/**'
       - 'release/**'
@@ -164,98 +163,115 @@ jobs:
           VERSION:        ${{ steps.info.outputs.version }}
           PR_TITLE:       ${{ steps.info.outputs.pr_title }}
           FEATURE_BRANCH: ${{ steps.info.outputs.feature_branch }}
+          SUPPORT_BRANCH: ${{ steps.info.outputs.support_branch }}
+          REPO:           ${{ github.repository }}
         run: |
           set +e
           echo "Applying: git cherry-pick -m 1 --no-commit $MERGE_SHA"
-          echo ""
-
           git cherry-pick -m 1 --no-commit "$MERGE_SHA" 2>&1
           CP_EXIT=$?
 
-          if [ "$CP_EXIT" -eq 0 ]; then
-            # ── Remove .github/ files from staging — workflow/template files
-            # should NOT go to the release branch (they belong to develop only)
-            git restore --staged .github/ 2>/dev/null || true
-            git checkout HEAD -- .github/ 2>/dev/null || true
+          # ── Always remove .github/ conflicts first (modify/delete on support branch) ──
+          # support/x.x.x.x does not have .github/ — any conflict there is expected, remove it
+          GITHUB_CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null | grep '^\.github/' || true)
+          if [ -n "$GITHUB_CONFLICTS" ]; then
+            echo "Removing .github/ conflicts (not needed on release branch):"
+            echo "$GITHUB_CONFLICTS" | while read -r f; do
+              git rm --cached --force "$f" 2>/dev/null || true
+              rm -f "$f" 2>/dev/null || true
+              echo "  ⛔ $f (excluded)"
+            done
+          fi
 
-            # Show exactly which files WILL be committed (code only)
+          # ── Also remove any staged .github/ files (even without conflict) ──
+          git restore --staged .github/ 2>/dev/null || true
+          git checkout HEAD -- .github/ 2>/dev/null || true
+
+          # ── Check if any REAL (non-.github/) conflicts remain ──
+          REAL_CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null | grep -v '^\.github/' || true)
+
+          if [ -z "$REAL_CONFLICTS" ]; then
+            # No real conflicts — success
             echo ""
             echo "Files going to release branch:"
             git diff --cached --name-only | while read -r f; do echo "  ✅ $f"; done
             echo ""
-            echo "Files excluded (.github/ — stay in develop only):"
-            git show "$MERGE_SHA" --name-only --format="" \
-              | grep '^\.github/' | while read -r f; do echo "  ⛔ $f (excluded)"; done
-            echo ""
 
             if git diff --cached --quiet; then
               echo "✅ No code changes to apply — already up to date."
-              git cherry-pick --abort 2>/dev/null || true
               echo "applied=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
 
             git commit -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE}"
-            echo ""
             echo "✅ Changes applied and committed."
             echo "applied=true"    >> "$GITHUB_OUTPUT"
             echo "conflicts=false" >> "$GITHUB_OUTPUT"
 
           else
-            # ── Conflict report ───────────────────────────────────────────────
-            echo ""
-            echo "╔══════════════════════════════════════════════════════════════════╗"
-            echo "║                ⚠️  MERGE CONFLICTS DETECTED                      ║"
-            echo "╚══════════════════════════════════════════════════════════════════╝"
-            echo ""
-            echo "  Merge commit  : $MERGE_SHA"
-            echo "  Target branch : $FEATURE_BRANCH"
-            echo "  Release       : support/$VERSION"
-            echo ""
-            echo "  Conflicting files:"
-            git diff --name-only --diff-filter=U 2>/dev/null | while read -r f; do
-              echo "    ❌ $f"
-            done
-            echo ""
-            echo "  What each conflict looks like (your changes vs target):"
-            git diff --diff-filter=U 2>/dev/null | head -100
-            echo ""
-            echo "  ┌─ HOW TO FIX MANUALLY ──────────────────────────────────────────┐"
-            echo "  │  1. git fetch origin"
-            echo "  │  2. git checkout $FEATURE_BRANCH  (or create from support/$VERSION)"
-            echo "  │  3. git cherry-pick -m 1 $MERGE_SHA"
-            echo "  │  4. Open each conflicting file and resolve"
-            echo "  │  5. git add .  &&  git cherry-pick --continue"
-            echo "  │  6. git push origin $FEATURE_BRANCH"
-            echo "  └────────────────────────────────────────────────────────────────┘"
-            echo ""
+            # ── Real conflict report ──────────────────────────────────────────
+            echo "⚠️  MERGE CONFLICTS in code files:"
+            echo "$REAL_CONFLICTS" | while read -r f; do echo "    ❌ $f"; done
 
             git cherry-pick --abort 2>/dev/null || true
+
+            echo "  Fix manually:"
+            echo "  1. git fetch origin"
+            echo "  2. git checkout $FEATURE_BRANCH"
+            echo "  3. git cherry-pick -m 1 $MERGE_SHA"
+            echo "  4. Resolve conflicts, then: git add . && git cherry-pick --continue"
+            echo "  5. git push origin $FEATURE_BRANCH"
+
             echo "applied=false"  >> "$GITHUB_OUTPUT"
             echo "conflicts=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
 
-      # ── 5. Create backport tags (BEFORE the push, so tag points to the commit) ─
+      # ── 5. Create backport tag (validated, no random timestamp) ─────────────
       - name: Create backport tag
         if: steps.info.outputs.skip != 'true' && steps.apply.outputs.applied == 'true'
         id: tag
         env:
           TICKET:  ${{ steps.info.outputs.ticket }}
           VERSION: ${{ steps.info.outputs.version }}
-          REPO:    ${{ github.repository }}
         run: |
-          TIMESTAMP=$(date -u '+%Y%m%d%H%M')
+          # ── Validate TICKET format: must be LETTERS-NUMBERS (e.g. RDKEMW-21092) ──
+          if ! echo "$TICKET" | grep -qE '^[A-Z]+-[0-9]+$'; then
+            echo "❌ Invalid ticket format: '$TICKET' (expected e.g. RDKEMW-21092)"
+            echo "backport_tag=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-          # Tag format: backport/{ticket}/{version}/{timestamp}
-          # e.g.  backport/RDKEMW-21092/8.3.4/202608031045
-          BACKPORT_TAG="backport/${TICKET}/${VERSION}/${TIMESTAMP}"
+          # ── Validate VERSION format: must be X.Y.Z or X.Y.Z.W ───────────────
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+            echo "❌ Invalid version format: '$VERSION' (expected e.g. 8.3.4.0)"
+            echo "backport_tag=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # ── Build clean tag: backport/{TICKET}/{VERSION} ─────────────────────
+          BACKPORT_TAG="backport/${TICKET}/${VERSION}"
+
+          echo "Tag to create: $BACKPORT_TAG"
+
+          # ── Check if tag already exists on remote ────────────────────────────
+          if git ls-remote --tags origin "$BACKPORT_TAG" | grep -q "$BACKPORT_TAG"; then
+            echo "⚠️  Tag '$BACKPORT_TAG' already exists — skipping tag creation."
+            echo "backport_tag=$BACKPORT_TAG" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           git tag "$BACKPORT_TAG"
-          git push origin "$BACKPORT_TAG"
 
-          echo "backport_tag=$BACKPORT_TAG" >> "$GITHUB_OUTPUT"
-          echo "✅ Backport tag created: $BACKPORT_TAG"
+          # ── Push tag — skip gracefully if repo restricts tag creation ────────
+          if git push origin "$BACKPORT_TAG" 2>/dev/null; then
+            echo "✅ Backport tag created: $BACKPORT_TAG"
+            echo "backport_tag=$BACKPORT_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "⚠️  Tag push not allowed in this repo — continuing without tag."
+            git tag -d "$BACKPORT_TAG" 2>/dev/null || true
+            echo "backport_tag=none" >> "$GITHUB_OUTPUT"
+          fi
 
       # ── 6. Push feature branch ───────────────────────────────────────────────
       - name: Push feature branch
@@ -282,7 +298,7 @@ jobs:
         run: |
           set +e
           TITLE="${TICKET}: Backport into support/${VERSION}"
-          BODY="${TICKET}: Backport of **${PR_TITLE}** into \`${SUPPORT_BRANCH}\`."$'\n\n'"---"$'\n'"**Ticket:** ${TICKET}"$'\n'"**Original PR:** ${ORIGINAL_PR}"$'\n'"**Release version:** ${VERSION}"
+          BODY="${TICKET}: Backport of **${PR_TITLE}** into \`${SUPPORT_BRANCH}\`."$'\n\n'"---"$'\n'"**Ticket:** ${TICKET}"$'\n'"**Original PR:** ${ORIGINAL_PR}"$'\n'"**Backport tag:** ${BACKPORT_TAG}"$'\n\n'"release_version: none"
 
           JSON=$(jq -n \
             --arg title "$TITLE" \
