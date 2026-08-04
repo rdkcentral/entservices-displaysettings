@@ -9,7 +9,6 @@ on:
   pull_request:
     types: [closed]
     branches:
-      - develop
       - dummy_develop
       - 'support/**'
       - 'release/**'
@@ -228,26 +227,51 @@ jobs:
             exit 1
           fi
 
-      # ── 5. Create backport tags (BEFORE the push, so tag points to the commit) ─
+      # ── 5. Create backport tag (validated, no random timestamp) ─────────────
       - name: Create backport tag
         if: steps.info.outputs.skip != 'true' && steps.apply.outputs.applied == 'true'
         id: tag
         env:
           TICKET:  ${{ steps.info.outputs.ticket }}
           VERSION: ${{ steps.info.outputs.version }}
-          REPO:    ${{ github.repository }}
         run: |
-          TIMESTAMP=$(date -u '+%Y%m%d%H%M')
+          # ── Validate TICKET format: must be LETTERS-NUMBERS (e.g. RDKEMW-21092) ──
+          if ! echo "$TICKET" | grep -qE '^[A-Z]+-[0-9]+$'; then
+            echo "❌ Invalid ticket format: '$TICKET' (expected e.g. RDKEMW-21092)"
+            echo "backport_tag=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-          # Tag format: backport/{ticket}/{version}/{timestamp}
-          # e.g.  backport/RDKEMW-21092/8.3.4/202608031045
-          BACKPORT_TAG="backport/${TICKET}/${VERSION}/${TIMESTAMP}"
+          # ── Validate VERSION format: must be X.Y.Z or X.Y.Z.W ───────────────
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+            echo "❌ Invalid version format: '$VERSION' (expected e.g. 8.3.4.0)"
+            echo "backport_tag=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # ── Build clean tag: backport/{TICKET}/{VERSION} ─────────────────────
+          BACKPORT_TAG="backport/${TICKET}/${VERSION}"
+
+          echo "Tag to create: $BACKPORT_TAG"
+
+          # ── Check if tag already exists on remote ────────────────────────────
+          if git ls-remote --tags origin "$BACKPORT_TAG" | grep -q "$BACKPORT_TAG"; then
+            echo "⚠️  Tag '$BACKPORT_TAG' already exists — skipping tag creation."
+            echo "backport_tag=$BACKPORT_TAG" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           git tag "$BACKPORT_TAG"
-          git push origin "$BACKPORT_TAG"
 
-          echo "backport_tag=$BACKPORT_TAG" >> "$GITHUB_OUTPUT"
-          echo "✅ Backport tag created: $BACKPORT_TAG"
+          # ── Push tag — skip gracefully if repo restricts tag creation ────────
+          if git push origin "$BACKPORT_TAG" 2>/dev/null; then
+            echo "✅ Backport tag created: $BACKPORT_TAG"
+            echo "backport_tag=$BACKPORT_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "⚠️  Tag push not allowed in this repo — continuing without tag."
+            git tag -d "$BACKPORT_TAG" 2>/dev/null || true
+            echo "backport_tag=none" >> "$GITHUB_OUTPUT"
+          fi
 
       # ── 6. Push feature branch ───────────────────────────────────────────────
       - name: Push feature branch
