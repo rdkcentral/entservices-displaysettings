@@ -16,7 +16,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  actions: write
 
 jobs:
   backport:
@@ -228,15 +227,20 @@ jobs:
 
             # ── Write conflict metadata JSON (uploaded as artifact next step) ─
             mkdir -p /tmp/conflict-metadata
+            # Convert newline-separated file list to JSON array
+            CF_JSON=$(echo "$REAL_CONFLICTS" | jq -R . | jq -s .)
             jq -n \
-              --arg fb "$FEATURE_BRANCH" \
-              --arg sb "$SUPPORT_BRANCH" \
-              --arg ms "$MERGE_SHA" \
-              --arg t  "$TICKET" \
-              --arg v  "$VERSION" \
-              --arg pn "$PR_NUMBER" \
-              '{feature_branch:$fb,support_branch:$sb,merge_sha:$ms,ticket:$t,version:$v,pr_number:$pn}' \
+              --arg  fb "$FEATURE_BRANCH" \
+              --arg  sb "$SUPPORT_BRANCH" \
+              --arg  ms "$MERGE_SHA" \
+              --arg  t  "$TICKET" \
+              --arg  v  "$VERSION" \
+              --arg  pn "$PR_NUMBER" \
+              --argjson cf "$CF_JSON" \
+              '{feature_branch:$fb,support_branch:$sb,merge_sha:$ms,ticket:$t,version:$v,pr_number:$pn,conflict_files:$cf}' \
               > /tmp/conflict-metadata/data.json
+            echo "📄 data.json contents:"
+            cat /tmp/conflict-metadata/data.json
 
             echo "📋 Conflict files:"
             echo "$REAL_CONFLICTS" | while read -r f; do echo "    ❌ $f"; done
@@ -253,65 +257,9 @@ jobs:
           path: /tmp/conflict-metadata/data.json
           retention-days: 1
 
-      # ── 4c. Trigger conflict-resolver workflow via dispatch ───────────────────
-      - name: Trigger conflict resolver
-        if: always() && steps.apply.outputs.conflicts == 'true'
-        env:
-          GH_TOKEN:       ${{ secrets.RDKCM_RDKE }}
-          REPO:           ${{ github.repository }}
-          WORKFLOW_REF:   ${{ github.event.pull_request.base.ref }}
-          FEATURE_BRANCH: ${{ steps.info.outputs.feature_branch }}
-          SUPPORT_BRANCH: ${{ steps.info.outputs.support_branch }}
-          MERGE_SHA:      ${{ steps.info.outputs.merge_sha }}
-          TICKET:         ${{ steps.info.outputs.ticket }}
-          VERSION:        ${{ steps.info.outputs.version }}
-          PR_NUMBER:      ${{ github.event.pull_request.number }}
-        run: |
-          echo "🚀 Triggering conflict-resolver.yml on branch: $WORKFLOW_REF"
-
-          PAYLOAD=$(jq -n \
-            --arg ref  "$WORKFLOW_REF" \
-            --arg mode "auto" \
-            --arg fb   "$FEATURE_BRANCH" \
-            --arg sb   "$SUPPORT_BRANCH" \
-            --arg ms   "$MERGE_SHA" \
-            --arg t    "$TICKET" \
-            --arg v    "$VERSION" \
-            --arg pn   "$PR_NUMBER" \
-            '{
-              ref: $ref,
-              inputs: {
-                mode: $mode,
-                feature_branch: $fb,
-                support_branch: $sb,
-                merge_sha: $ms,
-                ticket: $t,
-                version: $v,
-                pr_number: $pn
-              }
-            }')
-
-          HTTP=$(curl -s -o /tmp/dispatch_resp.json -w "%{http_code}" \
-            -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "Content-Type: application/json" \
-            "https://api.github.com/repos/${REPO}/actions/workflows/conflict-resolver.yml/dispatches" \
-            -d "$PAYLOAD")
-
-          echo "HTTP response: $HTTP"
-          cat /tmp/dispatch_resp.json || true
-
-          if [ "$HTTP" = "204" ]; then
-            echo "✅ Conflict resolver triggered successfully on ref: $WORKFLOW_REF"
-          else
-            echo "❌ Dispatch FAILED HTTP $HTTP on ref: $WORKFLOW_REF"
-            echo "   Payload sent:"
-            echo "$PAYLOAD"
-            echo "   Tip: Check that conflict-resolver.yml exists on branch: $WORKFLOW_REF"
-            echo "        and that RDKCM_RDKE token has actions:write permission."
-            exit 1
-          fi
+      # ── 4c. Conflict resolver is triggered automatically via workflow_run ───────
+      # conflict-resolver.yml watches for this workflow to complete with failure.
+      # No API call needed — GitHub triggers it natively when conflicts=true.
 
       # ── 5. Create backport tags (BEFORE the push, so tag points to the commit) ─
       - name: Create backport tag
