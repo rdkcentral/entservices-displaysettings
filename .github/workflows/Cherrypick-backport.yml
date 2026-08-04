@@ -173,8 +173,23 @@ jobs:
           CP_EXIT=$?
 
           if [ "$CP_EXIT" -eq 0 ]; then
+            # ── Remove .github/ files from staging — workflow/template files
+            # should NOT go to the release branch (they belong to develop only)
+            git restore --staged .github/ 2>/dev/null || true
+            git checkout HEAD -- .github/ 2>/dev/null || true
+
+            # Show exactly which files WILL be committed (code only)
+            echo ""
+            echo "Files going to release branch:"
+            git diff --cached --name-only | while read -r f; do echo "  ✅ $f"; done
+            echo ""
+            echo "Files excluded (.github/ — stay in develop only):"
+            git show "$MERGE_SHA" --name-only --format="" \
+              | grep '^\.github/' | while read -r f; do echo "  ⛔ $f (excluded)"; done
+            echo ""
+
             if git diff --cached --quiet; then
-              echo "✅ No new changes to apply — already up to date."
+              echo "✅ No code changes to apply — already up to date."
               git cherry-pick --abort 2>/dev/null || true
               echo "applied=true" >> "$GITHUB_OUTPUT"
               exit 0
