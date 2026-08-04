@@ -1,15 +1,21 @@
 name: Conflict Resolver (Auto / Manual)
 
-# Triggered automatically via workflow_dispatch API call from Cherrypick-backport.yml
-# when a cherry-pick conflict is detected.
-# Can also be triggered manually from the Actions UI.
+# AUTO TRIGGER: Fires when "PR - Backport to Release Branch" completes.
+#   Reads conflict metadata from the artifact uploaded by that workflow.
+#   No API call, no token permissions needed — GitHub triggers natively.
+#
+# MANUAL TRIGGER: Can also be run manually from Actions UI with custom inputs.
 on:
+  workflow_run:
+    workflows: ["PR - Backport to Release Branch"]
+    types: [completed]
+
   workflow_dispatch:
     inputs:
       mode:
         description: "Resolution mode"
         required: true
-        default: "manual"
+        default: "auto"
         type: choice
         options:
           - auto
@@ -41,6 +47,11 @@ permissions:
 jobs:
   resolve-conflicts:
     runs-on: ubuntu-latest
+    # Only run when triggered by a FAILED backport workflow
+    # (if manually dispatched, always run)
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'failure'
 
     steps:
 
@@ -56,10 +67,41 @@ jobs:
           git config user.name  "GitHub Actions [Conflict Resolver]"
           git config user.email "github-actions@users.noreply.github.com"
 
-      # ── 1. Read inputs (passed directly from backport workflow dispatch call) ──
+      # ── 1. Download artifact (workflow_run only) ─────────────────────────────
+      - name: Download conflict metadata artifact
+        if: github.event_name == 'workflow_run'
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: conflict-metadata
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.RDKCM_RDKE }}
+          path: /tmp/conflict-metadata
+
+      # ── 1b. Check artifact exists — skip if backport failed for other reason ──
+      - name: Check artifact exists
+        if: github.event_name == 'workflow_run'
+        id: check_artifact
+        run: |
+          if [ -f "/tmp/conflict-metadata/data.json" ]; then
+            echo "✅ Conflict artifact found — proceeding with resolution."
+            echo "has_artifact=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ℹ️  No conflict artifact found."
+            echo "    Backport workflow failed for a non-conflict reason (e.g. missing release_version)."
+            echo "    Skipping conflict resolution — nothing to do."
+            echo "has_artifact=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── 1c. Resolve inputs from artifact OR manual dispatch ──────────────────
       - name: Resolve inputs
         id: inputs
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          steps.check_artifact.outputs.has_artifact == 'true'
         env:
+          EVENT:            ${{ github.event_name }}
           D_MODE:           ${{ github.event.inputs.mode }}
           D_FEATURE_BRANCH: ${{ github.event.inputs.feature_branch }}
           D_SUPPORT_BRANCH: ${{ github.event.inputs.support_branch }}
@@ -68,28 +110,54 @@ jobs:
           D_VERSION:        ${{ github.event.inputs.version }}
           D_PR_NUMBER:      ${{ github.event.inputs.pr_number }}
         run: |
-          echo "feature_branch=$D_FEATURE_BRANCH" >> "$GITHUB_OUTPUT"
-          echo "support_branch=$D_SUPPORT_BRANCH" >> "$GITHUB_OUTPUT"
-          echo "merge_sha=$D_MERGE_SHA"           >> "$GITHUB_OUTPUT"
-          echo "ticket=$D_TICKET"                 >> "$GITHUB_OUTPUT"
-          echo "version=$D_VERSION"               >> "$GITHUB_OUTPUT"
-          echo "pr_number=$D_PR_NUMBER"           >> "$GITHUB_OUTPUT"
-          echo "mode=${D_MODE:-auto}"             >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" = "workflow_run" ]; then
+            # ── Read from artifact (contains: feature_branch, support_branch,
+            #    merge_sha, ticket, version, pr_number, conflict_files) ─────────
+            DATA=/tmp/conflict-metadata/data.json
+            FEATURE_BRANCH=$(jq -r '.feature_branch'        "$DATA")
+            SUPPORT_BRANCH=$(jq -r '.support_branch'        "$DATA")
+            MERGE_SHA=$(jq -r      '.merge_sha'             "$DATA")
+            TICKET=$(jq -r         '.ticket'                "$DATA")
+            VERSION=$(jq -r        '.version'               "$DATA")
+            PR_NUMBER=$(jq -r      '.pr_number'             "$DATA")
+            CONFLICT_FILES=$(jq -r '.conflict_files | join(", ")' "$DATA")
+            MODE="auto"
+            echo "📋 Conflict files from artifact: $CONFLICT_FILES"
+          else
+            # ── Use manually provided inputs ──────────────────────────────────
+            FEATURE_BRANCH="$D_FEATURE_BRANCH"
+            SUPPORT_BRANCH="$D_SUPPORT_BRANCH"
+            MERGE_SHA="$D_MERGE_SHA"
+            TICKET="$D_TICKET"
+            VERSION="$D_VERSION"
+            PR_NUMBER="$D_PR_NUMBER"
+            MODE="${D_MODE:-auto}"
+          fi
+
+          echo "feature_branch=$FEATURE_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "support_branch=$SUPPORT_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "merge_sha=$MERGE_SHA"           >> "$GITHUB_OUTPUT"
+          echo "ticket=$TICKET"                 >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"               >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUMBER"           >> "$GITHUB_OUTPUT"
+          echo "mode=$MODE"                     >> "$GITHUB_OUTPUT"
 
           echo ""
           echo "┌─ RESOLVER INPUTS ──────────────────────────────────────────────┐"
-          echo "│  Mode           : ${D_MODE:-auto}"
-          echo "│  Feature branch : $D_FEATURE_BRANCH"
-          echo "│  Support branch : $D_SUPPORT_BRANCH"
-          echo "│  Merge SHA      : $D_MERGE_SHA"
-          echo "│  Ticket         : $D_TICKET"
-          echo "│  Version        : $D_VERSION"
-          echo "│  PR number      : ${D_PR_NUMBER:-none}"
+          echo "│  Trigger        : $EVENT"
+          echo "│  Mode           : $MODE"
+          echo "│  Feature branch : $FEATURE_BRANCH"
+          echo "│  Support branch : $SUPPORT_BRANCH"
+          echo "│  Merge SHA      : $MERGE_SHA"
+          echo "│  Ticket         : $TICKET"
+          echo "│  Version        : $VERSION"
+          echo "│  PR number      : ${PR_NUMBER:-none}"
           echo "└────────────────────────────────────────────────────────────────┘"
 
       # ── 2. Checkout feature branch and reproduce conflict ────────────────────
       - name: Checkout feature branch and reproduce conflict
         id: conflict
+        if: steps.inputs.outputs.feature_branch != ''
         env:
           FEATURE_BRANCH: ${{ steps.inputs.outputs.feature_branch }}
           SUPPORT_BRANCH: ${{ steps.inputs.outputs.support_branch }}
