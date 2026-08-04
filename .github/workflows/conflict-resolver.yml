@@ -1,0 +1,309 @@
+name: Conflict Resolver (Auto / Manual)
+
+# Auto-triggered when "PR - Backport to Release Branch" fails (workflow_run).
+# Data is passed via artifact uploaded by the backport workflow.
+# Can also be triggered manually via workflow_dispatch with explicit inputs.
+on:
+  workflow_run:
+    workflows: ["PR - Backport to Release Branch"]
+    types: [completed]
+
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Resolution mode"
+        required: true
+        default: "manual"
+        type: choice
+        options:
+          - auto
+          - manual
+      feature_branch:
+        description: "Feature branch with conflicts (e.g. feature/RDKEMW-21092)"
+        required: true
+      support_branch:
+        description: "Target support branch (e.g. support/8.3.4.0)"
+        required: true
+      merge_sha:
+        description: "Merge commit SHA to cherry-pick"
+        required: true
+      ticket:
+        description: "Ticket ID (e.g. RDKEMW-21092)"
+        required: true
+      version:
+        description: "Release version (e.g. 8.3.4.0)"
+        required: true
+      pr_number:
+        description: "Original PR number (for comment posting — optional)"
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  resolve-conflicts:
+    runs-on: ubuntu-latest
+    # workflow_run: only run when backport FAILED
+    # workflow_dispatch: always run
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure')
+
+    steps:
+
+      # ── 0. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RDKCM_RDKE }}
+
+      - name: Configure Git
+        run: |
+          git config user.name  "GitHub Actions [Conflict Resolver]"
+          git config user.email "github-actions@users.noreply.github.com"
+
+      # ── 1. Download artifact (workflow_run trigger only) ─────────────────────
+      - name: Download conflict metadata artifact
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: conflict-metadata
+          path: /tmp/conflict-metadata
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.RDKCM_RDKE }}
+
+      # ── 2. Normalize inputs from artifact OR dispatch inputs ─────────────────
+      - name: Resolve inputs
+        id: inputs
+        env:
+          EVENT_NAME:       ${{ github.event_name }}
+          D_MODE:           ${{ github.event.inputs.mode }}
+          D_FEATURE_BRANCH: ${{ github.event.inputs.feature_branch }}
+          D_SUPPORT_BRANCH: ${{ github.event.inputs.support_branch }}
+          D_MERGE_SHA:      ${{ github.event.inputs.merge_sha }}
+          D_TICKET:         ${{ github.event.inputs.ticket }}
+          D_VERSION:        ${{ github.event.inputs.version }}
+          D_PR_NUMBER:      ${{ github.event.inputs.pr_number }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            DATA="/tmp/conflict-metadata/data.json"
+            if [ ! -f "$DATA" ]; then
+              echo "❌ Artifact not found — backport may not have produced conflict metadata."
+              exit 1
+            fi
+            FEATURE_BRANCH=$(jq -r '.feature_branch' "$DATA")
+            SUPPORT_BRANCH=$(jq -r '.support_branch' "$DATA")
+            MERGE_SHA=$(jq -r '.merge_sha'            "$DATA")
+            TICKET=$(jq -r '.ticket'                  "$DATA")
+            VERSION=$(jq -r '.version'                "$DATA")
+            PR_NUMBER=$(jq -r '.pr_number'            "$DATA")
+            MODE="auto"
+            echo "ℹ️  Auto-triggered by backport failure — using auto mode."
+          else
+            FEATURE_BRANCH="$D_FEATURE_BRANCH"
+            SUPPORT_BRANCH="$D_SUPPORT_BRANCH"
+            MERGE_SHA="$D_MERGE_SHA"
+            TICKET="$D_TICKET"
+            VERSION="$D_VERSION"
+            PR_NUMBER="$D_PR_NUMBER"
+            MODE="${D_MODE:-manual}"
+            echo "ℹ️  Manually triggered — mode: $MODE"
+          fi
+
+          echo "feature_branch=$FEATURE_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "support_branch=$SUPPORT_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "merge_sha=$MERGE_SHA"           >> "$GITHUB_OUTPUT"
+          echo "ticket=$TICKET"                 >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"               >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUMBER"           >> "$GITHUB_OUTPUT"
+          echo "mode=$MODE"                     >> "$GITHUB_OUTPUT"
+
+          echo ""
+          echo "┌─ RESOLVER INPUTS ──────────────────────────────────────────────┐"
+          echo "│  Mode           : $MODE"
+          echo "│  Feature branch : $FEATURE_BRANCH"
+          echo "│  Support branch : $SUPPORT_BRANCH"
+          echo "│  Merge SHA      : $MERGE_SHA"
+          echo "│  Ticket         : $TICKET"
+          echo "│  Version        : $VERSION"
+          echo "│  PR number      : ${PR_NUMBER:-none}"
+          echo "└────────────────────────────────────────────────────────────────┘"
+
+      # ── 3. Checkout feature branch and reproduce conflict ────────────────────
+      - name: Checkout feature branch and reproduce conflict
+        id: conflict
+        env:
+          FEATURE_BRANCH: ${{ steps.inputs.outputs.feature_branch }}
+          SUPPORT_BRANCH: ${{ steps.inputs.outputs.support_branch }}
+          MERGE_SHA:      ${{ steps.inputs.outputs.merge_sha }}
+        run: |
+          git fetch origin
+
+          if git ls-remote --exit-code --heads origin "$FEATURE_BRANCH" > /dev/null 2>&1; then
+            git checkout "$FEATURE_BRANCH"
+            git reset --hard "origin/$FEATURE_BRANCH"
+          else
+            git checkout -b "$FEATURE_BRANCH" "origin/$SUPPORT_BRANCH"
+          fi
+
+          set +e
+          git cherry-pick -m 1 --no-commit "$MERGE_SHA" 2>&1
+
+          git diff --name-only --diff-filter=U 2>/dev/null | grep '^\.github/' | while read -r f; do
+            git rm --cached --force "$f" 2>/dev/null || true
+            rm -f "$f" 2>/dev/null || true
+          done
+          git restore --staged .github/ 2>/dev/null || true
+          git checkout HEAD -- .github/ 2>/dev/null || true
+
+          REAL_CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null | grep -v '^\.github/' || true)
+          echo "conflict_files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$REAL_CONFLICTS"     >> "$GITHUB_OUTPUT"
+          echo "EOF"                 >> "$GITHUB_OUTPUT"
+
+          if [ -z "$REAL_CONFLICTS" ]; then
+            echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
+            echo "ℹ️  No real conflicts found — may already be resolved."
+          else
+            echo "has_conflicts=true" >> "$GITHUB_OUTPUT"
+            echo "Conflicts found:"
+            echo "$REAL_CONFLICTS" | while read -r f; do echo "  ❌ $f"; done
+          fi
+
+      # ── 4A. AUTO MODE: Resolve using diff3 + prefer incoming ─────────────────
+      - name: "[AUTO] Resolve conflicts"
+        if: steps.inputs.outputs.mode == 'auto' && steps.conflict.outputs.has_conflicts == 'true'
+        id: auto_resolve
+        env:
+          TICKET:    ${{ steps.inputs.outputs.ticket }}
+          VERSION:   ${{ steps.inputs.outputs.version }}
+          MERGE_SHA: ${{ steps.inputs.outputs.merge_sha }}
+        run: |
+          set +e
+
+          git diff --name-only --diff-filter=U | grep -v '^\.github/' | while read -r FILE; do
+            echo "🔧 Resolving: $FILE"
+
+            printf '%s' "$(git show ":1:$FILE" 2>/dev/null)" > /tmp/base.tmp
+            printf '%s' "$(git show ":2:$FILE" 2>/dev/null)" > /tmp/ours.tmp
+            printf '%s' "$(git show ":3:$FILE" 2>/dev/null)" > /tmp/theirs.tmp
+
+            if diff3 -m /tmp/ours.tmp /tmp/base.tmp /tmp/theirs.tmp > "$FILE" 2>/dev/null; then
+              echo "  ✅ Auto-merged (clean): $FILE"
+              git add "$FILE"
+            else
+              if git show ":3:$FILE" > "$FILE" 2>/dev/null && [ -s "$FILE" ]; then
+                echo "  ✅ Resolved using incoming version: $FILE"
+                git add "$FILE"
+              else
+                echo "  ❌ Could not auto-resolve: $FILE"
+              fi
+            fi
+          done
+
+          REMAINING=$(git diff --name-only --diff-filter=U 2>/dev/null | grep -v '^\.github/' || true)
+
+          if [ -z "$REMAINING" ]; then
+            git commit -m "${TICKET}: Backport to support/${VERSION} [auto conflict-resolved]"
+            echo "✅ All conflicts resolved and committed."
+            echo "resolved=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ Could not auto-resolve all conflicts:"
+            echo "$REMAINING" | while read -r f; do echo "  ❌ $f"; done
+            echo "resolved=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      # ── 4B. MANUAL MODE: Post conflict analysis as PR comment ────────────────
+      - name: "[MANUAL] Post conflict analysis to PR"
+        if: steps.inputs.outputs.mode == 'manual' && steps.conflict.outputs.has_conflicts == 'true'
+        env:
+          TICKET:         ${{ steps.inputs.outputs.ticket }}
+          VERSION:        ${{ steps.inputs.outputs.version }}
+          FEATURE_BRANCH: ${{ steps.inputs.outputs.feature_branch }}
+          SUPPORT_BRANCH: ${{ steps.inputs.outputs.support_branch }}
+          MERGE_SHA:      ${{ steps.inputs.outputs.merge_sha }}
+          PR_NUMBER:      ${{ steps.inputs.outputs.pr_number }}
+          REPO:           ${{ github.repository }}
+          GH_TOKEN:       ${{ secrets.RDKCM_RDKE }}
+        run: |
+          set +e
+
+          COMMENT="## ⚠️ Backport Merge Conflicts Detected\n\n"
+          COMMENT+="**Ticket:** \`${TICKET}\`  \n**Target:** \`${SUPPORT_BRANCH}\`  \n"
+          COMMENT+="**Feature branch:** \`${FEATURE_BRANCH}\`  \n\n---\n\n"
+
+          git diff --name-only --diff-filter=U | grep -v '^\.github/' | while read -r FILE; do
+            CONFLICT_SECTION=$(grep -n -A5 -B5 '<<<<<<' "$FILE" 2>/dev/null | head -80 || true)
+            COMMENT+="\n### 📄 \`$FILE\`\n\n\`\`\`diff\n${CONFLICT_SECTION}\n\`\`\`\n\n"
+            COMMENT+="> **Suggestion:** Accept incoming change from \`${MERGE_SHA}\`\n\n"
+            COMMENT+="> \`\`\`bash\n> git fetch origin\n> git checkout ${FEATURE_BRANCH}\n"
+            COMMENT+="> git cherry-pick -m 1 ${MERGE_SHA}\n> # resolve $FILE\n"
+            COMMENT+="> git add $FILE && git cherry-pick --continue\n"
+            COMMENT+="> git push origin ${FEATURE_BRANCH}\n> \`\`\`\n\n---\n"
+          done
+
+          COMMENT+="\n> 💡 Re-run with **auto** mode: Actions → Conflict Resolver → Run workflow → select \`auto\`"
+
+          if [ -n "$PR_NUMBER" ]; then
+            ESCAPED=$(printf '%s' "$COMMENT" | jq -Rs .)
+            curl -s -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              -d "{\"body\": ${ESCAPED}}"
+            echo "✅ Conflict analysis posted to PR #${PR_NUMBER}"
+          else
+            printf '%b\n' "$COMMENT"
+          fi
+
+      # ── 5. Push resolved branch (auto mode only) ─────────────────────────────
+      - name: Push resolved branch
+        if: steps.inputs.outputs.mode == 'auto' && steps.auto_resolve.outputs.resolved == 'true'
+        env:
+          FEATURE_BRANCH: ${{ steps.inputs.outputs.feature_branch }}
+        run: |
+          git push origin "$FEATURE_BRANCH"
+          echo "✅ Resolved branch pushed: $FEATURE_BRANCH"
+
+      # ── 6. Create PR after auto-resolve ──────────────────────────────────────
+      - name: Create PR after auto-resolve
+        if: steps.inputs.outputs.mode == 'auto' && steps.auto_resolve.outputs.resolved == 'true'
+        env:
+          FEATURE_BRANCH: ${{ steps.inputs.outputs.feature_branch }}
+          SUPPORT_BRANCH: ${{ steps.inputs.outputs.support_branch }}
+          TICKET:         ${{ steps.inputs.outputs.ticket }}
+          VERSION:        ${{ steps.inputs.outputs.version }}
+          REPO:           ${{ github.repository }}
+          GH_TOKEN:       ${{ secrets.RDKCM_RDKE }}
+        run: |
+          set +e
+          TITLE="${TICKET}: Backport into support/${VERSION} [conflict-resolved]"
+          BODY="${TICKET}: Auto-resolved backport into \`${SUPPORT_BRANCH}\`."$'\n\n'"release_version: none"
+
+          JSON=$(jq -n \
+            --arg title "$TITLE" \
+            --arg body  "$BODY" \
+            --arg head  "$FEATURE_BRANCH" \
+            --arg base  "$SUPPORT_BRANCH" \
+            '{title: $title, body: $body, head: $head, base: $base}')
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPO}/pulls" \
+            -d "$JSON")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          if [ "$HTTP_CODE" = "201" ]; then
+            PR_URL=$(echo "$RESPONSE" | head -n -1 | jq -r '.html_url')
+            echo "✅ PR created: $PR_URL"
+          elif [ "$HTTP_CODE" = "422" ]; then
+            echo "ℹ️  PR already exists — skipping."
+          else
+            echo "⚠️  HTTP $HTTP_CODE — check manually."
+          fi
