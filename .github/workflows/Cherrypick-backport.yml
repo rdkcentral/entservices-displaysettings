@@ -165,6 +165,7 @@ jobs:
           FEATURE_BRANCH: ${{ steps.info.outputs.feature_branch }}
           SUPPORT_BRANCH: ${{ steps.info.outputs.support_branch }}
           REPO:           ${{ github.repository }}
+          PR_NUMBER:      ${{ github.event.pull_request.number }}
         run: |
           set +e
           echo "Applying: git cherry-pick -m 1 --no-commit $MERGE_SHA"
@@ -215,63 +216,61 @@ jobs:
 
             git cherry-pick --abort 2>/dev/null || true
 
-            echo "  Fix manually:"
-            echo "  1. git fetch origin"
-            echo "  2. git checkout $FEATURE_BRANCH"
-            echo "  3. git cherry-pick -m 1 $MERGE_SHA"
-            echo "  4. Resolve conflicts, then: git add . && git cherry-pick --continue"
-            echo "  5. git push origin $FEATURE_BRANCH"
+            # ── Emit conflict metadata for the resolver workflow ──────────────
+            echo "conflict_files<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$REAL_CONFLICTS"     >> "$GITHUB_OUTPUT"
+            echo "EOF"                 >> "$GITHUB_OUTPUT"
+            echo "pr_number=$PR_NUMBER"   >> "$GITHUB_OUTPUT"
+
+            git cherry-pick --abort 2>/dev/null || true
+
+            # ── Write conflict metadata artifact (used by conflict-resolver workflow) ──
+            mkdir -p /tmp/conflict-metadata
+            jq -n \
+              --arg fb "$FEATURE_BRANCH" \
+              --arg sb "$SUPPORT_BRANCH" \
+              --arg ms "$MERGE_SHA" \
+              --arg t  "$TICKET" \
+              --arg v  "$VERSION" \
+              --arg pn "$PR_NUMBER" \
+              '{feature_branch:$fb,support_branch:$sb,merge_sha:$ms,ticket:$t,version:$v,pr_number:$pn}' \
+              > /tmp/conflict-metadata/data.json
+            echo "✅ Conflict metadata written — resolver will auto-trigger."
 
             echo "applied=false"  >> "$GITHUB_OUTPUT"
             echo "conflicts=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
 
-      # ── 5. Create backport tag (validated, no random timestamp) ─────────────
+      # ── 4b. Upload conflict metadata artifact ────────────────────────────────
+      - name: Upload conflict metadata
+        if: steps.apply.outputs.conflicts == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: conflict-metadata
+          path: /tmp/conflict-metadata/data.json
+          retention-days: 1
+
+      # ── 5. Create backport tags (BEFORE the push, so tag points to the commit) ─
       - name: Create backport tag
         if: steps.info.outputs.skip != 'true' && steps.apply.outputs.applied == 'true'
         id: tag
         env:
           TICKET:  ${{ steps.info.outputs.ticket }}
           VERSION: ${{ steps.info.outputs.version }}
+          REPO:    ${{ github.repository }}
         run: |
-          # ── Validate TICKET format: must be LETTERS-NUMBERS (e.g. RDKEMW-21092) ──
-          if ! echo "$TICKET" | grep -qE '^[A-Z]+-[0-9]+$'; then
-            echo "❌ Invalid ticket format: '$TICKET' (expected e.g. RDKEMW-21092)"
-            echo "backport_tag=none" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          TIMESTAMP=$(date -u '+%Y%m%d%H%M')
 
-          # ── Validate VERSION format: must be X.Y.Z or X.Y.Z.W ───────────────
-          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
-            echo "❌ Invalid version format: '$VERSION' (expected e.g. 8.3.4.0)"
-            echo "backport_tag=none" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # ── Build clean tag: backport/{TICKET}/{VERSION} ─────────────────────
-          BACKPORT_TAG="backport/${TICKET}/${VERSION}"
-
-          echo "Tag to create: $BACKPORT_TAG"
-
-          # ── Check if tag already exists on remote ────────────────────────────
-          if git ls-remote --tags origin "$BACKPORT_TAG" | grep -q "$BACKPORT_TAG"; then
-            echo "⚠️  Tag '$BACKPORT_TAG' already exists — skipping tag creation."
-            echo "backport_tag=$BACKPORT_TAG" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          # Tag format: backport/{ticket}/{version}/{timestamp}
+          # e.g.  backport/RDKEMW-21092/8.3.4/202608031045
+          BACKPORT_TAG="backport/${TICKET}/${VERSION}/${TIMESTAMP}"
 
           git tag "$BACKPORT_TAG"
+          git push origin "$BACKPORT_TAG"
 
-          # ── Push tag — skip gracefully if repo restricts tag creation ────────
-          if git push origin "$BACKPORT_TAG" 2>/dev/null; then
-            echo "✅ Backport tag created: $BACKPORT_TAG"
-            echo "backport_tag=$BACKPORT_TAG" >> "$GITHUB_OUTPUT"
-          else
-            echo "⚠️  Tag push not allowed in this repo — continuing without tag."
-            git tag -d "$BACKPORT_TAG" 2>/dev/null || true
-            echo "backport_tag=none" >> "$GITHUB_OUTPUT"
-          fi
+          echo "backport_tag=$BACKPORT_TAG" >> "$GITHUB_OUTPUT"
+          echo "✅ Backport tag created: $BACKPORT_TAG"
 
       # ── 6. Push feature branch ───────────────────────────────────────────────
       - name: Push feature branch
