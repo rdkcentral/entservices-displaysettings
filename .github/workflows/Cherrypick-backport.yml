@@ -145,66 +145,6 @@ jobs:
 
           echo "✅ On branch: $(git rev-parse --abbrev-ref HEAD)"
 
-      # ══════════════════════════════════════════════════════════════════════════
-      # 🆕 CONFLICT DETECTION AGENT INTEGRATION (3 NEW STEPS)
-      # ══════════════════════════════════════════════════════════════════════════
-      
-      # ── 3.5. PRE-CHECK: Detect conflicts BEFORE auto-resolution ────────────────
-      - name: Pre-check for merge conflicts
-        if: steps.info.outputs.skip != 'true'
-        id: precheck
-        continue-on-error: true  # Don't fail workflow, just report status
-        env:
-          MERGE_SHA:      ${{ steps.info.outputs.merge_sha }}
-          FEATURE_BRANCH: ${{ steps.info.outputs.feature_branch }}
-          SUPPORT_BRANCH: ${{ steps.info.outputs.support_branch }}
-        run: |
-          echo "🔍 Running conflict pre-check (AI agent integration)..."
-          bash .github/scripts/check-merge-conflicts.sh \
-            "$MERGE_SHA" \
-            "$FEATURE_BRANCH" \
-            "$SUPPORT_BRANCH"
-          
-      - name: Report conflict status
-        if: steps.info.outputs.skip != 'true'
-        env:
-          HAS_CONFLICTS: ${{ steps.precheck.outputs.has_conflicts }}
-          CONFLICT_COUNT: ${{ steps.precheck.outputs.conflict_count }}
-        run: |
-          if [ "$HAS_CONFLICTS" = "true" ]; then
-            echo "⚠️  Conflict pre-check: CONFLICTS DETECTED ($CONFLICT_COUNT files)"
-            echo "   Auto-resolution will be attempted in next step..."
-          else
-            echo "✅ Conflict pre-check: CLEAN MERGE"
-            echo "   No conflicts detected, proceeding..."
-          fi
-          
-          # Show conflict report if exists
-          if [ -f "/tmp/conflict-status.json" ]; then
-            echo ""
-            echo "📊 Conflict Status:"
-            cat /tmp/conflict-status.json | jq . 2>/dev/null || cat /tmp/conflict-status.json
-          fi
-          
-          if [ -f "/tmp/workflow-analysis-request.md" ]; then
-            echo ""
-            echo "📝 AI analysis request generated - see artifacts"
-          fi
-          
-      - name: Upload conflict analysis artifacts
-        if: steps.info.outputs.skip != 'true' && steps.precheck.outputs.has_conflicts == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: conflict-analysis-${{ steps.info.outputs.ticket }}
-          path: |
-            /tmp/conflict-status.json
-            /tmp/workflow-analysis-request.md
-          retention-days: 30
-          
-      # ══════════════════════════════════════════════════════════════════════════
-      # 🆕 END OF CONFLICT DETECTION INTEGRATION
-      # ══════════════════════════════════════════════════════════════════════════
-
       # ── 4. Cherry-pick + inline conflict resolution ───────────────────────────
       - name: Apply changes (cherry-pick + auto-resolve conflicts)
         if: steps.info.outputs.skip != 'true'
@@ -443,22 +383,7 @@ jobs:
             fi
           fi
 
-      # ── 5. Create backport tag ────────────────────────────────────────────────
-      - name: Create backport tag
-        if: steps.info.outputs.skip != 'true' && steps.apply.outputs.applied == 'true'
-        id: tag
-        env:
-          TICKET:  ${{ steps.info.outputs.ticket }}
-          VERSION: ${{ steps.info.outputs.version }}
-        run: |
-          TIMESTAMP=$(date -u '+%Y%m%d%H%M')
-          BACKPORT_TAG="backport/${TICKET}/${VERSION}/${TIMESTAMP}"
-          git tag "$BACKPORT_TAG"
-          git push origin "$BACKPORT_TAG"
-          echo "backport_tag=$BACKPORT_TAG" >> "$GITHUB_OUTPUT"
-          echo "✅ Backport tag created: $BACKPORT_TAG"
-
-      # ── 6. Push feature branch ───────────────────────────────────────────────
+      # ── 5. Push feature branch ───────────────────────────────────────────────
       - name: Push feature branch
         if: steps.info.outputs.skip != 'true' && steps.apply.outputs.applied == 'true'
         env:
@@ -467,7 +392,7 @@ jobs:
           git push origin "$FEATURE_BRANCH"
           echo "✅ Pushed: $FEATURE_BRANCH"
 
-      # ── 7. Create PR only if one does not already exist ──────────────────────
+      # ── 6. Create PR only if one does not already exist ──────────────────────
       - name: Create Pull Request (if not already open)
         if: steps.info.outputs.skip != 'true' && steps.apply.outputs.applied == 'true'
         env:
@@ -477,7 +402,6 @@ jobs:
           VERSION:           ${{ steps.info.outputs.version }}
           PR_TITLE:          ${{ steps.info.outputs.pr_title }}
           ORIGINAL_PR:       ${{ steps.info.outputs.pr_url }}
-          BACKPORT_TAG:      ${{ steps.tag.outputs.backport_tag }}
           CONFLICT_RESOLVED: ${{ steps.apply.outputs.conflict_resolved }}
           REPO:              ${{ github.repository }}
           GH_TOKEN:          ${{ secrets.RDKCM_RDKE }}
@@ -512,8 +436,7 @@ jobs:
 
           BODY+="---"$'\n'
           BODY+="**Ticket:** ${TICKET}"$'\n'
-          BODY+="**Original PR:** ${ORIGINAL_PR}"$'\n'
-          BODY+="**Backport tag:** ${BACKPORT_TAG}"$'\n\n'
+          BODY+="**Original PR:** ${ORIGINAL_PR}"$'\n\n'
           BODY+="release_version: none"
 
           JSON=$(jq -n \
