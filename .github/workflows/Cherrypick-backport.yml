@@ -145,6 +145,66 @@ jobs:
 
           echo "✅ On branch: $(git rev-parse --abbrev-ref HEAD)"
 
+      # ══════════════════════════════════════════════════════════════════════════
+      # 🆕 CONFLICT DETECTION AGENT INTEGRATION (3 NEW STEPS)
+      # ══════════════════════════════════════════════════════════════════════════
+      
+      # ── 3.5. PRE-CHECK: Detect conflicts BEFORE auto-resolution ────────────────
+      - name: Pre-check for merge conflicts
+        if: steps.info.outputs.skip != 'true'
+        id: precheck
+        continue-on-error: true  # Don't fail workflow, just report status
+        env:
+          MERGE_SHA:      ${{ steps.info.outputs.merge_sha }}
+          FEATURE_BRANCH: ${{ steps.info.outputs.feature_branch }}
+          SUPPORT_BRANCH: ${{ steps.info.outputs.support_branch }}
+        run: |
+          echo "🔍 Running conflict pre-check (AI agent integration)..."
+          bash .github/scripts/check-merge-conflicts.sh \
+            "$MERGE_SHA" \
+            "$FEATURE_BRANCH" \
+            "$SUPPORT_BRANCH"
+          
+      - name: Report conflict status
+        if: steps.info.outputs.skip != 'true'
+        env:
+          HAS_CONFLICTS: ${{ steps.precheck.outputs.has_conflicts }}
+          CONFLICT_COUNT: ${{ steps.precheck.outputs.conflict_count }}
+        run: |
+          if [ "$HAS_CONFLICTS" = "true" ]; then
+            echo "⚠️  Conflict pre-check: CONFLICTS DETECTED ($CONFLICT_COUNT files)"
+            echo "   Auto-resolution will be attempted in next step..."
+          else
+            echo "✅ Conflict pre-check: CLEAN MERGE"
+            echo "   No conflicts detected, proceeding..."
+          fi
+          
+          # Show conflict report if exists
+          if [ -f "/tmp/conflict-status.json" ]; then
+            echo ""
+            echo "📊 Conflict Status:"
+            cat /tmp/conflict-status.json | jq . 2>/dev/null || cat /tmp/conflict-status.json
+          fi
+          
+          if [ -f "/tmp/workflow-analysis-request.md" ]; then
+            echo ""
+            echo "📝 AI analysis request generated - see artifacts"
+          fi
+          
+      - name: Upload conflict analysis artifacts
+        if: steps.info.outputs.skip != 'true' && steps.precheck.outputs.has_conflicts == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: conflict-analysis-${{ steps.info.outputs.ticket }}
+          path: |
+            /tmp/conflict-status.json
+            /tmp/workflow-analysis-request.md
+          retention-days: 30
+          
+      # ══════════════════════════════════════════════════════════════════════════
+      # 🆕 END OF CONFLICT DETECTION INTEGRATION
+      # ══════════════════════════════════════════════════════════════════════════
+
       # ── 4. Cherry-pick + inline conflict resolution ───────────────────────────
       - name: Apply changes (cherry-pick + auto-resolve conflicts)
         if: steps.info.outputs.skip != 'true'
@@ -407,8 +467,8 @@ jobs:
           git push origin "$FEATURE_BRANCH"
           echo "✅ Pushed: $FEATURE_BRANCH"
 
-      # ── 7. Create Pull Request to support branch ─────────────────────────────
-      - name: Create Pull Request to support branch
+      # ── 7. Create PR only if one does not already exist ──────────────────────
+      - name: Create Pull Request (if not already open)
         if: steps.info.outputs.skip != 'true' && steps.apply.outputs.applied == 'true'
         env:
           FEATURE_BRANCH:    ${{ steps.info.outputs.feature_branch }}
@@ -423,6 +483,23 @@ jobs:
           GH_TOKEN:          ${{ secrets.RDKCM_RDKE }}
         run: |
           set +e
+          REPO_OWNER=$(echo "$REPO" | cut -d'/' -f1)
+
+          # ── Check if an open PR already exists for this head→base ─────────
+          EXISTING=$(curl -s \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPO}/pulls?head=${REPO_OWNER}:${FEATURE_BRANCH}&base=${SUPPORT_BRANCH}&state=open" \
+            | jq -r '.[0].html_url // empty')
+
+          if [ -n "$EXISTING" ]; then
+            echo "ℹ️  PR already exists — no new PR needed."
+            echo "   Existing PR: $EXISTING"
+            exit 0
+          fi
+
+          # ── No open PR → create one ────────────────────────────────────────
+          echo "✅ No existing PR found — creating backport PR..."
 
           if [ "$CONFLICT_RESOLVED" = "true" ]; then
             TITLE="${TICKET}: Backport into support/${VERSION} [conflicts auto-resolved]"
@@ -459,8 +536,6 @@ jobs:
           if [ "$HTTP_CODE" = "201" ]; then
             PR_URL=$(echo "$BODY_RESP" | jq -r '.html_url')
             echo "✅ Backport PR created: $PR_URL"
-          elif [ "$HTTP_CODE" = "422" ]; then
-            echo "ℹ️  PR already exists — skipping creation."
           else
             echo "⚠️  PR creation returned HTTP $HTTP_CODE"
             echo "$BODY_RESP" | jq . || echo "$BODY_RESP"
