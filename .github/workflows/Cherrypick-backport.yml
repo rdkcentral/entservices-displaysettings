@@ -272,42 +272,67 @@ jobs:
 
               echo "  🔧 Attempting auto-resolution..."
 
-              # Strategy 1: clean 3-way merge (diff3)
+              # ── Strategy 1: clean 3-way merge (diff3) ──────────────────────
               if diff3 -m /tmp/ours.tmp /tmp/base.tmp /tmp/theirs.tmp > /tmp/merged.tmp 2>/dev/null; then
                 cp /tmp/merged.tmp "$FILE"
                 git add "$FILE"
                 MERGED_LINES=$(wc -l < /tmp/merged.tmp 2>/dev/null || echo 0)
-                echo "  ✅ Strategy: CLEAN 3-WAY MERGE (diff3)"
+                echo "  ✅ Strategy 1: CLEAN 3-WAY MERGE (diff3)"
                 echo "     Result: $MERGED_LINES lines — both changes merged intelligently"
-                echo ""
-                echo "  📋 Final resolved content (first 50 lines):"
-                echo "  ┌─────────────────────────────────────────────────┐"
-                head -50 /tmp/merged.tmp | sed 's/^/  │ /'
-                echo "  └─────────────────────────────────────────────────┘"
 
-              # Strategy 2: take incoming version (develop wins — standard for backport)
+              # ── Strategy 2: apply ONLY the cherry-pick delta to support version ──
+              # Computes what changed between BASE→THEIRS and patches OURS with it.
+              # Support branch file stays intact — only the specific commit lines are applied.
               elif [ -s /tmp/theirs.tmp ]; then
-                cp /tmp/theirs.tmp "$FILE"
-                git add "$FILE"
-                echo "  ✅ Strategy: TOOK INCOMING (develop) VERSION"
-                echo "     Reason : diff3 could not cleanly merge (same lines modified on both sides)"
-                echo "     Action : develop branch version applied to $FILE"
-                echo "     ⚠️  WARNING: support branch version of this file was overwritten"
-                echo "              Please review the PR diff carefully before merging"
-                echo ""
-                echo "  📋 What was on SUPPORT branch (overwritten):"
-                echo "  ┌─────────────────────────────────────────────────┐"
-                diff /tmp/ours.tmp /tmp/theirs.tmp 2>/dev/null \
-                  | grep "^<" | head -30 \
-                  | sed 's/^< /  │ SUPPORT: /'
-                echo "  └─────────────────────────────────────────────────┘"
-                echo ""
-                echo "  📋 What was applied from DEVELOP branch:"
-                echo "  ┌─────────────────────────────────────────────────┐"
-                diff /tmp/ours.tmp /tmp/theirs.tmp 2>/dev/null \
-                  | grep "^>" | head -30 \
-                  | sed 's/^> /  │ DEVELOP: /'
-                echo "  └─────────────────────────────────────────────────┘"
+                # Compute the exact delta this cherry-pick commit introduced
+                git diff ":1:$FILE" ":3:$FILE" > /tmp/cherry_patch.diff 2>/dev/null || true
+
+                STRATEGY_USED=""
+                if [ -s /tmp/cherry_patch.diff ]; then
+                  # Start from support branch version (no conflict markers)
+                  cp /tmp/ours.tmp "$FILE"
+
+                  # Apply only the delta with fuzzy context tolerance
+                  patch --no-backup-if-mismatch -F 5 "$FILE" < /tmp/cherry_patch.diff > /tmp/patch_out.txt 2>&1
+                  PATCH_EXIT=$?
+
+                  if [ $PATCH_EXIT -eq 0 ] && [ ! -f "${FILE}.rej" ]; then
+                    git add "$FILE"
+                    PATCHED_LINES=$(wc -l < "$FILE" 2>/dev/null || echo 0)
+                    DELTA_LINES=$(grep -c '^[+-]' /tmp/cherry_patch.diff 2>/dev/null || echo 0)
+                    STRATEGY_USED="patch"
+                    echo "  ✅ Strategy 2: TARGETED PATCH — only cherry-pick delta applied"
+                    echo "     Support file preserved : $OURS_LINES lines kept as base"
+                    echo "     Cherry-pick delta      : ~${DELTA_LINES} changed lines applied"
+                    echo "     Result file size       : $PATCHED_LINES lines"
+                    echo ""
+                    echo "  📋 Lines changed by this cherry-pick:"
+                    echo "  ┌─────────────────────────────────────────────────┐"
+                    grep '^[+-]' /tmp/cherry_patch.diff \
+                      | grep -v '^[+-][+-][+-]' \
+                      | head -40 \
+                      | sed 's/^/  │ /'
+                    echo "  └─────────────────────────────────────────────────┘"
+                  fi
+                  rm -f "${FILE}.rej" "${FILE}.orig" 2>/dev/null || true
+                fi
+
+                # ── Strategy 3 fallback: take THEIRS (only if patch also failed) ──
+                if [ "$STRATEGY_USED" != "patch" ]; then
+                  cp /tmp/theirs.tmp "$FILE"
+                  git add "$FILE"
+                  echo "  ✅ Strategy 3: TOOK INCOMING (develop) VERSION [patch fallback]"
+                  echo "     Reason : targeted patch could not apply cleanly"
+                  echo "     Action : full develop version of $FILE applied"
+                  echo "     ⚠️  WARNING: support branch version overwritten — review PR diff before merging"
+                  echo ""
+                  echo "  📋 Lines from support branch that were overwritten:"
+                  echo "  ┌─────────────────────────────────────────────────┐"
+                  diff /tmp/ours.tmp /tmp/theirs.tmp 2>/dev/null \
+                    | grep "^<" | head -30 \
+                    | sed 's/^< /  │ SUPPORT: /'
+                  echo "  └─────────────────────────────────────────────────┘"
+                fi
 
               else
                 echo "  ❌ Strategy: FAILED — could not auto-resolve"
