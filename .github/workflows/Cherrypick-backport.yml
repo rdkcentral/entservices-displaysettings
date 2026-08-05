@@ -277,51 +277,64 @@ jobs:
                 cp /tmp/merged.tmp "$FILE"
                 git add "$FILE"
                 MERGED_LINES=$(wc -l < /tmp/merged.tmp 2>/dev/null || echo 0)
+                CONFLICT_MARKERS=$(grep -c '<<<<<<\|======\|>>>>>>' /tmp/merged.tmp 2>/dev/null || echo 0)
                 echo "  ✅ Strategy 1: CLEAN 3-WAY MERGE (diff3)"
                 echo "     Result: $MERGED_LINES lines — both changes merged intelligently"
+                echo "     Conflict markers in output: $CONFLICT_MARKERS"
 
-              # ── Strategy 2: apply ONLY the cherry-pick delta to support version ──
-              # Computes what changed between BASE→THEIRS and patches OURS with it.
-              # Support branch file stays intact — only the specific commit lines are applied.
+              # ── Strategy 2: surgical conflict resolution — apply ONLY the incoming delta ──
+              # Extracts conflict sections from the file and applies only the incoming (theirs) changes
+              # at the exact conflict locations. Preserves all other content from support branch.
               elif [ -s /tmp/theirs.tmp ]; then
-                # Compute the exact delta this cherry-pick commit introduced
-                git diff ":1:$FILE" ":3:$FILE" > /tmp/cherry_patch.diff 2>/dev/null || true
+                echo "  🔧 Strategy 2: SURGICAL CONFLICT RESOLUTION"
+                echo "     Applying ONLY incoming delta at conflict locations..."
 
-                STRATEGY_USED=""
-                if [ -s /tmp/cherry_patch.diff ]; then
-                  # Start from support branch version (no conflict markers)
-                  cp /tmp/ours.tmp "$FILE"
+                # Extract conflict sections (theirs side only)
+                # This gives us ONLY the lines that changed in the cherry-pick
+                CONFLICT_THEIRS=$(sed -n '/^<<<<<</,/^>>>>>>/p' "$FILE" 2>/dev/null \
+                  | sed '/^<<<<<<\|^======/d' \
+                  | sed '/^>>>>>>/d')
 
-                  # Apply only the delta with fuzzy context tolerance
-                  patch --no-backup-if-mismatch -F 5 "$FILE" < /tmp/cherry_patch.diff > /tmp/patch_out.txt 2>&1
-                  PATCH_EXIT=$?
+                if [ -n "$CONFLICT_THEIRS" ]; then
+                  # Count how many conflict blocks exist
+                  CONFLICT_BLOCKS=$(grep -c "^<<<<<<" "$FILE" 2>/dev/null || echo 0)
+                  DELTA_LINES=$(echo "$CONFLICT_THEIRS" | wc -l | tr -d ' ')
 
-                  if [ $PATCH_EXIT -eq 0 ] && [ ! -f "${FILE}.rej" ]; then
+                  echo "     Conflict blocks found: $CONFLICT_BLOCKS"
+                  echo "     Delta lines to apply: $DELTA_LINES"
+                  echo ""
+                  echo "  📋 Incoming delta (ONLY these lines will be applied):"
+                  echo "  ┌─────────────────────────────────────────────────┐"
+                  echo "$CONFLICT_THEIRS" | sed 's/^/  │ /'
+                  echo "  └─────────────────────────────────────────────────┘"
+                  echo ""
+
+                  # Apply the surgical resolution:
+                  # 1. Remove all conflict markers and take theirs side
+                  sed -i '/^<<<<<</,/^>>>>>>/ {
+                    /^<<<<<</,/^======/d
+                    /^======/d
+                    /^>>>>>>/d
+                  }' "$FILE" 2>/dev/null
+
+                  # 2. Verify no conflict markers remain
+                  REMAINING_MARKERS=$(grep -c '<<<<<<\|======\|>>>>>>' "$FILE" 2>/dev/null || echo 0)
+
+                  if [ "$REMAINING_MARKERS" -eq 0 ]; then
                     git add "$FILE"
-                    PATCHED_LINES=$(wc -l < "$FILE" 2>/dev/null || echo 0)
-                    DELTA_LINES=$(grep -c '^[+-]' /tmp/cherry_patch.diff 2>/dev/null || echo 0)
-                    STRATEGY_USED="patch"
-                    echo "  ✅ Strategy 2: TARGETED PATCH — only cherry-pick delta applied"
-                    echo "     Support file preserved : $OURS_LINES lines kept as base"
-                    echo "     Cherry-pick delta      : ~${DELTA_LINES} changed lines applied"
-                    echo "     Result file size       : $PATCHED_LINES lines"
-                    echo ""
-                    echo "  📋 Lines changed by this cherry-pick:"
-                    echo "  ┌─────────────────────────────────────────────────┐"
-                    grep '^[+-]' /tmp/cherry_patch.diff \
-                      | grep -v '^[+-][+-][+-]' \
-                      | head -40 \
-                      | sed 's/^/  │ /'
-                    echo "  └─────────────────────────────────────────────────┘"
+                    FINAL_LINES=$(wc -l < "$FILE" 2>/dev/null || echo 0)
+                    echo "  ✅ Strategy 2: SURGICAL RESOLUTION SUCCESSFUL"
+                    echo "     Applied: $DELTA_LINES delta lines ONLY"
+                    echo "     Result file: $FINAL_LINES lines (support base preserved)"
+                    echo "     Conflict markers removed: $REMAINING_MARKERS"
                   else
-                    echo "  ❌ Strategy 2: PATCH FAILED — cannot apply changes"
-                    echo "     Patch exit code: $PATCH_EXIT"
-                    cat /tmp/patch_out.txt | sed 's/^/     /'
+                    echo "  ❌ Strategy 2: SURGICAL RESOLUTION FAILED"
+                    echo "     Conflict markers remain: $REMAINING_MARKERS"
                     FAILED_FILES+=("$FILE")
                   fi
-                  rm -f "${FILE}.rej" "${FILE}.orig" 2>/dev/null || true
                 else
-                  echo "  ❌ No valid patch could be generated"
+                  echo "  ❌ Strategy 2: NO CONFLICT CONTENT FOUND"
+                  echo "     Could not extract delta from conflict markers"
                   FAILED_FILES+=("$FILE")
                 fi
 
