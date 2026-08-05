@@ -6277,7 +6277,7 @@ void DisplaySettings::sendMsgThread()
 				}
 				else
 				{
-					LOGWARN("failure: %s is not connected!",strVideoPort.c_str());
+					LOGWARN("The failure: %s is not connected!",strVideoPort.c_str());
 				}
 			}
 			catch (const device::Exception& err)
@@ -6287,7 +6287,7 @@ void DisplaySettings::sendMsgThread()
 		}
 		if( 0 == (int)connectedDisplays.size())
 		{
-			LOGWARN("Request() No display connected to the device (or) device's powerstate is not ON");
+			LOGWARN("No display connected to the device (or) device's powerstate is not ON");
             return Core::ERROR_GENERAL;
 		}
         return Core::ERROR_NONE;
