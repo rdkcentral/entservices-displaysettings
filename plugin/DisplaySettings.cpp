@@ -186,8 +186,9 @@ namespace WPEFramework {
             class Job : public Core::IDispatch {
 #endif /* USE_THUNDER_R4 */
             public:
+                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for work parameter
                 Job(std::function<void()> work)
-                    : _work(work)
+                    : _work(std::move(work))
                 {
                 }
                 void Dispatch() override
@@ -534,7 +535,10 @@ namespace WPEFramework {
 				 m_AudioDevicePowerOnStatusTimer.start(AUDIO_DEVICE_POWER_TRANSITION_TIME_IN_MILLISECONDS);
 			     } /*m_hdmiCecAudioDeviceDetected */
                              else {
+
                                  LOGINFO("Starting the timer to recheck audio device connection state after : %d ms\n", AUDIO_DEVICE_CONNECTION_CHECK_TIME_IN_MILLISECONDS);
+				 //coverity fix: MISSING_LOCK - acquire lock before accessing m_AudioDeviceDetectTimer
+                                 std::lock_guard<mutex> lock(m_callMutex);
                                  m_AudioDeviceDetectTimer.start(AUDIO_DEVICE_CONNECTION_CHECK_TIME_IN_MILLISECONDS);
                              }
                             }
@@ -596,10 +600,13 @@ namespace WPEFramework {
             LOGERR("Failed to start m_sendMsgThread: %s", e.what());
         }
 	    m_timer.connect(std::bind(&DisplaySettings::onTimer, this));
+	    {
+	    std::lock_guard<std::mutex> lock(m_callMutex);
             m_AudioDeviceDetectTimer.connect(std::bind(&DisplaySettings::checkAudioDeviceDetectionTimer, this));
             m_ArcDetectionTimer.connect(std::bind(&DisplaySettings::checkArcDeviceConnected, this));
             m_SADDetectionTimer.connect(std::bind(&DisplaySettings::checkSADUpdate, this));
 	    m_AudioDevicePowerOnStatusTimer.connect(std::bind(&DisplaySettings::checkAudioDevicePowerStatusTimer, this));
+	    }
 
             InitializePowerManager();
             try
@@ -793,7 +800,8 @@ namespace WPEFramework {
                 for (size_t i = 0; i < aPorts.size(); i++)
                 {
                     device::AudioOutputPort &aPort = aPorts.at(i);
-                    string portName = aPort.getName();
+                    //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for portName
+                    string portName = std::move(aPort.getName());
                     if (aPort.isConnected())
                     {
                         if((portName == "HDMI_ARC0") && (m_hdmiInAudioDeviceConnected != true)) {
@@ -804,14 +812,18 @@ namespace WPEFramework {
 		    else if (portName == "HDMI_ARC0" && m_hdmiInAudioDeviceConnected == true && m_arcEarcAudioEnabled == false)
 		    {
 	               /* This is the case where we get ARC initiation or eARC detection done before HPD.Send connectedport update as ARC disconnected and Restart the ARC-eARC again */
-			m_hdmiInAudioDeviceConnected = false;
-			m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
-			m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
-			m_requestSadRetrigger = false;
-			m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
-			m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UNKNOWN;
+			//coverity fix: MISSING_LOCK - acquire lock to protect shared audio device state variables
+			{
+			    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+			    m_hdmiInAudioDeviceConnected = false;
+			    m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
+			    m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
+			    m_requestSadRetrigger = false;
+			    m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
+			    m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UNKNOWN;
+			    m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
+			}
 			DisplaySettings::_instance->connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, false);
-			m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
 			LOGINFO("[HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n");
 			sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
 		    }
@@ -829,7 +841,7 @@ namespace WPEFramework {
         {   //sample servicemanager response:{"success":true,"supportedResolutions":["720p","1080i","1080p60"]}
             LOGINFOMETHOD();
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
             vector<string> supportedResolutions;
             try
             {
@@ -863,8 +875,9 @@ namespace WPEFramework {
                 for (size_t i = 0; i < vPorts.size(); i++)
                 {
                     device::VideoOutputPort &vPort = vPorts.at(i);
-                    string videoDisplay = vPort.getName();
-                    vectorSet(supportedVideoDisplays, videoDisplay);
+                    //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for videoDisplay
+                    string videoDisplay = std::move(vPort.getName());
+                    vectorSet(supportedVideoDisplays, std::move(videoDisplay));
                 }
             }
             catch (const device::Exception& err)
@@ -879,7 +892,7 @@ namespace WPEFramework {
         {   //sample servicemanager response:{"success":true,"supportedTvResolutions":["480i","480p","576i","720p","1080i","1080p"]}
             LOGINFOMETHOD();
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
             vector<string> supportedTvResolutions;
             try
             {
@@ -1002,8 +1015,8 @@ namespace WPEFramework {
                                 HAL_hasSurround = true;
                                 continue;
                             }
-
-                            vectorSet(supportedAudioModes,audioMode);
+                            //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for audioMode
+                            vectorSet(supportedAudioModes,std::move(audioMode));
                         }
                     }
                 }
@@ -1021,7 +1034,7 @@ namespace WPEFramework {
                         surroundMode = false;
                         LOG_DEVICE_EXCEPTION1(audioPort);
                     }
-                    if (isDisplayConnected(strVideoPort) && surroundMode)
+                    if (isDisplayConnected(std::move(strVideoPort)) && surroundMode)
                     {
                         if(surroundMode & dsSURROUNDMODE_DDPLUS )
                         {
@@ -1115,7 +1128,8 @@ namespace WPEFramework {
 
                 // TODO: why is this always the first one in the list?
                 device::VideoDevice &decoder = device::Host::getInstance().getVideoDevices().at(0);
-                decoder.setDFC(zoomSetting);
+                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for zoomSetting
+                decoder.setDFC(std::move(zoomSetting));
             }
             catch(const device::Exception& err)
             {
@@ -1139,7 +1153,7 @@ namespace WPEFramework {
         {   //sample servicemanager response:{"success":true,"resolution":"720p"}
             LOGINFOMETHOD();
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
             bool success = true;
             try
             {
@@ -1248,7 +1262,8 @@ namespace WPEFramework {
         uint32_t DisplaySettings::getSoundMode(const JsonObject& parameters, JsonObject& response)
         {   //sample servicemanager response:{"success":true,"soundMode":"AUTO (Dolby Digital 5.1)"}
             LOGINFOMETHOD();
-            string audioPort = parameters["audioPort"].String();//empty value will browse all ports
+            //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for audioPort
+            string audioPort = std::move(parameters["audioPort"].String());//empty value will browse all ports
 
             if (!checkPortName(audioPort))
                 audioPort = "HDMI0";
@@ -1263,7 +1278,7 @@ namespace WPEFramework {
                 if (audioPort.empty())
                 {
                     std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                    if (isDisplayConnected(strVideoPort))
+                    if (isDisplayConnected(std::move(strVideoPort)))
                     {
                         audioPort = "HDMI0";
                     }
@@ -1603,10 +1618,10 @@ namespace WPEFramework {
                 vector<uint8_t> edidVec2;
                 std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
                 device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
-                if (isDisplayConnected(strVideoPort))
+                if (isDisplayConnected(std::move(strVideoPort)))
                 {
                     vPort.getDisplay().getEDIDBytes(edidVec2);
-                    edidVec = edidVec2;//edidVec must be "unknown" unless we successfully get to this line
+                    edidVec = std::move(edidVec2);//edidVec must be "unknown" unless we successfully get to this line
 
                     //convert to base64
                     uint16_t size = min(edidVec.size(), (size_t)numeric_limits<uint16_t>::max());
@@ -1637,7 +1652,8 @@ namespace WPEFramework {
             {
                 vector<unsigned char> edidVec2;
                 device::Host::getInstance().getHostEDID(edidVec2);
-                edidVec = edidVec2;//edidVec must be "unknown" unless we successfully get to this line
+                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for edidVec2
+                edidVec = std::move(edidVec2);//edidVec must be "unknown" unless we successfully get to this line
                 LOGINFO("getHostEDID size is %d.", int(edidVec2.size()));
             }
             catch (const device::Exception& err)
@@ -1660,7 +1676,7 @@ namespace WPEFramework {
             LOGINFOMETHOD();
 
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
             bool active = true;
             try
             {
@@ -1669,7 +1685,8 @@ namespace WPEFramework {
             }
             catch(const device::Exception& err)
             {
-                LOG_DEVICE_EXCEPTION1(videoDisplay);
+                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for videoDisplay in LOG
+                LOG_DEVICE_EXCEPTION1(std::move(videoDisplay));
                 response["activeInput"] = JsonValue(false);
                 returnResponse(false);
             }
@@ -1688,7 +1705,7 @@ namespace WPEFramework {
             {
                 std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
                 device::VideoOutputPort vPort = device::VideoOutputPortConfig::getInstance().getPort(strVideoPort.c_str());
-                if (isDisplayConnected(strVideoPort)) {
+                if (isDisplayConnected(std::move(strVideoPort))) {
                     vPort.getTVHDRCapabilities(&capabilities);
                 }
             }
@@ -1856,7 +1873,7 @@ namespace WPEFramework {
             {
                 std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
                 device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
-                if (isDisplayConnected(strVideoPort))
+                if (isDisplayConnected(std::move(strVideoPort)))
                 {
                     int videoEOTF = 0, matrixCoefficients = 0, colorSpace = 0, colorDepth = 0, quantizationRange =0;
                     vPort.getCurrentOutputSettings(videoEOTF, matrixCoefficients, colorSpace, colorDepth, quantizationRange);
@@ -2151,7 +2168,8 @@ namespace WPEFramework {
             }
             catch(const device::Exception& err)
             {
-                LOG_DEVICE_EXCEPTION1(audioPort);
+                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for audioPort
+                LOG_DEVICE_EXCEPTION1(std::move(audioPort));
                 success = false;
             }
             returnResponse(success);
@@ -2855,7 +2873,8 @@ namespace WPEFramework {
             try {
                 intelligentEqualizerMode = stoi(sIntelligentEqualizerMode);
             }catch (const std::exception &err) {
-               LOGERR("Failed to parse intelligentEqualizerMode '%s'", sIntelligentEqualizerMode.c_str());
+               //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for error message
+               LOGERR("Failed to parse intelligentEqualizerMode '%s'", std::move(sIntelligentEqualizerMode.c_str()));
                           returnResponse(false);
             }
 
@@ -3020,7 +3039,8 @@ namespace WPEFramework {
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                audioProfileName = aPort.getMS12AudioProfile();
+                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for audioProfileName
+                audioProfileName = std::move(aPort.getMS12AudioProfile());
                 response["ms12AudioProfile"] = audioProfileName;
             }
             catch(const device::Exception& err)
@@ -3309,7 +3329,7 @@ namespace WPEFramework {
                 if (audioPort.empty())
                 {
                     std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                    if (isDisplayConnected(strVideoPort))
+                    if (isDisplayConnected(std::move(strVideoPort)))
                     {
                         audioPort = "HDMI0";
                     }
@@ -3339,7 +3359,8 @@ namespace WPEFramework {
             }
             catch (const device::Exception& err)
             {
-                LOG_DEVICE_EXCEPTION1(audioPort);
+                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for audioPort
+                LOG_DEVICE_EXCEPTION1(std::move(audioPort));
                 success = false;
             }
 
@@ -3380,7 +3401,7 @@ namespace WPEFramework {
                 if (audioPort.empty())
                 {
                     std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                    if (isDisplayConnected(strVideoPort)) {
+                    if (isDisplayConnected(std::move(strVideoPort))) {
                         audioPort = "HDMI0";
                     }
                     else
@@ -3408,7 +3429,8 @@ namespace WPEFramework {
             }
             catch (const device::Exception& err)
             {
-                LOG_DEVICE_EXCEPTION2(audioPort, sAudioDelayMs);
+                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for parameters
+                LOG_DEVICE_EXCEPTION2(std::move(audioPort), std::move(sAudioDelayMs));
                 success = false;
             }
             returnResponse(success);
@@ -3556,7 +3578,7 @@ namespace WPEFramework {
         {   //sample servicemanager response:{"colorDepth":"10 Bit","success":true}
             LOGINFOMETHOD();
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
             bool persist = parameters.HasLabel("persist") ? parameters["persist"].Boolean() : true;
 
             bool success = true;
@@ -4115,7 +4137,7 @@ namespace WPEFramework {
         {   //sample servicemanager response:{"success":true,"capabilities":["8 Bit","10 Bit","12 Bit","Auto"]}
             LOGINFOMETHOD();
             std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : strVideoPort;
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
             vector<string> colorDepthCapabilities;
             try
             {
@@ -4144,7 +4166,8 @@ namespace WPEFramework {
            try {
                device::Host::getInstance().getMS12ConfigDetails(type);
                LOGINFO("Platform supports MS12 Config Z\n");
-               response["ms12config"] = type;
+               //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for type
+               response["ms12config"] = std::move(type);
            }
            catch(const device::Exception& err)
             {
@@ -4858,7 +4881,6 @@ namespace WPEFramework {
 
               }
                   }//Release Mutex m_AudioDeviceStatesUpdateMutex
-
           {
                     std::lock_guard<mutex> lck(DisplaySettings::_instance->m_callMutex);
                     if ( DisplaySettings::_instance->m_timer.isActive()) {
@@ -4936,7 +4958,6 @@ void DisplaySettings::sendMsgThread()
             		_instance->m_sendMsgThreadRun = false;
             		continue;
         	}
-		
 		msgInfo = DisplaySettings::_instance->m_sendMsgQueue.front();
 		
 			switch(msgInfo.msg)
@@ -5884,8 +5905,9 @@ void DisplaySettings::sendMsgThread()
                         JsonObject params;
                         params["width"] = width;
                         params["height"] = height;
-                        params["videoDisplayType"] = display;
-                        params["resolution"] = resolution;
+                        //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for display and resolution
+                        params["videoDisplayType"] = std::move(display);
+                        params["resolution"] = std::move(resolution);
                         sendNotify("resolutionChanged", params);
                         return;
                     }
@@ -5903,8 +5925,9 @@ void DisplaySettings::sendMsgThread()
                 JsonObject params;
                 params["width"] = width;
                 params["height"] = height;
-                params["videoDisplayType"] = firstDisplay;
-                params["resolution"] = firstResolution;
+                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for firstDisplay and firstResolution
+                params["videoDisplayType"] = std::move(firstDisplay);
+                params["resolution"] = std::move(firstResolution);
                 sendNotify("resolutionChanged", params);
             }
         }
