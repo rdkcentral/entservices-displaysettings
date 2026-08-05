@@ -133,11 +133,11 @@ jobs:
         run: |
           git fetch origin "$SUPPORT_BRANCH"
 
+          # ALWAYS start fresh from support branch (no accumulated commits)
           if git ls-remote --exit-code --heads origin "$FEATURE_BRANCH" > /dev/null 2>&1; then
-            echo "Branch '$FEATURE_BRANCH' already exists — checking out..."
+            echo "Branch '$FEATURE_BRANCH' exists — resetting to clean support base..."
             git fetch origin "$FEATURE_BRANCH"
-            git checkout "$FEATURE_BRANCH"
-            git reset --hard "origin/$FEATURE_BRANCH"
+            git checkout -B "$FEATURE_BRANCH" "origin/$SUPPORT_BRANCH"
           else
             echo "Creating '$FEATURE_BRANCH' from 'origin/$SUPPORT_BRANCH'..."
             git checkout -b "$FEATURE_BRANCH" "origin/$SUPPORT_BRANCH"
@@ -313,25 +313,16 @@ jobs:
                       | head -40 \
                       | sed 's/^/  │ /'
                     echo "  └─────────────────────────────────────────────────┘"
+                  else
+                    echo "  ❌ Strategy 2: PATCH FAILED — cannot apply changes"
+                    echo "     Patch exit code: $PATCH_EXIT"
+                    cat /tmp/patch_out.txt | sed 's/^/     /'
+                    FAILED_FILES+=("$FILE")
                   fi
                   rm -f "${FILE}.rej" "${FILE}.orig" 2>/dev/null || true
-                fi
-
-                # ── Strategy 3 fallback: take THEIRS (only if patch also failed) ──
-                if [ "$STRATEGY_USED" != "patch" ]; then
-                  cp /tmp/theirs.tmp "$FILE"
-                  git add "$FILE"
-                  echo "  ✅ Strategy 3: TOOK INCOMING (develop) VERSION [patch fallback]"
-                  echo "     Reason : targeted patch could not apply cleanly"
-                  echo "     Action : full develop version of $FILE applied"
-                  echo "     ⚠️  WARNING: support branch version overwritten — review PR diff before merging"
-                  echo ""
-                  echo "  📋 Lines from support branch that were overwritten:"
-                  echo "  ┌─────────────────────────────────────────────────┐"
-                  diff /tmp/ours.tmp /tmp/theirs.tmp 2>/dev/null \
-                    | grep "^<" | head -30 \
-                    | sed 's/^< /  │ SUPPORT: /'
-                  echo "  └─────────────────────────────────────────────────┘"
+                else
+                  echo "  ❌ No valid patch could be generated"
+                  FAILED_FILES+=("$FILE")
                 fi
 
               else
@@ -389,8 +380,8 @@ jobs:
         env:
           FEATURE_BRANCH: ${{ steps.info.outputs.feature_branch }}
         run: |
-          git push origin "$FEATURE_BRANCH"
-          echo "✅ Pushed: $FEATURE_BRANCH"
+          git push origin "$FEATURE_BRANCH" --force
+          echo "✅ Pushed: $FEATURE_BRANCH (clean backport)"
 
       # ── 6. Create PR only if one does not already exist ──────────────────────
       - name: Create Pull Request (if not already open)
