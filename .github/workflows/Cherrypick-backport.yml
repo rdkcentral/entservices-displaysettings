@@ -1,9 +1,12 @@
 name: PR - Backport to Release Branch
 
-# yml2: Runs when PR is MERGED into develop/dummy_develop/support/* branches.
-# - Reads release_version from PR description (same rule as yml1)
-# - none → skip
-# - valid → create feature branch on support branch, apply changes, open PR
+# Runs when a PR is MERGED into dummy_develop / support/** / release/**
+# Reads release_version from PR description:
+#   release_version: none     → skip
+#   release_version: 8.3.4.0  → backport to support/8.3.4.0
+#
+# If cherry-pick has conflicts → resolves them inline (diff3 / take incoming)
+# No second workflow needed. No workflow_run dependency. Self-contained.
 
 on:
   pull_request:
@@ -19,7 +22,6 @@ permissions:
 
 jobs:
   backport:
-    # Only run when the PR was actually merged (not just closed)
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
 
@@ -48,7 +50,6 @@ jobs:
           MERGE_SHA:   ${{ github.event.pull_request.merge_commit_sha }}
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
         run: |
-          # ── Extract release_version ─────────────────────────────────────────
           VERSION=$(echo "$PR_BODY" \
             | grep -i 'release_version:' \
             | head -1 \
@@ -59,28 +60,24 @@ jobs:
           echo "Merged into     : $BASE_BRANCH"
           echo "release_version : '$VERSION'"
 
-          # ── Field missing ───────────────────────────────────────────────────
           if [ -z "$VERSION" ]; then
             echo "❌ 'release_version:' field missing from PR description."
-            echo "   Add: release_version: none  OR  release_version: 8.3.4"
+            echo "   Add: release_version: none  OR  release_version: 8.3.4.0"
             exit 1
           fi
 
-          # ── none → skip ─────────────────────────────────────────────────────
           if echo "$VERSION" | grep -qi '^none$'; then
             echo "ℹ️  release_version: none — no backport needed."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # ── Validate format ─────────────────────────────────────────────────
           if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
             echo "❌ Invalid release_version format: '$VERSION'"
             echo "   Use: 8.3.4  or  8.3.4.0"
             exit 1
           fi
 
-          # ── Build support branch name ───────────────────────────────────────
           PARTS=$(echo "$VERSION" | tr '.' ' ' | wc -w | tr -d ' ')
           if [ "$PARTS" -eq 3 ]; then
             SUPPORT_BRANCH="support/${VERSION}.0"
@@ -88,10 +85,7 @@ jobs:
             SUPPORT_BRANCH="support/${VERSION}"
           fi
 
-          # ── Extract ticket number from PR branch (e.g. RDKEMW-21092_aipoc → RDKEMW-21092)
           TICKET=$(echo "$PR_BRANCH" | grep -oE '[A-Z]+-[0-9]+' | head -1 || echo "BACKPORT")
-
-          # ── Feature branch name on the support branch ───────────────────────
           FEATURE_BRANCH="feature/${TICKET}"
 
           echo "skip=false"                       >> "$GITHUB_OUTPUT"
@@ -102,13 +96,14 @@ jobs:
           echo "merge_sha=$MERGE_SHA"             >> "$GITHUB_OUTPUT"
           echo "pr_title=$PR_TITLE"               >> "$GITHUB_OUTPUT"
           echo "pr_url=$PR_URL"                   >> "$GITHUB_OUTPUT"
+          echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
 
           echo ""
           echo "┌─ BACKPORT PLAN ────────────────────────────────────────────────┐"
           echo "│  Ticket          : $TICKET"
           echo "│  Release version : $VERSION"
           echo "│  Support branch  : $SUPPORT_BRANCH"
-          echo "│  Feature branch  : $FEATURE_BRANCH  (will be created on support)"
+          echo "│  Feature branch  : $FEATURE_BRANCH"
           echo "│  Merge commit    : $MERGE_SHA"
           echo "└────────────────────────────────────────────────────────────────┘"
 
@@ -124,11 +119,8 @@ jobs:
             echo "✅ Support branch exists: $SUPPORT_BRANCH"
           else
             echo "❌ Support branch NOT found: $SUPPORT_BRANCH"
-            echo ""
             echo "   Available support branches:"
             git branch -r | grep 'origin/support/' | sed 's/origin\//  /'
-            echo ""
-            echo "   Check your release_version value in the PR description."
             exit 1
           fi
 
@@ -153,8 +145,8 @@ jobs:
 
           echo "✅ On branch: $(git rev-parse --abbrev-ref HEAD)"
 
-      # ── 4. Apply changes via cherry-pick (single operation) ──────────────────
-      - name: Apply changes from merge commit
+      # ── 4. Cherry-pick + inline conflict resolution ───────────────────────────
+      - name: Apply changes (cherry-pick + auto-resolve conflicts)
         if: steps.info.outputs.skip != 'true'
         id: apply
         env:
@@ -164,16 +156,15 @@ jobs:
           PR_TITLE:       ${{ steps.info.outputs.pr_title }}
           FEATURE_BRANCH: ${{ steps.info.outputs.feature_branch }}
           SUPPORT_BRANCH: ${{ steps.info.outputs.support_branch }}
-          REPO:           ${{ github.repository }}
-          PR_NUMBER:      ${{ github.event.pull_request.number }}
+          PR_NUMBER:      ${{ steps.info.outputs.pr_number }}
         run: |
           set +e
-          echo "Applying: git cherry-pick -m 1 --no-commit $MERGE_SHA"
+
+          echo "▶ Cherry-picking merge commit: $MERGE_SHA"
           git cherry-pick -m 1 --no-commit "$MERGE_SHA" 2>&1
           CP_EXIT=$?
 
-          # ── Always remove .github/ conflicts first (modify/delete on support branch) ──
-          # support/x.x.x.x does not have .github/ — any conflict there is expected, remove it
+          # ── Step A: Remove .github/ conflicts (always excluded from release branch) ──
           GITHUB_CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null | grep '^\.github/' || true)
           if [ -n "$GITHUB_CONFLICTS" ]; then
             echo "Removing .github/ conflicts (not needed on release branch):"
@@ -183,102 +174,202 @@ jobs:
               echo "  ⛔ $f (excluded)"
             done
           fi
-
-          # ── Also remove any staged .github/ files (even without conflict) ──
           git restore --staged .github/ 2>/dev/null || true
           git checkout HEAD -- .github/ 2>/dev/null || true
 
-          # ── Check if any REAL (non-.github/) conflicts remain ──
+          # ── Step B: Check for real code conflicts ─────────────────────────────
           REAL_CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null | grep -v '^\.github/' || true)
 
           if [ -z "$REAL_CONFLICTS" ]; then
-            # No real conflicts — success
+            # ── No conflicts — clean cherry-pick ─────────────────────────────
             echo ""
             echo "Files going to release branch:"
             git diff --cached --name-only | while read -r f; do echo "  ✅ $f"; done
-            echo ""
 
             if git diff --cached --quiet; then
               echo "✅ No code changes to apply — already up to date."
-              echo "applied=true" >> "$GITHUB_OUTPUT"
+              echo "applied=true"        >> "$GITHUB_OUTPUT"
+              echo "conflicts=false"     >> "$GITHUB_OUTPUT"
+              echo "conflict_resolved=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
 
             git commit -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE}"
-            echo "✅ Changes applied and committed."
-            echo "applied=true"    >> "$GITHUB_OUTPUT"
-            echo "conflicts=false" >> "$GITHUB_OUTPUT"
+            echo "✅ Changes applied and committed (no conflicts)."
+            echo "applied=true"        >> "$GITHUB_OUTPUT"
+            echo "conflicts=false"     >> "$GITHUB_OUTPUT"
+            echo "conflict_resolved=false" >> "$GITHUB_OUTPUT"
 
           else
-            # ── Real conflict report ──────────────────────────────────────────
-            echo "⚠️  MERGE CONFLICTS in code files:"
+            # ── Conflicts found — show details + resolve inline ───────────────
+            CONFLICT_COUNT=$(echo "$REAL_CONFLICTS" | wc -l | tr -d ' ')
+            echo ""
+            echo "╔══════════════════════════════════════════════════════════════════╗"
+            echo "║           ⚠️  MERGE CONFLICTS DETECTED                          ║"
+            echo "╠══════════════════════════════════════════════════════════════════╣"
+            echo "║  Ticket         : $TICKET"
+            echo "║  Merge SHA      : $MERGE_SHA"
+            echo "║  Feature branch : $FEATURE_BRANCH"
+            echo "║  Support branch : $SUPPORT_BRANCH"
+            echo "║  Total conflicts: $CONFLICT_COUNT file(s)"
+            echo "╚══════════════════════════════════════════════════════════════════╝"
+            echo ""
+            echo "Conflicted files:"
             echo "$REAL_CONFLICTS" | while read -r f; do echo "    ❌ $f"; done
+            echo ""
 
-            # ── Abort the failed cherry-pick cleanly ─────────────────────────
-            git cherry-pick --abort 2>/dev/null || true
+            # Collect into array (avoid subshell from pipe)
+            mapfile -t CONFLICT_FILES < <(echo "$REAL_CONFLICTS")
 
-            # ── Emit conflict outputs for downstream steps ────────────────────
-            echo "conflict_files<<EOF" >> "$GITHUB_OUTPUT"
-            echo "$REAL_CONFLICTS"     >> "$GITHUB_OUTPUT"
-            echo "EOF"                 >> "$GITHUB_OUTPUT"
-            echo "pr_number=$PR_NUMBER"   >> "$GITHUB_OUTPUT"
-            echo "applied=false"          >> "$GITHUB_OUTPUT"
-            echo "conflicts=true"         >> "$GITHUB_OUTPUT"
+            FAILED_FILES=()
 
-            # ── Write conflict metadata JSON (uploaded as artifact next step) ─
-            mkdir -p /tmp/conflict-metadata
-            # Convert newline-separated file list to JSON array
-            CF_JSON=$(echo "$REAL_CONFLICTS" | jq -R . | jq -s .)
-            jq -n \
-              --arg  fb "$FEATURE_BRANCH" \
-              --arg  sb "$SUPPORT_BRANCH" \
-              --arg  ms "$MERGE_SHA" \
-              --arg  t  "$TICKET" \
-              --arg  v  "$VERSION" \
-              --arg  pn "$PR_NUMBER" \
-              --argjson cf "$CF_JSON" \
-              '{feature_branch:$fb,support_branch:$sb,merge_sha:$ms,ticket:$t,version:$v,pr_number:$pn,conflict_files:$cf}' \
-              > /tmp/conflict-metadata/data.json
-            echo "📄 data.json contents:"
-            cat /tmp/conflict-metadata/data.json
+            for FILE in "${CONFLICT_FILES[@]}"; do
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "📄 FILE: $FILE"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-            echo "📋 Conflict files:"
-            echo "$REAL_CONFLICTS" | while read -r f; do echo "    ❌ $f"; done
-            echo "✅ Conflict metadata written — resolver will auto-trigger."
-            exit 1
+              # Extract all 3 versions
+              git show ":1:$FILE" 2>/dev/null > /tmp/base.tmp   || true
+              git show ":2:$FILE" 2>/dev/null > /tmp/ours.tmp   || true
+              git show ":3:$FILE" 2>/dev/null > /tmp/theirs.tmp || true
+
+              BASE_LINES=$(wc -l < /tmp/base.tmp 2>/dev/null || echo 0)
+              OURS_LINES=$(wc -l < /tmp/ours.tmp 2>/dev/null || echo 0)
+              THEIRS_LINES=$(wc -l < /tmp/theirs.tmp 2>/dev/null || echo 0)
+
+              echo ""
+              echo "  📊 File sizes:"
+              echo "     BASE   (common ancestor) : $BASE_LINES lines"
+              echo "     OURS   (support branch)  : $OURS_LINES lines"
+              echo "     THEIRS (develop/incoming): $THEIRS_LINES lines"
+              echo ""
+
+              # Show exactly what lines differ between ours and theirs
+              echo "  🔍 DIFF — support branch vs develop (what changed):"
+              echo "  ┌─────────────────────────────────────────────────┐"
+              diff --unified=5 /tmp/ours.tmp /tmp/theirs.tmp 2>/dev/null \
+                | head -80 \
+                | sed 's/^/  │ /'
+              echo "  └─────────────────────────────────────────────────┘"
+              echo ""
+
+              # Show the raw conflict markers in the file
+              CONFLICT_SECTIONS=$(grep -n "^<<<<<<\|^======\|^>>>>>>" "$FILE" 2>/dev/null || true)
+              if [ -n "$CONFLICT_SECTIONS" ]; then
+                CONFLICT_BLOCK_COUNT=$(grep -c "^<<<<<<" "$FILE" 2>/dev/null || echo 0)
+                echo "  ⚡ Conflict blocks in file: $CONFLICT_BLOCK_COUNT"
+                echo "  ⚡ Conflict marker lines:"
+                echo "$CONFLICT_SECTIONS" | sed 's/^/     /'
+                echo ""
+                echo "  📋 Full conflict sections (with context):"
+                echo "  ┌─────────────────────────────────────────────────┐"
+                grep -n -A 20 "^<<<<<<" "$FILE" 2>/dev/null \
+                  | head -100 \
+                  | sed 's/^/  │ /'
+                echo "  └─────────────────────────────────────────────────┘"
+                echo ""
+              fi
+
+              echo "  🔧 Attempting auto-resolution..."
+
+              # Strategy 1: clean 3-way merge (diff3)
+              if diff3 -m /tmp/ours.tmp /tmp/base.tmp /tmp/theirs.tmp > /tmp/merged.tmp 2>/dev/null; then
+                cp /tmp/merged.tmp "$FILE"
+                git add "$FILE"
+                MERGED_LINES=$(wc -l < /tmp/merged.tmp 2>/dev/null || echo 0)
+                echo "  ✅ Strategy: CLEAN 3-WAY MERGE (diff3)"
+                echo "     Result: $MERGED_LINES lines — both changes merged intelligently"
+                echo ""
+                echo "  📋 Final resolved content (first 50 lines):"
+                echo "  ┌─────────────────────────────────────────────────┐"
+                head -50 /tmp/merged.tmp | sed 's/^/  │ /'
+                echo "  └─────────────────────────────────────────────────┘"
+
+              # Strategy 2: take incoming version (develop wins — standard for backport)
+              elif [ -s /tmp/theirs.tmp ]; then
+                cp /tmp/theirs.tmp "$FILE"
+                git add "$FILE"
+                echo "  ✅ Strategy: TOOK INCOMING (develop) VERSION"
+                echo "     Reason : diff3 could not cleanly merge (same lines modified on both sides)"
+                echo "     Action : develop branch version applied to $FILE"
+                echo "     ⚠️  WARNING: support branch version of this file was overwritten"
+                echo "              Please review the PR diff carefully before merging"
+                echo ""
+                echo "  📋 What was on SUPPORT branch (overwritten):"
+                echo "  ┌─────────────────────────────────────────────────┐"
+                diff /tmp/ours.tmp /tmp/theirs.tmp 2>/dev/null \
+                  | grep "^<" | head -30 \
+                  | sed 's/^< /  │ SUPPORT: /'
+                echo "  └─────────────────────────────────────────────────┘"
+                echo ""
+                echo "  📋 What was applied from DEVELOP branch:"
+                echo "  ┌─────────────────────────────────────────────────┐"
+                diff /tmp/ours.tmp /tmp/theirs.tmp 2>/dev/null \
+                  | grep "^>" | head -30 \
+                  | sed 's/^> /  │ DEVELOP: /'
+                echo "  └─────────────────────────────────────────────────┘"
+
+              else
+                echo "  ❌ Strategy: FAILED — could not auto-resolve"
+                echo "     Reason: no valid incoming version found"
+                FAILED_FILES+=("$FILE")
+              fi
+              echo ""
+            done
+
+            # ── Check if all resolved ─────────────────────────────────────────
+            STILL_CONFLICTED=$(git diff --name-only --diff-filter=U 2>/dev/null | grep -v '^\.github/' || true)
+
+            if [ -z "$STILL_CONFLICTED" ] && [ "${#FAILED_FILES[@]}" -eq 0 ]; then
+              git commit -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE} [conflicts auto-resolved]"
+              echo ""
+              echo "╔══════════════════════════════════════════════════════════════════╗"
+              echo "║  ✅ ALL CONFLICTS RESOLVED SUCCESSFULLY                         ║"
+              echo "╠══════════════════════════════════════════════════════════════════╣"
+              echo "║  Files resolved : $CONFLICT_COUNT"
+              echo "║  Committed to   : $FEATURE_BRANCH"
+              echo "║  Next step      : Pushing branch + creating PR..."
+              echo "╚══════════════════════════════════════════════════════════════════╝"
+              echo "applied=true"           >> "$GITHUB_OUTPUT"
+              echo "conflicts=true"         >> "$GITHUB_OUTPUT"
+              echo "conflict_resolved=true" >> "$GITHUB_OUTPUT"
+
+            else
+              echo ""
+              echo "╔══════════════════════════════════════════════════════════════════╗"
+              echo "║  ❌ COULD NOT AUTO-RESOLVE — MANUAL FIX REQUIRED                ║"
+              echo "╠══════════════════════════════════════════════════════════════════╣"
+              for f in "${FAILED_FILES[@]}"; do echo "║    ❌ $f"; done
+              echo "╠══════════════════════════════════════════════════════════════════╣"
+              echo "║  Run these commands locally to fix:                             ║"
+              echo "║                                                                 ║"
+              echo "║  git fetch origin                                               ║"
+              echo "║  git checkout $FEATURE_BRANCH"
+              echo "║  git cherry-pick -m 1 $MERGE_SHA"
+              echo "║  # open conflicted files and resolve manually                  ║"
+              echo "║  git add .                                                      ║"
+              echo "║  git cherry-pick --continue                                     ║"
+              echo "║  git push origin $FEATURE_BRANCH"
+              echo "╚══════════════════════════════════════════════════════════════════╝"
+              echo "applied=false"           >> "$GITHUB_OUTPUT"
+              echo "conflicts=true"          >> "$GITHUB_OUTPUT"
+              echo "conflict_resolved=false" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
           fi
 
-      # ── 4b. Upload conflict metadata artifact ────────────────────────────────
-      - name: Upload conflict metadata
-        if: always() && steps.apply.outputs.conflicts == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: conflict-metadata
-          path: /tmp/conflict-metadata/data.json
-          retention-days: 1
-
-      # ── 4c. Conflict resolver is triggered automatically via workflow_run ───────
-      # conflict-resolver.yml watches for this workflow to complete with failure.
-      # No API call needed — GitHub triggers it natively when conflicts=true.
-
-      # ── 5. Create backport tags (BEFORE the push, so tag points to the commit) ─
+      # ── 5. Create backport tag ────────────────────────────────────────────────
       - name: Create backport tag
         if: steps.info.outputs.skip != 'true' && steps.apply.outputs.applied == 'true'
         id: tag
         env:
           TICKET:  ${{ steps.info.outputs.ticket }}
           VERSION: ${{ steps.info.outputs.version }}
-          REPO:    ${{ github.repository }}
         run: |
           TIMESTAMP=$(date -u '+%Y%m%d%H%M')
-
-          # Tag format: backport/{ticket}/{version}/{timestamp}
-          # e.g.  backport/RDKEMW-21092/8.3.4/202608031045
           BACKPORT_TAG="backport/${TICKET}/${VERSION}/${TIMESTAMP}"
-
           git tag "$BACKPORT_TAG"
           git push origin "$BACKPORT_TAG"
-
           echo "backport_tag=$BACKPORT_TAG" >> "$GITHUB_OUTPUT"
           echo "✅ Backport tag created: $BACKPORT_TAG"
 
@@ -291,23 +382,37 @@ jobs:
           git push origin "$FEATURE_BRANCH"
           echo "✅ Pushed: $FEATURE_BRANCH"
 
-      # ── 7. Create Pull Request ───────────────────────────────────────────────
+      # ── 7. Create Pull Request to support branch ─────────────────────────────
       - name: Create Pull Request to support branch
         if: steps.info.outputs.skip != 'true' && steps.apply.outputs.applied == 'true'
         env:
-          FEATURE_BRANCH: ${{ steps.info.outputs.feature_branch }}
-          SUPPORT_BRANCH: ${{ steps.info.outputs.support_branch }}
-          TICKET:         ${{ steps.info.outputs.ticket }}
-          VERSION:        ${{ steps.info.outputs.version }}
-          PR_TITLE:       ${{ steps.info.outputs.pr_title }}
-          ORIGINAL_PR:    ${{ steps.info.outputs.pr_url }}
-          BACKPORT_TAG:   ${{ steps.tag.outputs.backport_tag }}
-          REPO:           ${{ github.repository }}
-          GH_TOKEN:       ${{ secrets.RDKCM_RDKE }}
+          FEATURE_BRANCH:    ${{ steps.info.outputs.feature_branch }}
+          SUPPORT_BRANCH:    ${{ steps.info.outputs.support_branch }}
+          TICKET:            ${{ steps.info.outputs.ticket }}
+          VERSION:           ${{ steps.info.outputs.version }}
+          PR_TITLE:          ${{ steps.info.outputs.pr_title }}
+          ORIGINAL_PR:       ${{ steps.info.outputs.pr_url }}
+          BACKPORT_TAG:      ${{ steps.tag.outputs.backport_tag }}
+          CONFLICT_RESOLVED: ${{ steps.apply.outputs.conflict_resolved }}
+          REPO:              ${{ github.repository }}
+          GH_TOKEN:          ${{ secrets.RDKCM_RDKE }}
         run: |
           set +e
-          TITLE="${TICKET}: Backport into support/${VERSION}"
-          BODY="${TICKET}: Backport of **${PR_TITLE}** into \`${SUPPORT_BRANCH}\`."$'\n\n'"---"$'\n'"**Ticket:** ${TICKET}"$'\n'"**Original PR:** ${ORIGINAL_PR}"$'\n'"**Backport tag:** ${BACKPORT_TAG}"$'\n\n'"release_version: none"
+
+          if [ "$CONFLICT_RESOLVED" = "true" ]; then
+            TITLE="${TICKET}: Backport into support/${VERSION} [conflicts auto-resolved]"
+            BODY="${TICKET}: Backport of **${PR_TITLE}** into \`${SUPPORT_BRANCH}\`."$'\n\n'
+            BODY+="⚠️ **Merge conflicts were auto-resolved** — please review the diff carefully before merging."$'\n\n'
+          else
+            TITLE="${TICKET}: Backport into support/${VERSION}"
+            BODY="${TICKET}: Backport of **${PR_TITLE}** into \`${SUPPORT_BRANCH}\`."$'\n\n'
+          fi
+
+          BODY+="---"$'\n'
+          BODY+="**Ticket:** ${TICKET}"$'\n'
+          BODY+="**Original PR:** ${ORIGINAL_PR}"$'\n'
+          BODY+="**Backport tag:** ${BACKPORT_TAG}"$'\n\n'
+          BODY+="release_version: none"
 
           JSON=$(jq -n \
             --arg title "$TITLE" \
@@ -328,14 +433,10 @@ jobs:
 
           if [ "$HTTP_CODE" = "201" ]; then
             PR_URL=$(echo "$BODY_RESP" | jq -r '.html_url')
-            echo "✅ PR created: $PR_URL"
+            echo "✅ Backport PR created: $PR_URL"
           elif [ "$HTTP_CODE" = "422" ]; then
-            ERROR_MSG=$(echo "$BODY_RESP" | jq -r '.errors[0].message // .message // "unknown"')
-            if echo "$ERROR_MSG" | grep -qi "already exists"; then
-              echo "✅ PR already exists — branch updated automatically."
-            else
-              echo "⚠️  PR error: $ERROR_MSG"
-            fi
+            echo "ℹ️  PR already exists — skipping creation."
           else
-            echo "⚠️  HTTP $HTTP_CODE — create PR manually."
+            echo "⚠️  PR creation returned HTTP $HTTP_CODE"
+            echo "$BODY_RESP" | jq . || echo "$BODY_RESP"
           fi
