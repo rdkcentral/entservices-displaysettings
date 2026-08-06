@@ -6184,7 +6184,7 @@ void DisplaySettings::sendMsgThread()
             if(capabilities & dsHDRSTANDARD_HDR10)videoFormats.Add("HDR10");
             if(capabilities & dsHDRSTANDARD_HLG)videoFormats.Add("HLG");
             if(capabilities & dsHDRSTANDARD_DolbyVision)videoFormats.Add("DV");
-            if(capabilities & dsHDRSTANDARD_TechnicolorPrime)videoFormats.Add("Technicolor Prime");
+            if(capabilities & dsHDRSTANDARD_TechnicolorPrime)videoFojrmats.Add("Technicolor Prime");
             if(capabilities & dsHDRSTANDARD_HDR10PLUS)videoFormats.Add("HDR10PLUS");
             if(capabilities & dsHDRSTANDARD_SDR)videoFormats.Add("SDR");
             for (uint32_t i = 0; i < videoFormats.Length(); i++)
@@ -6277,7 +6277,8 @@ void DisplaySettings::sendMsgThread()
 				}
 				else
 				{
-					LOGWARN("failure: %s is not connected!",strVideoPort.c_str());
+					LOGWARN("The failure: %s is not connected!",strVideoPort.c_str());
+                    
 				}
 			}
 			catch (const device::Exception& err)
@@ -6287,7 +6288,7 @@ void DisplaySettings::sendMsgThread()
 		}
 		if( 0 == (int)connectedDisplays.size())
 		{
-			LOGWARN("No display connected to device (or)device's powerstate is not ON");
+			LOGWARN("[ERROR] No display connected to device (or)device's powerstate is not ON");
             return Core::ERROR_GENERAL;
 		}
         return Core::ERROR_NONE;
