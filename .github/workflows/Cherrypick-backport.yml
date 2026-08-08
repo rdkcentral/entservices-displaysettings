@@ -563,6 +563,7 @@ jobs:
               # Check if BASE and OURS are identical (or very similar)
               # Use wc -l to count diff lines (safer for large diffs)
               DIFF_LINE_COUNT=$(diff -u "$BASE_FILE" "$OURS_FILE" 2>/dev/null | grep "^[-+]" | wc -l || echo 999)
+              DIFF_LINE_COUNT=$(echo "$DIFF_LINE_COUNT" | head -n1)  # Ensure single line
               # Ensure it's a valid integer
               if [[ "$DIFF_LINE_COUNT" =~ ^[0-9]+$ ]] && [ "$DIFF_LINE_COUNT" -lt 10 ]; then
                 echo "  💡 Smart Detection: BASE ≈ OURS (non-conflict - just applying change)"
@@ -583,7 +584,7 @@ jobs:
               if diff3 -m "$OURS_FILE" "$BASE_FILE" "$THEIRS_FILE" > "$MERGED_FILE" 2>/dev/null; then
                 # Check if merge was clean (no conflict markers) - use wc -l for safety
                 MARKER_COUNT=$(grep -E '^(<<<<<<<|=======|>>>>>>>)' "$MERGED_FILE" 2>/dev/null | wc -l || echo 0)
-                MARKER_COUNT=$(echo "$MARKER_COUNT" | tr -d ' ')  # Remove whitespace
+                MARKER_COUNT=$(echo "$MARKER_COUNT" | head -n1)  # Ensure single line
                 if [[ "$MARKER_COUNT" =~ ^[0-9]+$ ]] && [ "$MARKER_COUNT" -eq 0 ]; then
                   cp "$MERGED_FILE" "$FILE"
                   git add "$FILE"
@@ -601,7 +602,7 @@ jobs:
               
               # Verify no conflict markers remain (safe check) - use wc -l for safety
               MARKER_COUNT=$(grep -E '^(<<<<<<<|=======|>>>>>>>)' "$FILE" 2>/dev/null | wc -l || echo 0)
-              MARKER_COUNT=$(echo "$MARKER_COUNT" | tr -d ' ')  # Remove whitespace
+              MARKER_COUNT=$(echo "$MARKER_COUNT" | head -n1)  # Ensure single line
               if [[ "$MARKER_COUNT" =~ ^[0-9]+$ ]] && [ "$MARKER_COUNT" -eq 0 ]; then
                 git add "$FILE"
                 RESOLVED=true
