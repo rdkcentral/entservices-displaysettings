@@ -678,66 +678,23 @@ jobs:
             fi
             
             echo ""
-            echo "╔══════════════════════════════════════════════════════════════════╗"
-            echo "║  📋 CHANGES BEING APPLIED                                        ║"
-            echo "╠══════════════════════════════════════════════════════════════════╣"
-            echo "║"
-            echo "║  Source: dummy_develop (after merge)"
-            echo "║  Target: support/$VERSION"
-            echo "║"
-            echo "╠══════════════════════════════════════════════════════════════════╣"
-            echo "║  📊 FILE SUMMARY:"
-            echo "╠══════════════════════════════════════════════════════════════════╣"
-            echo "║"
+            echo "✅ Auto-applying changes to support/$VERSION"
+            echo ""
             
-            # Show summary of changes being committed
-            git diff --cached --stat | while IFS= read -r line; do
-              echo "║  $line"
-            done
-            
-            echo "║"
-            echo "╠══════════════════════════════════════════════════════════════════╣"
-            echo "║  📄 DETAILED CHANGES (what's being backported):                  ║"
-            echo "╠══════════════════════════════════════════════════════════════════╣"
-            echo "║"
-            echo "║  Legend:"
-            echo "║    - line = What TARGET had (being removed)"
-            echo "║    + line = What SOURCE has (being added)"
-            echo "║"
-            
-            # Show actual line changes (limited to avoid spam)
-            git diff --cached -U3 --color=never | head -100 | while IFS= read -r line; do
-              # Add better formatting for diff lines
-              if [[ "$line" =~ ^@@ ]]; then
-                echo "║  ───────────────────────────────────────────────────────────"
-                echo "║  $line"
-              elif [[ "$line" =~ ^- ]]; then
-                echo "║  $line  ← TARGET (being replaced)"
-              elif [[ "$line" =~ ^\+ ]]; then
-                echo "║  $line  ← SOURCE (being applied)"
-              else
-                echo "║  $line"
-              fi
-            done
-            
-            echo "║"
-            echo "╠══════════════════════════════════════════════════════════════════╣"
-            echo "║  ✅ COMMITTING CHANGES                                           ║"
-            echo "╚══════════════════════════════════════════════════════════════════╝"
+            # Show simple file count summary
+            FILE_COUNT=$(git diff --cached --name-only | wc -l)
+            echo "  Files modified: $FILE_COUNT"
+            git diff --cached --name-only | head -5 | sed 's/^/    • /'
+            if [ "$FILE_COUNT" -gt 5 ]; then
+              echo "    ... and $((FILE_COUNT - 5)) more"
+            fi
             echo ""
             
             # Commit resolved conflicts
             git commit -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE} [conflicts auto-resolved]"
             
-            echo ""
-            echo "╔══════════════════════════════════════════════════════════════════╗"
-            echo "║  ✅ ALL CONFLICTS RESOLVED SUCCESSFULLY                         ║"
-            echo "╠══════════════════════════════════════════════════════════════════╣"
-            echo "║  Total conflicts : $CONFLICT_COUNT"
-            echo "║  Resolved        : $RESOLVED_COUNT"
-            echo "║  Failed          : 0"
-            echo "║  Committed to    : $FEATURE_BRANCH"
-            echo "╚══════════════════════════════════════════════════════════════════╝"
+            echo "✅ Changes committed to $FEATURE_BRANCH"
+            echo "   Conflicts resolved: $RESOLVED_COUNT / $CONFLICT_COUNT"
             
             echo "applied=true" >> "$GITHUB_OUTPUT"
             
