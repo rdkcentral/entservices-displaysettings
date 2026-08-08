@@ -554,30 +554,10 @@ jobs:
             THEIRS_FILE="$TEMP_DIR/theirs_${FILE//\//_}.tmp"
             MERGED_FILE="$TEMP_DIR/merged_${FILE//\//_}.tmp"
             
-            # ══════════════════════════════════════════════════════════════════
-            # SMART CHECK: Is this a "non-conflict"?
-            # If BASE == OURS (same line in both branches before the change),
-            # then it's NOT a real conflict - just apply THEIRS
-            # ══════════════════════════════════════════════════════════════════
-            if [ -f "$BASE_FILE" ] && [ -f "$OURS_FILE" ] && [ -f "$THEIRS_FILE" ]; then
-              # Check if BASE and OURS are identical (or very similar)
-              # Use wc -l to count diff lines (safer for large diffs)
-              DIFF_LINE_COUNT=$(diff -u "$BASE_FILE" "$OURS_FILE" 2>/dev/null | grep "^[-+]" | wc -l || echo 999)
-              DIFF_LINE_COUNT=$(echo "$DIFF_LINE_COUNT" | head -n1)  # Ensure single line
-              # Ensure it's a valid integer
-              if [[ "$DIFF_LINE_COUNT" =~ ^[0-9]+$ ]] && [ "$DIFF_LINE_COUNT" -lt 10 ]; then
-                echo "  💡 Smart Detection: BASE ≈ OURS (non-conflict - just applying change)"
-                echo "     BASE and support branch are nearly identical"
-                echo "     This is a simple change, not a real merge conflict"
-                
-                # Just use THEIRS (the incoming change)
-                cp "$THEIRS_FILE" "$FILE"
-                git add "$FILE"
-                RESOLVED=true
-                RESOLVED_COUNT=$((RESOLVED_COUNT + 1))
-                echo "  ✅ Strategy 0: Applied incoming change (non-conflict detected)"
-              fi
-            fi
+            # Strategy 0: REMOVED (was unsafe - replaced entire files)
+            # Old approach tried to detect "non-conflicts" but used file-level replacement
+            # which lost support branch code. Now rely on Strategy 1 (diff3) and Strategy 2 (awk)
+            # which are both patch-based and preserve non-conflicted code.
             
             # Strategy 1: Clean 3-way merge with diff3
             if [ "$RESOLVED" = false ] && [ -f "$OURS_FILE" ] && [ -f "$BASE_FILE" ] && [ -f "$THEIRS_FILE" ]; then
@@ -595,21 +575,41 @@ jobs:
               fi
             fi
             
-            # Strategy 2: Accept incoming changes (--theirs)
+            # Strategy 2: Resolve conflicts by accepting incoming changes (ONLY conflicted lines)
             if [ "$RESOLVED" = false ]; then
-              # For backport workflow: THEIRS = incoming changes from develop = what we want
-              git checkout --theirs -- "$FILE" 2>/dev/null
-              
-              # Verify no conflict markers remain (safe check) - use wc -l for safety
-              MARKER_COUNT=$(grep -E '^(<<<<<<<|=======|>>>>>>>)' "$FILE" 2>/dev/null | wc -l || echo 0)
-              MARKER_COUNT=$(echo "$MARKER_COUNT" | head -n1)  # Ensure single line
-              if [[ "$MARKER_COUNT" =~ ^[0-9]+$ ]] && [ "$MARKER_COUNT" -eq 0 ]; then
-                git add "$FILE"
-                RESOLVED=true
-                RESOLVED_COUNT=$((RESOLVED_COUNT + 1))
-                echo "  ✅ Strategy 2: Accepted incoming changes (--theirs)"
+              # Parse conflict markers and take THEIRS side for each conflict
+              # This preserves all non-conflicted code from support branch
+              if grep -q '^<<<<<<<' "$FILE" 2>/dev/null; then
+                awk '
+                  BEGIN { conflict=0; taking=0 }
+                  /^<<<<<<</ { conflict=1; next }
+                  /^=======/ { if (conflict) { taking=1; next } }
+                  /^>>>>>>>/ { conflict=0; taking=0; next }
+                  { if (!conflict || taking) print }
+                ' "$FILE" > "$FILE.resolved"
+                
+                if [ -f "$FILE.resolved" ]; then
+                  mv "$FILE.resolved" "$FILE"
+                  
+                  # Verify no conflict markers remain
+                  MARKER_COUNT=$(grep -E '^(<<<<<<<|=======|>>>>>>>)' "$FILE" 2>/dev/null | wc -l || echo 0)
+                  MARKER_COUNT=$(echo "$MARKER_COUNT" | head -n1)
+                  
+                  if [[ "$MARKER_COUNT" =~ ^[0-9]+$ ]] && [ "$MARKER_COUNT" -eq 0 ]; then
+                    git add "$FILE"
+                    RESOLVED=true
+                    RESOLVED_COUNT=$((RESOLVED_COUNT + 1))
+                    echo "  ✅ Strategy 2: Resolved conflicts (applied ONLY changed lines)"
+                  else
+                    echo "  ❌ Strategy 2: Failed (markers remain: $MARKER_COUNT)"
+                    FAILED_FILES+=("$FILE")
+                  fi
+                else
+                  echo "  ❌ Strategy 2: Failed (awk processing error)"
+                  FAILED_FILES+=("$FILE")
+                fi
               else
-                echo "  ❌ Strategy 2: Failed (conflict markers remain: $MARKER_COUNT)"
+                echo "  ❌ Strategy 2: No conflict markers found"
                 FAILED_FILES+=("$FILE")
               fi
             fi
