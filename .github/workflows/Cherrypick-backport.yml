@@ -254,11 +254,19 @@ jobs:
             exit 1
           fi
           
-          echo "▶ Cherry-picking merge commit: $MERGE_SHA"
+          echo "▶ Cherry-picking commit: $MERGE_SHA"
+          
+          # Detect merge commit vs normal commit (smart handling)
+          PARENT_COUNT=$(git rev-list --parents -n 1 "$MERGE_SHA" | awk '{print NF-1}')
+          echo "Commit type: $([ "$PARENT_COUNT" -gt 1 ] && echo 'MERGE' || echo 'NORMAL') ($PARENT_COUNT parent(s))"
           
           # Disable error checking only for cherry-pick (expected to fail with conflicts)
           set +e
-          git cherry-pick -m 1 --no-commit "$MERGE_SHA" 2>&1
+          if [[ "$PARENT_COUNT" -gt 1 ]]; then
+            git cherry-pick -m 1 --no-commit "$MERGE_SHA" 2>&1
+          else
+            git cherry-pick --no-commit "$MERGE_SHA" 2>&1
+          fi
           CP_EXIT=$?
           set -e
           
@@ -277,8 +285,8 @@ jobs:
             git checkout HEAD -- .github/ 2>/dev/null || true
           fi
           
-          # Detect real conflicts (exclude .github/)
-          REAL_CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null | grep -v '^\.github/' || true)
+          # Detect real conflicts - AUTHORITATIVE (uses Git index, not diff output)
+          REAL_CONFLICTS=$(git ls-files -u | cut -f2 | sort -u | grep -v '^\.github/' || true)
           
           # ── Early Exit: No conflicts, clean cherry-pick ──────────────────────
           if [ -z "$REAL_CONFLICTS" ]; then
@@ -413,37 +421,95 @@ jobs:
             fi
             echo ""
             
-            # ── 3. Show side-by-side diff of conflicted sections ──────────────
-            echo "📋 Conflict Details (OURS vs THEIRS):"
+            # ── 3. Show COMPLETE 3-way conflict details ────────────────────────
+            echo "📋 COMPLETE 3-Way Analysis:"
+            echo ""
+            echo "   ╔═══════════════════════════════════════════════════════════╗"
+            echo "   ║  Understanding the conflict:                              ║"
+            echo "   ║  ────────────────────────────────────────────────────────║"
+            echo "   ║  SOURCE BEFORE = dummy_develop BEFORE your PR (BASE)      ║"
+            echo "   ║  SOURCE AFTER  = dummy_develop AFTER your PR (THEIRS)     ║"
+            echo "   ║  TARGET        = support/$VERSION current state (OURS)    ║"
+            echo "   ║                                                           ║"
+            echo "   ║  CHANGE = What your PR modified (BASE → THEIRS)           ║"
+            echo "   ╚═══════════════════════════════════════════════════════════╝"
             echo ""
             
-            # Extract each conflict block and show side-by-side
-            awk '
-            BEGIN { in_conflict=0; conflict_num=0; }
-            /^<<<<<<</ { 
-              in_conflict=1; 
-              conflict_num++; 
-              print "   ┌─ Conflict #" conflict_num " ─────────────────────────────────────┐";
-              print "   │ OURS (Support Branch):";
-              next; 
-            }
-            /^=======/ { 
-              if (in_conflict) {
-                print "   │";
-                print "   │ THEIRS (Incoming Changes):";
-              }
-              next; 
-            }
-            /^>>>>>>>/ { 
-              if (in_conflict) {
-                print "   └──────────────────────────────────────────────────────┘";
-                print "";
-              }
-              in_conflict=0; 
-              next; 
-            }
-            in_conflict { print "   │ " $0; }
-            ' "$FILE" 2>/dev/null
+            # Extract conflict line numbers
+            CONFLICT_LINE_NUMS=$(grep -n "^<<<<<<" "$FILE" 2>/dev/null | cut -d: -f1 || true)
+            
+            if [ -n "$CONFLICT_LINE_NUMS" ]; then
+              CONFLICT_NUM=0
+              for START_LINE in $CONFLICT_LINE_NUMS; do
+                CONFLICT_NUM=$((CONFLICT_NUM + 1))
+                
+                # Find separator and end markers
+                SEPARATOR_LINE=$(tail -n +$START_LINE "$FILE" | grep -n "^=======" | head -1 | cut -d: -f1)
+                END_LINE=$(tail -n +$START_LINE "$FILE" | grep -n "^>>>>>>" | head -1 | cut -d: -f1)
+                
+                if [ -n "$SEPARATOR_LINE" ] && [ -n "$END_LINE" ]; then
+                  SEPARATOR_LINE=$((START_LINE + SEPARATOR_LINE - 1))
+                  END_LINE=$((START_LINE + END_LINE - 1))
+                  
+                  echo "   ╔═ Conflict #$CONFLICT_NUM ═════════════════════════════════════╗"
+                  echo "   ║"
+                  
+                  # 1. Show BASE (Source BEFORE PR)
+                  echo "   ║ 1️⃣  SOURCE BEFORE PR (dummy_develop original):"
+                  echo "   ║    ─────────────────────────────────────────────────"
+                  # Calculate approximate line in BASE file
+                  BASE_LINE=$((START_LINE - 10))
+                  if [ $BASE_LINE -lt 1 ]; then BASE_LINE=1; fi
+                  sed -n "${BASE_LINE},$((BASE_LINE + 20))p" "$TEMP_DIR/base_${FILE//\//_}.tmp" 2>/dev/null | grep -A 2 -B 2 "LOGWARN\|LOGINFO\|LOGERR\|failure\|error" | head -5 | while IFS= read -r line; do
+                    echo "   ║    $line"
+                  done || echo "   ║    (unable to extract)"
+                  
+                  echo "   ║"
+                  echo "   ║    ⬇️  YOUR PR CHANGED IT TO ⬇️"
+                  echo "   ║"
+                  
+                  # 2. Show THEIRS (Source AFTER PR - the change)
+                  echo "   ║ 2️⃣  SOURCE AFTER PR (what merge commit has):"
+                  echo "   ║    ─────────────────────────────────────────────────"
+                  sed -n "$((SEPARATOR_LINE + 1)),$((END_LINE - 1))p" "$FILE" 2>/dev/null | while IFS= read -r line; do
+                    echo "   ║    $line"
+                  done
+                  
+                  echo "   ║"
+                  echo "   ║    📊 CHANGE = BASE → THEIRS"
+                  echo "   ║"
+                  
+                  # 3. Show OURS (Target current state)
+                  echo "   ║ 3️⃣  TARGET CURRENT STATE (support/$VERSION has):"
+                  echo "   ║    ─────────────────────────────────────────────────"
+                  sed -n "$((START_LINE + 1)),$((SEPARATOR_LINE - 1))p" "$FILE" 2>/dev/null | while IFS= read -r line; do
+                    echo "   ║    $line"
+                  done
+                  
+                  echo "   ║"
+                  echo "   ║ 📌 ANALYSIS:"
+                  # Check if BASE == OURS
+                  BASE_CONTENT=$(sed -n "${BASE_LINE},$((BASE_LINE + 20))p" "$TEMP_DIR/base_${FILE//\//_}.tmp" 2>/dev/null | grep "LOGWARN\|LOGINFO\|LOGERR\|failure" | head -1 || echo "")
+                  OURS_CONTENT=$(sed -n "$((START_LINE + 1)),$((SEPARATOR_LINE - 1))p" "$FILE" 2>/dev/null | grep "LOGWARN\|LOGINFO\|LOGERR\|failure" | head -1 || echo "")
+                  
+                  if [ -n "$BASE_CONTENT" ] && [ -n "$OURS_CONTENT" ]; then
+                    if [ "$BASE_CONTENT" = "$OURS_CONTENT" ]; then
+                      echo "   ║    ✅ BASE = TARGET (both have same original line)"
+                      echo "   ║    → This is a NON-CONFLICT: Just apply the change!"
+                    else
+                      echo "   ║    ⚠️  BASE ≠ TARGET (different lines)"
+                      echo "   ║    → This is a REAL CONFLICT: Both sides changed"
+                    fi
+                  else
+                    echo "   ║    ℹ️  Complex conflict (analyze manually)"
+                  fi
+                  
+                  echo "   ║"
+                  echo "   ╚═══════════════════════════════════════════════════════════╝"
+                  echo ""
+                fi
+              done
+            fi
             
             echo ""
           done
@@ -472,7 +538,7 @@ jobs:
             exit 1
           fi
           
-          echo "🔧 Attempting auto-resolution..."
+          echo "🔧 Attempting smart auto-resolution..."
           echo ""
           
           RESOLVED_COUNT=0
@@ -487,12 +553,35 @@ jobs:
             THEIRS_FILE="$TEMP_DIR/theirs_${FILE//\//_}.tmp"
             MERGED_FILE="$TEMP_DIR/merged_${FILE//\//_}.tmp"
             
-            # Strategy 1: Clean 3-way merge with diff3
-            if [ -f "$OURS_FILE" ] && [ -f "$BASE_FILE" ] && [ -f "$THEIRS_FILE" ]; then
-              if diff3 -m "$OURS_FILE" "$BASE_FILE" "$THEIRS_FILE" > "$MERGED_FILE" 2>/dev/null; then
-                CONFLICT_MARKERS=$(grep -cE '<<<<<<|======|>>>>>>' "$MERGED_FILE" 2>/dev/null || echo 0)
+            # ══════════════════════════════════════════════════════════════════
+            # SMART CHECK: Is this a "non-conflict"?
+            # If BASE == OURS (same line in both branches before the change),
+            # then it's NOT a real conflict - just apply THEIRS
+            # ══════════════════════════════════════════════════════════════════
+            if [ -f "$BASE_FILE" ] && [ -f "$OURS_FILE" ] && [ -f "$THEIRS_FILE" ]; then
+              # Check if BASE and OURS are identical (or very similar)
+              BASE_OURS_DIFF=$(diff -u "$BASE_FILE" "$OURS_FILE" 2>/dev/null | grep -c "^[-+]" || echo 999)
+              
+              if [ "$BASE_OURS_DIFF" -lt 10 ]; then
+                echo "  💡 Smart Detection: BASE ≈ OURS (non-conflict - just applying change)"
+                echo "     BASE and support branch are nearly identical"
+                echo "     This is a simple change, not a real merge conflict"
                 
-                if [ "$CONFLICT_MARKERS" -eq 0 ]; then
+                # Just use THEIRS (the incoming change)
+                cp "$THEIRS_FILE" "$FILE"
+                git add "$FILE"
+                RESOLVED=true
+                RESOLVED_COUNT=$((RESOLVED_COUNT + 1))
+                echo "  ✅ Strategy 0: Applied incoming change (non-conflict detected)"
+              fi
+            fi
+            
+            # Strategy 1: Clean 3-way merge with diff3
+            if [ "$RESOLVED" = false ] && [ -f "$OURS_FILE" ] && [ -f "$BASE_FILE" ] && [ -f "$THEIRS_FILE" ]; then
+              if diff3 -m "$OURS_FILE" "$BASE_FILE" "$THEIRS_FILE" > "$MERGED_FILE" 2>/dev/null; then
+                # Check if merge was clean (no conflict markers)
+                MARKER_COUNT=$(grep -cE '^(<<<<<<<|=======|>>>>>>>)' "$MERGED_FILE" 2>/dev/null || echo 0)
+                if [ "$MARKER_COUNT" -eq 0 ]; then
                   cp "$MERGED_FILE" "$FILE"
                   git add "$FILE"
                   RESOLVED=true
@@ -502,25 +591,20 @@ jobs:
               fi
             fi
             
-            # Strategy 2: Surgical conflict resolution (take theirs at conflict points)
-            if [ "$RESOLVED" = false ] && [ -s "$THEIRS_FILE" ]; then
-              # Remove conflict markers, keep theirs side only
-              sed -i '/^<<<<<</,/^>>>>>>/ {
-                /^<<<<<</,/^======/d
-                /^======/d
-                /^>>>>>>/d
-              }' "$FILE" 2>/dev/null
+            # Strategy 2: Accept incoming changes (--theirs)
+            if [ "$RESOLVED" = false ]; then
+              # For backport workflow: THEIRS = incoming changes from develop = what we want
+              git checkout --theirs -- "$FILE" 2>/dev/null
               
-              # Verify clean resolution
-              REMAINING_MARKERS=$(grep -cE '<<<<<<|======|>>>>>>' "$FILE" 2>/dev/null || echo 0)
-              
-              if [ "$REMAINING_MARKERS" -eq 0 ]; then
+              # Verify no conflict markers remain (safe check)
+              MARKER_COUNT=$(grep -cE '^(<<<<<<<|=======|>>>>>>>)' "$FILE" 2>/dev/null || echo 0)
+              if [ "$MARKER_COUNT" -eq 0 ]; then
                 git add "$FILE"
                 RESOLVED=true
                 RESOLVED_COUNT=$((RESOLVED_COUNT + 1))
-                echo "  ✅ Strategy 2: Surgical resolution (incoming changes applied)"
+                echo "  ✅ Strategy 2: Accepted incoming changes (--theirs)"
               else
-                echo "  ❌ Strategy 2: Failed (conflict markers remain: $REMAINING_MARKERS)"
+                echo "  ❌ Strategy 2: Failed (conflict markers remain: $MARKER_COUNT)"
                 FAILED_FILES+=("$FILE")
               fi
             fi
@@ -559,8 +643,13 @@ jobs:
         run: |
           set -euo pipefail
           
-          # Explicit verification: check for any remaining unresolved conflicts
-          UNRESOLVED=$(git diff --name-only --diff-filter=U 2>/dev/null | grep -v '^\.github/' || true)
+          # Explicit verification: check for any remaining unresolved conflicts (authoritative)
+          UNRESOLVED=$(git ls-files -u | cut -f2 | sort -u | grep -v '^\.github/' || true)
+          
+          # Additional safety: check for text conflict markers
+          if git grep -IlE '^(<<<<<<<|=======|>>>>>>>)' -- . ':!/.git/' 2>/dev/null | head -1 | grep -q .; then
+            echo "⚠️  WARNING: Conflict markers found in text files"
+          fi
           
           if [ -n "$UNRESOLVED" ]; then
             echo "❌ VERIFICATION FAILED: Unresolved conflicts still exist"
@@ -582,6 +671,55 @@ jobs:
               echo "applied=false" >> "$GITHUB_OUTPUT"
               exit 1
             fi
+            
+            echo ""
+            echo "╔══════════════════════════════════════════════════════════════════╗"
+            echo "║  📋 CHANGES BEING APPLIED                                        ║"
+            echo "╠══════════════════════════════════════════════════════════════════╣"
+            echo "║"
+            echo "║  Source: dummy_develop (after merge)"
+            echo "║  Target: support/$VERSION"
+            echo "║"
+            echo "╠══════════════════════════════════════════════════════════════════╣"
+            echo "║  📊 FILE SUMMARY:"
+            echo "╠══════════════════════════════════════════════════════════════════╣"
+            echo "║"
+            
+            # Show summary of changes being committed
+            git diff --cached --stat | while IFS= read -r line; do
+              echo "║  $line"
+            done
+            
+            echo "║"
+            echo "╠══════════════════════════════════════════════════════════════════╣"
+            echo "║  📄 DETAILED CHANGES (what's being backported):                  ║"
+            echo "╠══════════════════════════════════════════════════════════════════╣"
+            echo "║"
+            echo "║  Legend:"
+            echo "║    - line = What TARGET had (being removed)"
+            echo "║    + line = What SOURCE has (being added)"
+            echo "║"
+            
+            # Show actual line changes (limited to avoid spam)
+            git diff --cached -U3 --color=never | head -100 | while IFS= read -r line; do
+              # Add better formatting for diff lines
+              if [[ "$line" =~ ^@@ ]]; then
+                echo "║  ───────────────────────────────────────────────────────────"
+                echo "║  $line"
+              elif [[ "$line" =~ ^- ]]; then
+                echo "║  $line  ← TARGET (being replaced)"
+              elif [[ "$line" =~ ^\+ ]]; then
+                echo "║  $line  ← SOURCE (being applied)"
+              else
+                echo "║  $line"
+              fi
+            done
+            
+            echo "║"
+            echo "╠══════════════════════════════════════════════════════════════════╣"
+            echo "║  ✅ COMMITTING CHANGES                                           ║"
+            echo "╚══════════════════════════════════════════════════════════════════╝"
+            echo ""
             
             # Commit resolved conflicts
             git commit -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE} [conflicts auto-resolved]"
@@ -684,10 +822,11 @@ jobs:
             exit 1
           fi
 
-      # ── 6. Create Pull Request ───────────────────────────────────────────────
+      # ── 6. Create Pull Request (with GitHub CLI) ────────────────────────────
       - name: Create Pull Request
         if: steps.info.outputs.skip != 'true' && steps.apply.outputs.applied == 'true'
         env:
+          GH_TOKEN:          ${{ secrets.RDKCM_RDKE }}
           FEATURE_BRANCH:    ${{ steps.info.outputs.feature_branch }}
           SUPPORT_BRANCH:    ${{ steps.info.outputs.support_branch }}
           TICKET:            ${{ steps.info.outputs.ticket }}
@@ -695,96 +834,58 @@ jobs:
           PR_TITLE:          ${{ steps.info.outputs.pr_title }}
           ORIGINAL_PR:       ${{ steps.info.outputs.pr_url }}
           CONFLICT_RESOLVED: ${{ steps.apply.outputs.conflict_resolved }}
-          REPO:              ${{ github.repository }}
-          GH_TOKEN:          ${{ secrets.RDKCM_RDKE }}
         run: |
           set -euo pipefail
           
-          # Validate required environment variables
-          if [ -z "$FEATURE_BRANCH" ] || [ -z "$SUPPORT_BRANCH" ] || [ -z "$REPO" ] || [ -z "$GH_TOKEN" ]; then
-            echo "❌ FATAL: Required environment variables are missing"
-            exit 1
-          fi
-          
-          REPO_OWNER=$(echo "$REPO" | cut -d'/' -f1)
-          
-          echo "▶ Checking for existing PR..."
+          echo "═══════════════════════════════════════════════════════════"
+          echo "CREATE BACKPORT PR"
+          echo "═══════════════════════════════════════════════════════════"
           
           # Check if PR already exists
-          EXISTING=$(curl -sf \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${REPO}/pulls?head=${REPO_OWNER}:${FEATURE_BRANCH}&base=${SUPPORT_BRANCH}&state=open" \
-            | jq -r '.[0].html_url // empty' 2>/dev/null) || {
-            echo "❌ Failed to query existing PRs (HTTP request failed)"
-            exit 1
-          }
+          EXISTING=$(gh pr list \
+            --head "$FEATURE_BRANCH" \
+            --base "$SUPPORT_BRANCH" \
+            --state open \
+            --json url \
+            --jq '.[0].url' || true)
           
-          # If PR exists, log and exit successfully
           if [ -n "$EXISTING" ]; then
-            echo "ℹ️  PR already exists — no action needed"
-            echo "   📎 $EXISTING"
+            echo "ℹ️  PR already exists: $EXISTING"
             exit 0
           fi
           
           # Build PR title and body
-          echo "✅ No existing PR found — creating new PR..."
-          
           if [ "$CONFLICT_RESOLVED" = "true" ]; then
             TITLE="${TICKET}: Backport into support/${VERSION} [conflicts auto-resolved]"
-            BODY=$(printf '%s\n\n%s\n\n%s\n%s\n%s\n\n%s' \
-              "${TICKET}: Backport of **${PR_TITLE}** into \`${SUPPORT_BRANCH}\`." \
-              "⚠️ **Merge conflicts were auto-resolved** — please review the diff carefully before merging." \
-              "---" \
-              "**Ticket:** ${TICKET}" \
-              "**Original PR:** ${ORIGINAL_PR}" \
-              "release_version: none")
-          else
-            TITLE="${TICKET}: Backport into support/${VERSION}"
-            BODY=$(printf '%s\n\n%s\n%s\n%s\n\n%s' \
-              "${TICKET}: Backport of **${PR_TITLE}** into \`${SUPPORT_BRANCH}\`." \
-              "---" \
-              "**Ticket:** ${TICKET}" \
-              "**Original PR:** ${ORIGINAL_PR}" \
-              "release_version: none")
-          fi
+            BODY="${TICKET}: Backport of **${PR_TITLE}** into \`${SUPPORT_BRANCH}\`.
+
+        
+          ⚠️ **Conflicts were auto-resolved** — please review carefully before merging.
+
+          ---
+          **Original PR:** ${ORIGINAL_PR}
+
+          release_version: none"
+                    else
+                      TITLE="${TICKET}: Backport into support/${VERSION}"
+                      BODY="${TICKET}: Backport of **${PR_TITLE}** into \`${SUPPORT_BRANCH}\`.
+
+          ---
+          **Original PR:** ${ORIGINAL_PR}
+
+          release_version: none"
+                    fi
           
-          # Create PR payload
-          JSON=$(jq -n \
-            --arg title "$TITLE" \
-            --arg body  "$BODY" \
-            --arg head  "$FEATURE_BRANCH" \
-            --arg base  "$SUPPORT_BRANCH" \
-            '{title: $title, body: $body, head: $head, base: $base}')
+          # Create PR with GitHub CLI
+          PR_URL=$(gh pr create \
+            --head "$FEATURE_BRANCH" \
+            --base "$SUPPORT_BRANCH" \
+            --title "$TITLE" \
+            --body "$BODY")
           
-          # Create PR
-          RESPONSE=$(curl -sf -w "\n%{http_code}" -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "Content-Type: application/json" \
-            "https://api.github.com/repos/${REPO}/pulls" \
-            -d "$JSON" 2>&1)
-          
-          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-          BODY_RESP=$(echo "$RESPONSE" | head -n -1)
-          
-          # Validate PR creation
-          if [ "$HTTP_CODE" = "201" ]; then
-            PR_URL=$(echo "$BODY_RESP" | jq -r '.html_url' 2>/dev/null || echo "")
-            
-            if [ -n "$PR_URL" ]; then
-              echo "✅ Backport PR created successfully"
-              echo "   📎 $PR_URL"
-            else
-              echo "⚠️  PR created but URL extraction failed"
-              echo "$BODY_RESP"
-              echo "$BODY_RESP" | jq . 2>/dev/null || true
-            fi
-          else
-            echo "❌ PR creation failed (HTTP $HTTP_CODE)"
-            echo ""
-            echo "Response:"
-            echo "$BODY_RESP"
-            echo "$BODY_RESP" | jq . 2>/dev/null || true
-            exit 1
-          fi
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "✅ BACKPORT PR CREATED"
+          echo "═══════════════════════════════════════════════════════════"
+          echo "$PR_URL"
+          echo "═══════════════════════════════════════════════════════════"
