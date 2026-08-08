@@ -210,11 +210,24 @@ jobs:
           
           git fetch origin "$SUPPORT_BRANCH"
           
-          # ALWAYS start fresh from support branch (no accumulated commits)
+          # CUMULATIVE COMMITS: Preserve existing backport commits
           if git ls-remote --exit-code --heads origin "$FEATURE_BRANCH" > /dev/null 2>&1; then
             echo "Feature branch '$FEATURE_BRANCH' already exists"
-            echo "Resetting to clean state from '$SUPPORT_BRANCH' (discards any existing commits)..."
-            git checkout -B "$FEATURE_BRANCH" "origin/$SUPPORT_BRANCH"
+            echo "Checking out and pulling latest commits (APPEND mode - preserves history)..."
+            git fetch origin "$FEATURE_BRANCH"
+            git checkout "$FEATURE_BRANCH"
+            git pull origin "$FEATURE_BRANCH"
+            
+            # Verify we're on the right base
+            MERGE_BASE=$(git merge-base HEAD "origin/$SUPPORT_BRANCH")
+            SUPPORT_SHA=$(git rev-parse "origin/$SUPPORT_BRANCH")
+            
+            if [ "$MERGE_BASE" != "$SUPPORT_SHA" ]; then
+              echo "⚠️  WARNING: Feature branch has diverged from support branch"
+              echo "   Merge base: $MERGE_BASE"
+              echo "   Support:    $SUPPORT_SHA"
+              echo "   This may cause issues. Consider manual rebase if needed."
+            fi
           else
             echo "Creating new feature branch '$FEATURE_BRANCH' from '$SUPPORT_BRANCH'..."
             git checkout -b "$FEATURE_BRANCH" "origin/$SUPPORT_BRANCH"
@@ -753,38 +766,23 @@ jobs:
             echo "conflict_resolved=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # ── 5. Push feature branch ───────────────────────────────────────────────
+     # ── 5. Push feature branch ───────────────────────────────────────────────
       - name: Push feature branch
         if: steps.info.outputs.skip != 'true' && steps.apply.outputs.applied == 'true'
         env:
           FEATURE_BRANCH: ${{ steps.info.outputs.feature_branch }}
         run: |
           set -euo pipefail
-          
-          # Validate required environment variable
+
           if [ -z "$FEATURE_BRANCH" ]; then
-            echo "❌ FATAL: FEATURE_BRANCH is empty"
-            exit 1
-          fi
-          
-          echo "▶ Pushing branch: $FEATURE_BRANCH"
-          
-          # Use --force-with-lease for safer force push
-          # (prevents overwriting if remote has unexpected changes)
-          if git push origin "$FEATURE_BRANCH" --force-with-lease 2>&1; then
-            echo "✅ Push succeeded: $FEATURE_BRANCH"
-          else
-            PUSH_EXIT=$?
-            echo "❌ Push failed with exit code: $PUSH_EXIT"
-            echo ""
-            echo "Possible causes:"
-            echo "  • Remote branch was updated unexpectedly"
-            echo "  • Network issues"
-            echo "  • Permission issues"
+            echo "FEATURE_BRANCH is empty"
             exit 1
           fi
 
-      # ── 6. Create Pull Request (with GitHub CLI) ────────────────────────────
+          git push origin "$FEATURE_BRANCH" --force-with-lease
+
+
+          # ── 6. Create Pull Request ───────────────────────────────────────────────
       - name: Create Pull Request
         if: steps.info.outputs.skip != 'true' && steps.apply.outputs.applied == 'true'
         env:
@@ -798,56 +796,41 @@ jobs:
           CONFLICT_RESOLVED: ${{ steps.apply.outputs.conflict_resolved }}
         run: |
           set -euo pipefail
-          
-          echo "═══════════════════════════════════════════════════════════"
-          echo "CREATE BACKPORT PR"
-          echo "═══════════════════════════════════════════════════════════"
-          
-          # Check if PR already exists
+
           EXISTING=$(gh pr list \
             --head "$FEATURE_BRANCH" \
             --base "$SUPPORT_BRANCH" \
             --state open \
             --json url \
             --jq '.[0].url' || true)
-          
+
           if [ -n "$EXISTING" ]; then
-            echo "ℹ️  PR already exists: $EXISTING"
+            echo "PR already exists: $EXISTING"
             exit 0
           fi
-          
-          # Build PR title and body
+
           if [ "$CONFLICT_RESOLVED" = "true" ]; then
             TITLE="${TICKET}: Backport into support/${VERSION} [conflicts auto-resolved]"
             BODY="${TICKET}: Backport of **${PR_TITLE}** into \`${SUPPORT_BRANCH}\`.
 
-        
           ⚠️ **Conflicts were auto-resolved** — please review carefully before merging.
 
           ---
           **Original PR:** ${ORIGINAL_PR}
 
           release_version: none"
-                    else
-                      TITLE="${TICKET}: Backport into support/${VERSION}"
-                      BODY="${TICKET}: Backport of **${PR_TITLE}** into \`${SUPPORT_BRANCH}\`.
+          else
+            TITLE="${TICKET}: Backport into support/${VERSION}"
+            BODY="${TICKET}: Backport of **${PR_TITLE}** into \`${SUPPORT_BRANCH}\`.
 
           ---
           **Original PR:** ${ORIGINAL_PR}
 
           release_version: none"
-                    fi
-          
-          # Create PR with GitHub CLI
-          PR_URL=$(gh pr create \
+          fi
+
+          gh pr create \
             --head "$FEATURE_BRANCH" \
             --base "$SUPPORT_BRANCH" \
             --title "$TITLE" \
-            --body "$BODY")
-          
-          echo ""
-          echo "═══════════════════════════════════════════════════════════"
-          echo "✅ BACKPORT PR CREATED"
-          echo "═══════════════════════════════════════════════════════════"
-          echo "$PR_URL"
-          echo "═══════════════════════════════════════════════════════════"
+            --body "$BODY"
