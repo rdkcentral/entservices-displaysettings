@@ -333,6 +333,7 @@ jobs:
           FEATURE_BRANCH: ${{ steps.info.outputs.feature_branch }}
           SUPPORT_BRANCH: ${{ steps.info.outputs.support_branch }}
           CONFLICT_COUNT: ${{ steps.cherry_pick.outputs.conflict_count }}
+          VERSION:        ${{ steps.info.outputs.version }}
         run: |
           set -euo pipefail
           
