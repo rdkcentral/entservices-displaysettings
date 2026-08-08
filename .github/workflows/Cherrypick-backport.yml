@@ -561,9 +561,10 @@ jobs:
             # ══════════════════════════════════════════════════════════════════
             if [ -f "$BASE_FILE" ] && [ -f "$OURS_FILE" ] && [ -f "$THEIRS_FILE" ]; then
               # Check if BASE and OURS are identical (or very similar)
-              BASE_OURS_DIFF=$(diff -u "$BASE_FILE" "$OURS_FILE" 2>/dev/null | grep -c "^[-+]" || echo 999)
-              
-              if [ "$BASE_OURS_DIFF" -lt 10 ]; then
+              # Use wc -l to count diff lines (safer for large diffs)
+              DIFF_LINE_COUNT=$(diff -u "$BASE_FILE" "$OURS_FILE" 2>/dev/null | grep "^[-+]" | wc -l || echo 999)
+              # Ensure it's a valid integer
+              if [[ "$DIFF_LINE_COUNT" =~ ^[0-9]+$ ]] && [ "$DIFF_LINE_COUNT" -lt 10 ]; then
                 echo "  💡 Smart Detection: BASE ≈ OURS (non-conflict - just applying change)"
                 echo "     BASE and support branch are nearly identical"
                 echo "     This is a simple change, not a real merge conflict"
@@ -580,9 +581,10 @@ jobs:
             # Strategy 1: Clean 3-way merge with diff3
             if [ "$RESOLVED" = false ] && [ -f "$OURS_FILE" ] && [ -f "$BASE_FILE" ] && [ -f "$THEIRS_FILE" ]; then
               if diff3 -m "$OURS_FILE" "$BASE_FILE" "$THEIRS_FILE" > "$MERGED_FILE" 2>/dev/null; then
-                # Check if merge was clean (no conflict markers)
-                MARKER_COUNT=$(grep -cE '^(<<<<<<<|=======|>>>>>>>)' "$MERGED_FILE" 2>/dev/null || echo 0)
-                if [ "$MARKER_COUNT" -eq 0 ]; then
+                # Check if merge was clean (no conflict markers) - use wc -l for safety
+                MARKER_COUNT=$(grep -E '^(<<<<<<<|=======|>>>>>>>)' "$MERGED_FILE" 2>/dev/null | wc -l || echo 0)
+                MARKER_COUNT=$(echo "$MARKER_COUNT" | tr -d ' ')  # Remove whitespace
+                if [[ "$MARKER_COUNT" =~ ^[0-9]+$ ]] && [ "$MARKER_COUNT" -eq 0 ]; then
                   cp "$MERGED_FILE" "$FILE"
                   git add "$FILE"
                   RESOLVED=true
@@ -597,9 +599,10 @@ jobs:
               # For backport workflow: THEIRS = incoming changes from develop = what we want
               git checkout --theirs -- "$FILE" 2>/dev/null
               
-              # Verify no conflict markers remain (safe check)
-              MARKER_COUNT=$(grep -cE '^(<<<<<<<|=======|>>>>>>>)' "$FILE" 2>/dev/null || echo 0)
-              if [ "$MARKER_COUNT" -eq 0 ]; then
+              # Verify no conflict markers remain (safe check) - use wc -l for safety
+              MARKER_COUNT=$(grep -E '^(<<<<<<<|=======|>>>>>>>)' "$FILE" 2>/dev/null | wc -l || echo 0)
+              MARKER_COUNT=$(echo "$MARKER_COUNT" | tr -d ' ')  # Remove whitespace
+              if [[ "$MARKER_COUNT" =~ ^[0-9]+$ ]] && [ "$MARKER_COUNT" -eq 0 ]; then
                 git add "$FILE"
                 RESOLVED=true
                 RESOLVED_COUNT=$((RESOLVED_COUNT + 1))
