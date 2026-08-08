@@ -490,7 +490,7 @@ jobs:
             # Strategy 1: Clean 3-way merge with diff3
             if [ -f "$OURS_FILE" ] && [ -f "$BASE_FILE" ] && [ -f "$THEIRS_FILE" ]; then
               if diff3 -m "$OURS_FILE" "$BASE_FILE" "$THEIRS_FILE" > "$MERGED_FILE" 2>/dev/null; then
-                CONFLICT_MARKERS=$(grep -c '<<<<<<\|======\|>>>>>>' "$MERGED_FILE" 2>/dev/null || echo 0)
+                CONFLICT_MARKERS=$(grep -cE '<<<<<<|======|>>>>>>' "$MERGED_FILE" 2>/dev/null || echo 0)
                 
                 if [ "$CONFLICT_MARKERS" -eq 0 ]; then
                   cp "$MERGED_FILE" "$FILE"
@@ -512,7 +512,7 @@ jobs:
               }' "$FILE" 2>/dev/null
               
               # Verify clean resolution
-              REMAINING_MARKERS=$(grep -c '<<<<<<\|======\|>>>>>>' "$FILE" 2>/dev/null || echo 0)
+              REMAINING_MARKERS=$(grep -cE '<<<<<<|======|>>>>>>' "$FILE" 2>/dev/null || echo 0)
               
               if [ "$REMAINING_MARKERS" -eq 0 ]; then
                 git add "$FILE"
