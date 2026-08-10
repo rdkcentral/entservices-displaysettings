@@ -531,238 +531,278 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "✅ Detailed conflict analysis complete"
           echo ""
-
-      # ── 4c. Auto-resolve conflicts ────────────────────────────────────────────
-      - name: "Phase 3: Auto-resolve conflicts"
-        if: steps.info.outputs.skip != 'true' && steps.cherry_pick.outputs.has_conflicts == 'true'
-        id: resolve
-        run: |
-          set -euo pipefail
           
-          if [ ! -f /tmp/conflict_files.txt ] || [ ! -f /tmp/temp_dir_path.txt ]; then
-            echo "❌ FATAL: Required files not found"
-            exit 1
-          fi
-          
-          mapfile -t CONFLICT_FILES < /tmp/conflict_files.txt
-          TEMP_DIR=$(cat /tmp/temp_dir_path.txt)
-          
-          if [ ! -d "$TEMP_DIR" ]; then
-            echo "❌ FATAL: Temp directory not found: $TEMP_DIR"
-            exit 1
-          fi
-          
-          echo "🔧 Attempting smart auto-resolution..."
+          # ── Provide resolution instructions and stop workflow ─────────────────
+          echo "╔══════════════════════════════════════════════════════════════════╗"
+          echo "║  🛑 MANUAL RESOLUTION REQUIRED                                   ║"
+          echo "╠══════════════════════════════════════════════════════════════════╣"
+          echo "║  The workflow has stopped to allow manual conflict resolution.   ║"
+          echo "╚══════════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "📋 RESOLUTION STEPS:"
+          echo "───────────────────────────────────────────────────────────────────"
+          echo ""
+          echo "1️⃣  Checkout the feature branch:"
+          echo "    git fetch origin"
+          echo "    git checkout $FEATURE_BRANCH"
+          echo ""
+          echo "2️⃣  Use AI-Powered Analysis (RECOMMENDED):"
+          echo "    📄 Prompt: AI_POC/promptflow-test/MERGE_CONFLICT_ANALYSIS_PROMPT.txt"
+          echo ""
+          echo "    • Copy the prompt content"
+          echo "    • For each conflicted file, extract conflict data:"
+          echo "      git show :1:<file> > base.txt    # BASE (ancestor)"
+          echo "      git show :2:<file> > ours.txt    # OURS (support branch)"
+          echo "      git show :3:<file> > theirs.txt  # THEIRS (develop branch)"
+          echo "      cat <file> > working.txt         # File with markers"
+          echo ""
+          echo "    • Provide data to AI (ChatGPT/Claude/Copilot)"
+          echo "    • AI will classify conflict type and provide resolution code"
+          echo ""
+          echo "3️⃣  Apply resolution:"
+          echo "    • Edit files based on AI recommendations"
+          echo "    • OR use: git checkout --theirs <file>  (if AI says accept THEIRS)"
+          echo "    • OR use: git checkout --ours <file>    (if AI says accept OURS)"
+          echo ""
+          echo "4️⃣  Complete the cherry-pick:"
+          echo "    git add <resolved-files>"
+          echo "    git cherry-pick --continue"
+          echo ""
+          echo "5️⃣  Push changes:"
+          echo "    git push origin $FEATURE_BRANCH --force-with-lease"
+          echo ""
+          echo "───────────────────────────────────────────────────────────────────"
+          echo "ℹ️  The PR will auto-update after you push the resolved changes."
           echo ""
           
-          RESOLVED_COUNT=0
-          FAILED_FILES=()
-          
-          for FILE in "${CONFLICT_FILES[@]}"; do
-            echo "━━━ Resolving: $FILE"
-            
-            RESOLVED=false
-            BASE_FILE="$TEMP_DIR/base_${FILE//\//_}.tmp"
-            OURS_FILE="$TEMP_DIR/ours_${FILE//\//_}.tmp"
-            THEIRS_FILE="$TEMP_DIR/theirs_${FILE//\//_}.tmp"
-            MERGED_FILE="$TEMP_DIR/merged_${FILE//\//_}.tmp"
-            
-            # Strategy 0: REMOVED (was unsafe - replaced entire files)
-            # Old approach tried to detect "non-conflicts" but used file-level replacement
-            # which lost support branch code. Now rely on Strategy 1 (diff3) and Strategy 2 (awk)
-            # which are both patch-based and preserve non-conflicted code.
-            
-            # Strategy 1: Clean 3-way merge with diff3
-            if [ "$RESOLVED" = false ] && [ -f "$OURS_FILE" ] && [ -f "$BASE_FILE" ] && [ -f "$THEIRS_FILE" ]; then
-              if diff3 -m "$OURS_FILE" "$BASE_FILE" "$THEIRS_FILE" > "$MERGED_FILE" 2>/dev/null; then
-                # Check if merge was clean (no conflict markers) - use wc -l for safety
-                MARKER_COUNT=$(grep -E '^(<<<<<<<|=======|>>>>>>>)' "$MERGED_FILE" 2>/dev/null | wc -l || echo 0)
-                MARKER_COUNT=$(echo "$MARKER_COUNT" | head -n1)  # Ensure single line
-                if [[ "$MARKER_COUNT" =~ ^[0-9]+$ ]] && [ "$MARKER_COUNT" -eq 0 ]; then
-                  cp "$MERGED_FILE" "$FILE"
-                  git add "$FILE"
-                  RESOLVED=true
-                  RESOLVED_COUNT=$((RESOLVED_COUNT + 1))
-                  echo "  ✅ Strategy 1: Clean 3-way merge (diff3)"
-                fi
-              fi
-            fi
-            
-            # Strategy 2: Resolve conflicts by accepting incoming changes (ONLY conflicted lines)
-            if [ "$RESOLVED" = false ]; then
-              # Parse conflict markers and take THEIRS side for each conflict
-              # This preserves all non-conflicted code from support branch
-              if grep -q '^<<<<<<<' "$FILE" 2>/dev/null; then
-                awk '
-                  BEGIN { conflict=0; taking=0 }
-                  /^<<<<<<</ { conflict=1; next }
-                  /^=======/ { if (conflict) { taking=1; next } }
-                  /^>>>>>>>/ { conflict=0; taking=0; next }
-                  { if (!conflict || taking) print }
-                ' "$FILE" > "$FILE.resolved"
-                
-                if [ -f "$FILE.resolved" ]; then
-                  mv "$FILE.resolved" "$FILE"
-                  
-                  # Verify no conflict markers remain
-                  MARKER_COUNT=$(grep -E '^(<<<<<<<|=======|>>>>>>>)' "$FILE" 2>/dev/null | wc -l || echo 0)
-                  MARKER_COUNT=$(echo "$MARKER_COUNT" | head -n1)
-                  
-                  if [[ "$MARKER_COUNT" =~ ^[0-9]+$ ]] && [ "$MARKER_COUNT" -eq 0 ]; then
-                    git add "$FILE"
-                    RESOLVED=true
-                    RESOLVED_COUNT=$((RESOLVED_COUNT + 1))
-                    echo "  ✅ Strategy 2: Resolved conflicts (applied ONLY changed lines)"
-                  else
-                    echo "  ❌ Strategy 2: Failed (markers remain: $MARKER_COUNT)"
-                    FAILED_FILES+=("$FILE")
-                  fi
-                else
-                  echo "  ❌ Strategy 2: Failed (awk processing error)"
-                  FAILED_FILES+=("$FILE")
-                fi
-              else
-                echo "  ❌ Strategy 2: No conflict markers found"
-                FAILED_FILES+=("$FILE")
-              fi
-            fi
-            
-            # Mark as failed if no strategy worked
-            if [ "$RESOLVED" = false ]; then
-              echo "  ❌ All strategies failed"
-              FAILED_FILES+=("$FILE")
-            fi
-            echo ""
-          done
-          
-          # Save results
-          echo "$RESOLVED_COUNT" > /tmp/resolved_count.txt
-          printf "%s\n" "${FAILED_FILES[@]}" > /tmp/failed_files.txt 2>/dev/null || echo -n "" > /tmp/failed_files.txt
-          
-          echo "resolved_count=$RESOLVED_COUNT" >> "$GITHUB_OUTPUT"
-          echo "failed_count=${#FAILED_FILES[@]}" >> "$GITHUB_OUTPUT"
-          
-          # Cleanup temp directory
-          rm -rf "$TEMP_DIR"
+          # Exit with error to stop workflow
+          exit 1
 
-      # ── 4d. Verify and commit ─────────────────────────────────────────────────
-      - name: "Phase 4: Verify and commit"
-        if: steps.info.outputs.skip != 'true' && steps.cherry_pick.outputs.has_conflicts == 'true'
-        id: verify_commit
-        env:
-          TICKET:         ${{ steps.info.outputs.ticket }}
-          VERSION:        ${{ steps.info.outputs.version }}
-          PR_TITLE:       ${{ steps.info.outputs.pr_title }}
-          FEATURE_BRANCH: ${{ steps.info.outputs.feature_branch }}
-          MERGE_SHA:      ${{ steps.info.outputs.merge_sha }}
-          CONFLICT_COUNT: ${{ steps.cherry_pick.outputs.conflict_count }}
-          RESOLVED_COUNT: ${{ steps.resolve.outputs.resolved_count }}
-          FAILED_COUNT:   ${{ steps.resolve.outputs.failed_count }}
-        run: |
-          set -euo pipefail
-          
-          # Explicit verification: check for any remaining unresolved conflicts (authoritative)
-          UNRESOLVED=$(git ls-files -u | cut -f2 | sort -u | grep -v '^\.github/' || true)
-          
-          # Additional safety: check for text conflict markers
-          if git grep -IlE '^(<<<<<<<|=======|>>>>>>>)' -- . ':!/.git/' 2>/dev/null | head -1 | grep -q .; then
-            echo "⚠️  WARNING: Conflict markers found in text files"
-          fi
-          
-          if [ -n "$UNRESOLVED" ]; then
-            echo "❌ VERIFICATION FAILED: Unresolved conflicts still exist"
-            echo "$UNRESOLVED" | while IFS= read -r f; do echo "  ❌ $f"; done
-            
-            # Add to failed files list
-            if [ -f /tmp/failed_files.txt ]; then
-              echo "$UNRESOLVED" >> /tmp/failed_files.txt
-            else
-              echo "$UNRESOLVED" > /tmp/failed_files.txt
-            fi
-          fi
-          
-          # Check if all conflicts were resolved
-          if [ "$FAILED_COUNT" -eq 0 ] && [ -z "$UNRESOLVED" ]; then
-            # Verify staged changes exist before committing
-            if git diff --cached --quiet; then
-              echo "❌ VERIFICATION FAILED: No staged changes to commit"
-              echo "applied=false" >> "$GITHUB_OUTPUT"
-              exit 1
-            fi
-            
-            echo ""
-            echo "✅ Auto-applying changes to support/$VERSION"
-            echo ""
-            
-            # Show simple file count summary
-            FILE_COUNT=$(git diff --cached --name-only | wc -l)
-            echo "  Files modified: $FILE_COUNT"
-            git diff --cached --name-only | head -5 | sed 's/^/    • /'
-            if [ "$FILE_COUNT" -gt 5 ]; then
-              echo "    ... and $((FILE_COUNT - 5)) more"
-            fi
-            echo ""
-            
-            # Commit resolved conflicts
-            git commit -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE} [conflicts auto-resolved]"
-            
-            echo "✅ Changes committed to $FEATURE_BRANCH"
-            echo "   Conflicts resolved: $RESOLVED_COUNT / $CONFLICT_COUNT"
-            
-            echo "applied=true" >> "$GITHUB_OUTPUT"
-            
-          else
-            # Some conflicts could not be auto-resolved
-            mapfile -t FAILED_FILES < /tmp/failed_files.txt
-            ACTUAL_FAILED_COUNT=${#FAILED_FILES[@]}
-            
-            echo ""
-            echo "╔══════════════════════════════════════════════════════════════════╗"
-            echo "║  ❌ COULD NOT AUTO-RESOLVE — MANUAL FIX REQUIRED                ║"
-            echo "╠══════════════════════════════════════════════════════════════════╣"
-            echo "║  Total conflicts : $CONFLICT_COUNT"
-            echo "║  Resolved        : $RESOLVED_COUNT"
-            echo "║  Failed          : $ACTUAL_FAILED_COUNT"
-            echo "╠══════════════════════════════════════════════════════════════════╣"
-            echo "║  Failed files:"
-            for f in "${FAILED_FILES[@]}"; do
-              echo "║    ❌ $f"
-            done
-            echo "╠══════════════════════════════════════════════════════════════════╣"
-            echo "║  Manual resolution steps:"
-            echo "║"
-            echo "║  git fetch origin"
-            echo "║  git checkout $FEATURE_BRANCH"
-            echo "║  git cherry-pick -m 1 $MERGE_SHA"
-            echo "║  # Resolve conflicts manually in your editor"
-            echo "║  git add ."
-            echo "║  git cherry-pick --continue"
-            echo "║  git push origin $FEATURE_BRANCH"
-            echo "╚══════════════════════════════════════════════════════════════════╝"
-            
-            echo "applied=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
+      # ── 4c. Auto-resolve conflicts (COMMENTED OUT) ────────────────────────────
+      # - name: "Phase 3: Auto-resolve conflicts"
+      #   if: steps.info.outputs.skip != 'true' && steps.cherry_pick.outputs.has_conflicts == 'true'
+      #   id: resolve
+      #   run: |
+      #     set -euo pipefail
+      #     
+      #     if [ ! -f /tmp/conflict_files.txt ] || [ ! -f /tmp/temp_dir_path.txt ]; then
+      #       echo "❌ FATAL: Required files not found"
+      #       exit 1
+      #     fi
+      #     
+      #     mapfile -t CONFLICT_FILES < /tmp/conflict_files.txt
+      #     TEMP_DIR=$(cat /tmp/temp_dir_path.txt)
+      #     
+      #     if [ ! -d "$TEMP_DIR" ]; then
+      #       echo "❌ FATAL: Temp directory not found: $TEMP_DIR"
+      #       exit 1
+      #     fi
+      #     
+      #     echo "🔧 Attempting smart auto-resolution..."
+      #     echo ""
+      #     
+      #     RESOLVED_COUNT=0
+      #     FAILED_FILES=()
+      #     
+      #     for FILE in "${CONFLICT_FILES[@]}"; do
+      #       echo "━━━ Resolving: $FILE"
+      #       
+      #       RESOLVED=false
+      #       BASE_FILE="$TEMP_DIR/base_${FILE//\//_}.tmp"
+      #       OURS_FILE="$TEMP_DIR/ours_${FILE//\//_}.tmp"
+      #       THEIRS_FILE="$TEMP_DIR/theirs_${FILE//\//_}.tmp"
+      #       MERGED_FILE="$TEMP_DIR/merged_${FILE//\//_}.tmp"
+      #       
+      #       # Strategy 0: REMOVED (was unsafe - replaced entire files)
+      #       # Old approach tried to detect "non-conflicts" but used file-level replacement
+      #       # which lost support branch code. Now rely on Strategy 1 (diff3) and Strategy 2 (awk)
+      #       # which are both patch-based and preserve non-conflicted code.
+      #       
+      #       # Strategy 1: Clean 3-way merge with diff3
+      #       if [ "$RESOLVED" = false ] && [ -f "$OURS_FILE" ] && [ -f "$BASE_FILE" ] && [ -f "$THEIRS_FILE" ]; then
+      #         if diff3 -m "$OURS_FILE" "$BASE_FILE" "$THEIRS_FILE" > "$MERGED_FILE" 2>/dev/null; then
+      #           # Check if merge was clean (no conflict markers) - use wc -l for safety
+      #           MARKER_COUNT=$(grep -E '^(<<<<<<<|=======|>>>>>>>)' "$MERGED_FILE" 2>/dev/null | wc -l || echo 0)
+      #           MARKER_COUNT=$(echo "$MARKER_COUNT" | head -n1)  # Ensure single line
+      #           if [[ "$MARKER_COUNT" =~ ^[0-9]+$ ]] && [ "$MARKER_COUNT" -eq 0 ]; then
+      #             cp "$MERGED_FILE" "$FILE"
+      #             git add "$FILE"
+      #             RESOLVED=true
+      #             RESOLVED_COUNT=$((RESOLVED_COUNT + 1))
+      #             echo "  ✅ Strategy 1: Clean 3-way merge (diff3)"
+      #           fi
+      #         fi
+      #       fi
+      #       
+      #       # Strategy 2: Resolve conflicts by accepting incoming changes (ONLY conflicted lines)
+      #       if [ "$RESOLVED" = false ]; then
+      #         # Parse conflict markers and take THEIRS side for each conflict
+      #         # This preserves all non-conflicted code from support branch
+      #         if grep -q '^<<<<<<<' "$FILE" 2>/dev/null; then
+      #           awk '
+      #             BEGIN { conflict=0; taking=0 }
+      #             /^<<<<<<</ { conflict=1; next }
+      #             /^=======/ { if (conflict) { taking=1; next } }
+      #             /^>>>>>>>/ { conflict=0; taking=0; next }
+      #             { if (!conflict || taking) print }
+      #           ' "$FILE" > "$FILE.resolved"
+      #           
+      #           if [ -f "$FILE.resolved" ]; then
+      #             mv "$FILE.resolved" "$FILE"
+      #             
+      #             # Verify no conflict markers remain
+      #             MARKER_COUNT=$(grep -E '^(<<<<<<<|=======|>>>>>>>)' "$FILE" 2>/dev/null | wc -l || echo 0)
+      #             MARKER_COUNT=$(echo "$MARKER_COUNT" | head -n1)
+      #             
+      #             if [[ "$MARKER_COUNT" =~ ^[0-9]+$ ]] && [ "$MARKER_COUNT" -eq 0 ]; then
+      #               git add "$FILE"
+      #               RESOLVED=true
+      #               RESOLVED_COUNT=$((RESOLVED_COUNT + 1))
+      #               echo "  ✅ Strategy 2: Resolved conflicts (applied ONLY changed lines)"
+      #             else
+      #               echo "  ❌ Strategy 2: Failed (markers remain: $MARKER_COUNT)"
+      #               FAILED_FILES+=("$FILE")
+      #             fi
+      #           else
+      #             echo "  ❌ Strategy 2: Failed (awk processing error)"
+      #             FAILED_FILES+=("$FILE")
+      #           fi
+      #         else
+      #           echo "  ❌ Strategy 2: No conflict markers found"
+      #           FAILED_FILES+=("$FILE")
+      #         fi
+      #       fi
+      #       
+      #       # Mark as failed if no strategy worked
+      #       if [ "$RESOLVED" = false ]; then
+      #         echo "  ❌ All strategies failed"
+      #         FAILED_FILES+=("$FILE")
+      #       fi
+      #       echo ""
+      #     done
+      #     
+      #     # Save results
+      #     echo "$RESOLVED_COUNT" > /tmp/resolved_count.txt
+      #     printf "%s\n" "${FAILED_FILES[@]}" > /tmp/failed_files.txt 2>/dev/null || echo -n "" > /tmp/failed_files.txt
+      #     
+      #     echo "resolved_count=$RESOLVED_COUNT" >> "$GITHUB_OUTPUT"
+      #     echo "failed_count=${#FAILED_FILES[@]}" >> "$GITHUB_OUTPUT"
+      #     
+      #     # Cleanup temp directory
+      #     rm -rf "$TEMP_DIR"
+
+      # ── 4d. Verify and commit (COMMENTED OUT) ─────────────────────────────────
+      # - name: "Phase 4: Verify and commit"
+      #   if: steps.info.outputs.skip != 'true' && steps.cherry_pick.outputs.has_conflicts == 'true'
+      #   id: verify_commit
+      #   env:
+      #     TICKET:         ${{ steps.info.outputs.ticket }}
+      #     VERSION:        ${{ steps.info.outputs.version }}
+      #     PR_TITLE:       ${{ steps.info.outputs.pr_title }}
+      #     FEATURE_BRANCH: ${{ steps.info.outputs.feature_branch }}
+      #     MERGE_SHA:      ${{ steps.info.outputs.merge_sha }}
+      #     CONFLICT_COUNT: ${{ steps.cherry_pick.outputs.conflict_count }}
+      #     RESOLVED_COUNT: ${{ steps.resolve.outputs.resolved_count }}
+      #     FAILED_COUNT:   ${{ steps.resolve.outputs.failed_count }}
+      #   run: |
+      #     set -euo pipefail
+      #     
+      #     # Explicit verification: check for any remaining unresolved conflicts (authoritative)
+      #     UNRESOLVED=$(git ls-files -u | cut -f2 | sort -u | grep -v '^\.github/' || true)
+      #     
+      #     # Additional safety: check for text conflict markers
+      #     if git grep -IlE '^(<<<<<<<|=======|>>>>>>>)' -- . ':!/.git/' 2>/dev/null | head -1 | grep -q .; then
+      #       echo "⚠️  WARNING: Conflict markers found in text files"
+      #     fi
+      #     
+      #     if [ -n "$UNRESOLVED" ]; then
+      #       echo "❌ VERIFICATION FAILED: Unresolved conflicts still exist"
+      #       echo "$UNRESOLVED" | while IFS= read -r f; do echo "  ❌ $f"; done
+      #       
+      #       # Add to failed files list
+      #       if [ -f /tmp/failed_files.txt ]; then
+      #         echo "$UNRESOLVED" >> /tmp/failed_files.txt
+      #       else
+      #         echo "$UNRESOLVED" > /tmp/failed_files.txt
+      #       fi
+      #     fi
+      #     
+      #     # Check if all conflicts were resolved
+      #     if [ "$FAILED_COUNT" -eq 0 ] && [ -z "$UNRESOLVED" ]; then
+      #       # Verify staged changes exist before committing
+      #       if git diff --cached --quiet; then
+      #         echo "❌ VERIFICATION FAILED: No staged changes to commit"
+      #         echo "applied=false" >> "$GITHUB_OUTPUT"
+      #         exit 1
+      #       fi
+      #       
+      #       echo ""
+      #       echo "✅ Auto-applying changes to support/$VERSION"
+      #       echo ""
+      #       
+      #       # Show simple file count summary
+      #       FILE_COUNT=$(git diff --cached --name-only | wc -l)
+      #       echo "  Files modified: $FILE_COUNT"
+      #       git diff --cached --name-only | head -5 | sed 's/^/    • /'
+      #       if [ "$FILE_COUNT" -gt 5 ]; then
+      #         echo "    ... and $((FILE_COUNT - 5)) more"
+      #       fi
+      #       echo ""
+      #       
+      #       # Commit resolved conflicts
+      #       git commit -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE} [conflicts auto-resolved]"
+      #       
+      #       echo "✅ Changes committed to $FEATURE_BRANCH"
+      #       echo "   Conflicts resolved: $RESOLVED_COUNT / $CONFLICT_COUNT"
+      #       
+      #       echo "applied=true" >> "$GITHUB_OUTPUT"
+      #       
+      #     else
+      #       # Some conflicts could not be auto-resolved
+      #       mapfile -t FAILED_FILES < /tmp/failed_files.txt
+      #       ACTUAL_FAILED_COUNT=${#FAILED_FILES[@]}
+      #       
+      #       echo ""
+      #       echo "╔══════════════════════════════════════════════════════════════════╗"
+      #       echo "║  ❌ COULD NOT AUTO-RESOLVE — MANUAL FIX REQUIRED                ║"
+      #       echo "╠══════════════════════════════════════════════════════════════════╣"
+      #       echo "║  Total conflicts : $CONFLICT_COUNT"
+      #       echo "║  Resolved        : $RESOLVED_COUNT"
+      #       echo "║  Failed          : $ACTUAL_FAILED_COUNT"
+      #       echo "╠══════════════════════════════════════════════════════════════════╣"
+      #       echo "║  Failed files:"
+      #       for f in "${FAILED_FILES[@]}"; do
+      #         echo "║    ❌ $f"
+      #       done
+      #       echo "╠══════════════════════════════════════════════════════════════════╣"
+      #       echo "║  Manual resolution steps:"
+      #       echo "║"
+      #       echo "║  git fetch origin"
+      #       echo "║  git checkout $FEATURE_BRANCH"
+      #       echo "║  git cherry-pick -m 1 $MERGE_SHA"
+      #       echo "║  # Resolve conflicts manually in your editor"
+      #       echo "║  git add ."
+      #       echo "║  git cherry-pick --continue"
+      #       echo "║  git push origin $FEATURE_BRANCH"
+      #       echo "╚══════════════════════════════════════════════════════════════════╝"
+      #       
+      #       echo "applied=false" >> "$GITHUB_OUTPUT"
+      #       exit 1
+      #     fi
       
       # ── Output consolidation for downstream steps ─────────────────────────────
       - name: Set final apply status
         if: steps.info.outputs.skip != 'true'
         id: apply
         run: |
-          # Check if clean commit happened (no conflicts)
+          # Only runs if NO conflicts (Phase 2 exits with error if conflicts detected)
           if [ "${{ steps.cherry_pick.outputs.committed }}" = "true" ]; then
             echo "applied=true" >> "$GITHUB_OUTPUT"
             echo "conflicts=false" >> "$GITHUB_OUTPUT"
             echo "conflict_resolved=false" >> "$GITHUB_OUTPUT"
-          # Check if conflict resolution succeeded
-          elif [ "${{ steps.verify_commit.outputs.applied }}" = "true" ]; then
-            echo "applied=true" >> "$GITHUB_OUTPUT"
-            echo "conflicts=true" >> "$GITHUB_OUTPUT"
-            echo "conflict_resolved=true" >> "$GITHUB_OUTPUT"
-          # Otherwise, failed
           else
             echo "applied=false" >> "$GITHUB_OUTPUT"
-            echo "conflicts=true" >> "$GITHUB_OUTPUT"
+            echo "conflicts=false" >> "$GITHUB_OUTPUT"
             echo "conflict_resolved=false" >> "$GITHUB_OUTPUT"
           fi
 
