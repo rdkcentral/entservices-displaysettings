@@ -6094,7 +6094,7 @@ void DisplaySettings::sendMsgThread()
 				device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
 				if (isDisplayConnected(strVideoPort))
 				{
-					bool enable = (newState == "GAME" || newState == "HDR") ? true : false;
+					bool enable = (newState == "HDR" || newState == "GAME") ? true : false;
 					if(enable){ // Game mode
 					    vPort.getDisplay().setAVIContentType(dsAVICONTENT_TYPE_GAME);
 					    vPort.getDisplay().setAVIScanInformation(dsAVI_SCAN_TYPE_UNDERSCAN);
