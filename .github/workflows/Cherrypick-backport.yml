@@ -314,8 +314,64 @@ jobs:
               exit 0
             fi
             
-            echo "Files to be backported:"
-            git diff --cached --name-only | while IFS= read -r f; do echo "  ✅ $f"; done
+            # ── Show detailed change analysis ─────────────────────────────────
+            echo ""
+            echo "╔══════════════════════════════════════════════════════════════════╗"
+            echo "║           📝 CHANGE ANALYSIS (No Conflicts)                     ║"
+            echo "╚══════════════════════════════════════════════════════════════════╝"
+            echo ""
+            
+            # Get list of changed files
+            mapfile -t CHANGED_FILES < <(git diff --cached --name-only)
+            FILE_COUNT=${#CHANGED_FILES[@]}
+            
+            echo "📊 Summary: $FILE_COUNT file(s) will be backported"
+            echo ""
+            
+            for FILE in "${CHANGED_FILES[@]}"; do
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "📄 FILE: $FILE"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo ""
+              
+              # Get diff statistics
+              STATS=$(git diff --cached --numstat "$FILE" || echo "0 0")
+              ADDITIONS=$(echo "$STATS" | awk '{print $1}')
+              DELETIONS=$(echo "$STATS" | awk '{print $2}')
+              
+              echo "📊 Changes: +$ADDITIONS / -$DELETIONS"
+              echo ""
+              
+              # Show the actual diff with context
+              echo "🔍 Detailed Changes:"
+              echo ""
+              git diff --cached --unified=5 "$FILE" | tail -n +5 | head -50 || true
+              echo ""
+              
+              # If file is too long, show line count
+              DIFF_LINES=$(git diff --cached "$FILE" | wc -l)
+              if [ "$DIFF_LINES" -gt 50 ]; then
+                echo "... (diff truncated, total $DIFF_LINES lines)"
+                echo ""
+              fi
+              
+              # Show modified function/method names if possible
+              echo "🔍 Modified Functions/Areas:"
+              git diff --cached --function-context "$FILE" 2>/dev/null | \
+                grep -E '^@@.*@@' | \
+                sed 's/^@@ .* @@//' | \
+                head -10 | \
+                while IFS= read -r func; do
+                  if [ -n "$func" ]; then
+                    echo "   • $func"
+                  fi
+                done || echo "   (unable to detect function context)"
+              echo ""
+            done
+            
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "✅ All changes are clean (no conflicts)"
+            echo ""
             
             git commit -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE}"
             echo "✅ Changes committed successfully"
