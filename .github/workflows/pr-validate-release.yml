@@ -121,8 +121,8 @@ jobs:
             echo "  Next line value: '$VALUE_ON_SAME_LINE'"
           fi
           
-          # Strip leading/trailing spaces and remove trailing comments
-          VERSION=$(echo "$VALUE_ON_SAME_LINE" | sed 's/#.*//' | xargs)
+          # Strip leading/trailing spaces, newlines, carriage returns, and remove trailing comments
+          VERSION=$(echo "$VALUE_ON_SAME_LINE" | sed 's/#.*//' | tr -d '\n\r' | xargs)
           
           echo "  Normalized value: '$VERSION'"
           echo ""
