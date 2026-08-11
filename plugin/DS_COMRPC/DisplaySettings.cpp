@@ -7130,24 +7130,37 @@ namespace Plugin {
         string firstDisplay = "";
         string firstResolution = "";
         bool firstResolutionSet = false;
-        Core::hresult comResult = Core::ERROR_NONE;
         for (int i = 0; i < (int)connectedDisplays.size(); i++) {
             string resolution;
             string display = connectedDisplays.at(i);
             {
                 const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(display);
                 if (INVALID_DS_HANDLE != videoHandle) {
-                    auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
-                    if (vp != nullptr) {
-                        Exchange::IDeviceSettingsVideoPort::VideoPortResolution vpRes;
-                        comResult = vp->GetVideoPortResolution(videoHandle, vpRes);
-                        if (comResult == Core::ERROR_NONE) {
-                            resolution = vpRes.name;
+                    // Derive resolution name from cached config store — avoids COM-RPC round-trip
+                    using VR = Exchange::IDeviceSettingsVideoPort::VideoResolution;
+                    VR pixRes = VR::DS_VIDEO_PIXELRES_MAX;
+                    if      (width == 720  && height == 480)  pixRes = VR::DS_VIDEO_PIXELRES_720X480;
+                    else if (width == 720  && height == 576)  pixRes = VR::DS_VIDEO_PIXELRES_720X576;
+                    else if (width == 1280 && height == 720)  pixRes = VR::DS_VIDEO_PIXELRES_1280X720;
+                    else if (width == 1366 && height == 768)  pixRes = VR::DS_VIDEO_PIXELRES_1366X768;
+                    else if (width == 1920 && height == 1080) pixRes = VR::DS_VIDEO_PIXELRES_1920X1080;
+                    else if (width == 3840 && height == 2160) pixRes = VR::DS_VIDEO_PIXELRES_3840X2160;
+                    else if (width == 4096 && height == 2160) pixRes = VR::DS_VIDEO_PIXELRES_4096X2160;
+
+                    VideoPortEntry vpEntry;
+                    if (pixRes != VR::DS_VIDEO_PIXELRES_MAX && DSHelper::resolveVideoPortByName(display, vpEntry)) {
+                        std::vector<VideoPortResolution> vpResolutions;
+                        if (DSHelper::getVideoPortResolutionsForType(vpEntry.type, vpResolutions)) {
+                            for (const auto& r : vpResolutions) {
+                                if (r.pixelResolution == pixRes) {
+                                    resolution = r.name;
+                                    break;
+                                }
+                            }
                         }
-                        else {
-                            LOGERR("GetVideoPortResolution failed for videoPort='%s', Error=%d", display.c_str(), static_cast<int>(comResult));
-                        }
-                        vp->Release();
+                    }
+                    if (resolution.empty()) {
+                        LOGERR("resolutionChanged: no cached name for %dx%d on port '%s'", width, height, display.c_str());
                     }
                 }
             }
