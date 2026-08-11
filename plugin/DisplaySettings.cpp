@@ -6265,7 +6265,7 @@ void DisplaySettings::sendMsgThread()
 				device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
 				if (isDisplayConnected(strVideoPort))
 				{
-					bool enable = (newState == "GAME" || newState == "HDMI") ? true : false;
+					bool enable = (newState == "GAME" || newState == "SPEAKER") ? true : false;
 					if(enable){ // Game mode
 					    vPort.getDisplay().setAVIContentType(dsAVICONTENT_TYPE_GAME);
 					    vPort.getDisplay().setAVIScanInformation(dsAVI_SCAN_TYPE_UNDERSCAN);
@@ -6288,8 +6288,8 @@ void DisplaySettings::sendMsgThread()
 		}
 		if( 0 == (int)connectedDisplays.size())
 		{
-            LOGWARN("Log Added");
 			LOGWARN("No display connected to device (or) device's powerstate is not ON");
+            LOGWARN("LOG ADDEDD");
             return Core::ERROR_GENERAL;
 		}
         return Core::ERROR_NONE;

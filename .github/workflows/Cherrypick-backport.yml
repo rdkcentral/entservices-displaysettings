@@ -466,6 +466,7 @@ jobs:
           SUPPORT_BRANCH: ${{ steps.info.outputs.support_branch }}
           CONFLICT_COUNT: ${{ steps.cherry_pick.outputs.conflict_count }}
           VERSION:        ${{ steps.info.outputs.version }}
+          MERGE_SHA:      ${{ steps.info.outputs.merge_sha }}
         run: |
           set -euo pipefail
           
