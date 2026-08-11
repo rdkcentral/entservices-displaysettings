@@ -82,7 +82,7 @@ jobs:
             VALUE_ON_SAME_LINE=$(echo "$PR_BODY" | tail -n +$((LINE_NUM + 1)) | grep -v '^[[:space:]]*$' | head -1 | sed 's/#.*//' | xargs || true)
           fi
           
-          VERSION=$(echo "$VALUE_ON_SAME_LINE" | sed 's/#.*//' | xargs || true)
+          VERSION=$(echo "$VALUE_ON_SAME_LINE" | sed 's/#.*//' | tr -d '\n\r' | xargs || true)
           
           echo "release_version : '$VERSION'"
           
