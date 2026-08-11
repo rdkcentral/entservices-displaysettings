@@ -285,6 +285,60 @@ jobs:
           
           echo "cherry_pick_exit=$CP_EXIT" >> "$GITHUB_OUTPUT"
           
+          # ═══════════════════════════════════════════════════════════
+          # CAPTURE SUMMARY BEFORE ANY REMOVAL
+          # ═══════════════════════════════════════════════════════════
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════════════╗"
+          echo "║           📋 CHERRY-PICK SUMMARY                                ║"
+          echo "╚══════════════════════════════════════════════════════════════════╝"
+          echo ""
+          
+          # Get ALL files affected by cherry-pick (staged + unstaged + unmerged)
+          ALL_CHANGED=$(git diff --name-only HEAD 2>/dev/null || true)
+          TOTAL_COUNT=$(echo "$ALL_CHANGED" | grep -v '^$' | wc -l | tr -d ' ')
+          
+          if [ "$TOTAL_COUNT" -eq 0 ]; then
+            echo "ℹ️  No files modified by this cherry-pick"
+          else
+            echo "📊 Total files affected: $TOTAL_COUNT"
+            echo ""
+            
+            # Split into .github/ and real code
+            GITHUB_FILES=$(echo "$ALL_CHANGED" | grep '^\.github/' || true)
+            REAL_FILES=$(echo "$ALL_CHANGED" | grep -v '^\.github/' || true)
+            
+            GITHUB_COUNT=$(echo "$GITHUB_FILES" | grep -v '^$' | wc -l | tr -d ' ')
+            REAL_COUNT=$(echo "$REAL_FILES" | grep -v '^$' | wc -l | tr -d ' ')
+            
+            if [ "$GITHUB_COUNT" -gt 0 ]; then
+              echo "⛔ .github/ files (will be excluded from backport):"
+              echo "$GITHUB_FILES" | while IFS= read -r f; do
+                if [ -n "$f" ]; then
+                  echo "   • $f"
+                fi
+              done
+              echo ""
+            fi
+            
+            if [ "$REAL_COUNT" -gt 0 ]; then
+              echo "✅ Code files (will be backported):"
+              echo "$REAL_FILES" | while IFS= read -r f; do
+                if [ -n "$f" ]; then
+                  # Check if file has conflicts
+                  if git ls-files -u | cut -f2 | grep -q "^$f$"; then
+                    echo "   ⚠️  $f (has conflicts)"
+                  else
+                    echo "   ✓  $f"
+                  fi
+                fi
+              done
+              echo ""
+            fi
+          fi
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          
           # Remove .github/ conflicts (always excluded from release branches)
           GITHUB_CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null | grep '^\.github/' || true)
           if [ -n "$GITHUB_CONFLICTS" ]; then
@@ -308,16 +362,25 @@ jobs:
             
             # Check if there are staged changes to commit
             if git diff --cached --quiet; then
-              echo "ℹ️  No code changes to apply — already up to date"
+              echo ""
+              echo "╔══════════════════════════════════════════════════════════════════╗"
+              echo "║  ℹ️  NO CODE CHANGES TO BACKPORT                               ║"
+              echo "╠══════════════════════════════════════════════════════════════════╣"
+              echo "║  The cherry-picked commit only modified .github/ workflow files,║"
+              echo "║  which are excluded from release branches.                      ║"
+              echo "║                                                                  ║"
+              echo "║  Result: No changes applied to $FEATURE_BRANCH                  ║"
+              echo "╚══════════════════════════════════════════════════════════════════╝"
+              echo ""
               echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
-              echo "committed=true" >> "$GITHUB_OUTPUT"
+              echo "committed=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             
             # ── Show detailed change analysis ─────────────────────────────────
             echo ""
             echo "╔══════════════════════════════════════════════════════════════════╗"
-            echo "║           📝 CHANGE ANALYSIS (No Conflicts)                     ║"
+            echo "║           📝 DETAILED CHANGE ANALYSIS                           ║"
             echo "╚══════════════════════════════════════════════════════════════════╝"
             echo ""
             
