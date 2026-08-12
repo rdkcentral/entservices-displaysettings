@@ -248,6 +248,219 @@ jobs:
       # 4. APPLY CHANGES (4 PHASES)
       # ══════════════════════════════════════════════════════════════════════════
 
+      # # ── 4a. Cherry-pick and detect conflicts ──────────────────────────────────
+      # - name: "Phase 1: Cherry-pick and detect conflicts"
+      #   if: steps.info.outputs.skip != 'true'
+      #   id: cherry_pick
+      #   env:
+      #     MERGE_SHA:      ${{ steps.info.outputs.merge_sha }}
+      #     TICKET:         ${{ steps.info.outputs.ticket }}
+      #     VERSION:        ${{ steps.info.outputs.version }}
+      #     PR_TITLE:       ${{ steps.info.outputs.pr_title }}
+      #     FEATURE_BRANCH: ${{ steps.info.outputs.feature_branch }}
+      #   run: |
+      #     set -euo pipefail
+          
+      #     # Validate required environment variables
+      #     if [ -z "$MERGE_SHA" ] || [ -z "$TICKET" ] || [ -z "$VERSION" ] || [ -z "$FEATURE_BRANCH" ]; then
+      #       echo "❌ FATAL: Required environment variables are missing"
+      #       exit 1
+      #     fi
+          
+      #     echo "▶ Cherry-picking commit: $MERGE_SHA"
+          
+      #     # Detect merge commit vs normal commit (smart handling)
+      #     PARENT_COUNT=$(git rev-list --parents -n 1 "$MERGE_SHA" | awk '{print NF-1}')
+      #     echo "Commit type: $([ "$PARENT_COUNT" -gt 1 ] && echo 'MERGE' || echo 'NORMAL') ($PARENT_COUNT parent(s))"
+          
+      #     # Disable error checking only for cherry-pick (expected to fail with conflicts)
+      #     set +e
+      #     if [[ "$PARENT_COUNT" -gt 1 ]]; then
+      #       git cherry-pick -m 1 --no-commit "$MERGE_SHA" 2>&1
+      #     else
+      #       git cherry-pick --no-commit "$MERGE_SHA" 2>&1
+      #     fi
+      #     CP_EXIT=$?
+      #     set -e
+          
+      #     echo "cherry_pick_exit=$CP_EXIT" >> "$GITHUB_OUTPUT"
+          
+      #     # ═══════════════════════════════════════════════════════════
+      #     # CAPTURE SUMMARY BEFORE ANY REMOVAL
+      #     # ═══════════════════════════════════════════════════════════
+      #     echo ""
+      #     echo "╔══════════════════════════════════════════════════════════════════╗"
+      #     echo "║           📋 CHERRY-PICK SUMMARY                                ║"
+      #     echo "╚══════════════════════════════════════════════════════════════════╝"
+      #     echo ""
+          
+      #     # Get ALL files affected by cherry-pick (staged + unstaged + unmerged)
+      #     ALL_CHANGED=$(git diff --name-only HEAD 2>/dev/null || true)
+      #     TOTAL_COUNT=$(echo "$ALL_CHANGED" | grep -v '^$' | wc -l | tr -d ' ')
+          
+      #     if [ "$TOTAL_COUNT" -eq 0 ]; then
+      #       echo "ℹ️  No files modified by this cherry-pick"
+      #     else
+      #       echo "📊 Total files affected: $TOTAL_COUNT"
+      #       echo ""
+
+      #       # Split into .github/ and real code
+      #       GITHUB_FILES=$(echo "$ALL_CHANGED" | grep '^\.github/' || true)
+      #       REAL_FILES=$(echo "$ALL_CHANGED" | grep -v '^\.github/' || true)
+
+      #       # IMPORTANT: grep can return 1 when there are no matches.
+      #       # || true prevents set -euo pipefail from stopping the workflow.
+      #       GITHUB_COUNT=$(echo "$GITHUB_FILES" | grep -v '^$' | wc -l | tr -d ' ' || true)
+      #       REAL_COUNT=$(echo "$REAL_FILES" | grep -v '^$' | wc -l | tr -d ' ' || true)
+
+      #       if [ "$GITHUB_COUNT" -gt 0 ]; then
+      #         echo "⛔ .github/ files (will be excluded from backport):"
+      #         echo "$GITHUB_FILES" | while IFS= read -r f; do
+      #           if [ -n "$f" ]; then
+      #             echo "   • $f"
+      #           fi
+      #         done
+      #         echo ""
+      #       fi
+            
+      #       if [ "$REAL_COUNT" -gt 0 ]; then
+      #         echo "✅ Code files (will be backported):"
+      #         echo "$REAL_FILES" | while IFS= read -r f; do
+      #           if [ -n "$f" ]; then
+      #             # Check if file has conflicts
+      #             if git ls-files -u | cut -f2 | grep -q "^$f$"; then
+      #               echo "   ⚠️  $f (has conflicts)"
+      #             else
+      #               echo "   ✓  $f"
+      #             fi
+      #           fi
+      #         done
+      #         echo ""
+      #       fi
+      #     fi
+      #     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      #     echo ""
+          
+      #     # Remove .github/ conflicts (always excluded from release branches)
+      #     GITHUB_CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null | grep '^\.github/' || true)
+      #     if [ -n "$GITHUB_CONFLICTS" ]; then
+      #       echo "Excluding .github/ folder (not needed on release branch):"
+      #       echo "$GITHUB_CONFLICTS" | while IFS= read -r f; do
+      #         git rm --cached --force "$f" 2>/dev/null || true
+      #         rm -f "$f" 2>/dev/null || true
+      #         echo "  ⛔ $f"
+      #       done
+      #       git restore --staged .github/ 2>/dev/null || true
+      #       git checkout HEAD -- .github/ 2>/dev/null || true
+      #     fi
+          
+      #     # Detect real conflicts - AUTHORITATIVE (uses Git index, not diff output)
+      #     REAL_CONFLICTS=$(git ls-files -u | cut -f2 | sort -u | grep -v '^\.github/' || true)
+          
+      #     # ── Early Exit: No conflicts, clean cherry-pick ──────────────────────
+      #     if [ -z "$REAL_CONFLICTS" ]; then
+      #       echo ""
+      #       echo "✅ Cherry-pick succeeded with no conflicts"
+            
+      #       # Check if there are staged changes to commit
+      #       if git diff --cached --quiet; then
+      #         echo ""
+      #         echo "╔══════════════════════════════════════════════════════════════════╗"
+      #         echo "║  ℹ️  NO CODE CHANGES TO BACKPORT                               ║"
+      #         echo "╠══════════════════════════════════════════════════════════════════╣"
+      #         echo "║  The cherry-picked commit only modified .github/ workflow files,║"
+      #         echo "║  which are excluded from release branches.                      ║"
+      #         echo "║                                                                  ║"
+      #         echo "║  Result: No changes applied to $FEATURE_BRANCH                  ║"
+      #         echo "╚══════════════════════════════════════════════════════════════════╝"
+      #         echo ""
+      #         echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
+      #         echo "committed=false" >> "$GITHUB_OUTPUT"
+      #         exit 0
+      #       fi
+            
+      #       # ── Show detailed change analysis ─────────────────────────────────
+      #       echo ""
+      #       echo "╔══════════════════════════════════════════════════════════════════╗"
+      #       echo "║           📝 DETAILED CHANGE ANALYSIS                           ║"
+      #       echo "╚══════════════════════════════════════════════════════════════════╝"
+      #       echo ""
+            
+      #       # Get list of changed files
+      #       mapfile -t CHANGED_FILES < <(git diff --cached --name-only)
+      #       FILE_COUNT=${#CHANGED_FILES[@]}
+            
+      #       echo "📊 Summary: $FILE_COUNT file(s) will be backported"
+      #       echo ""
+            
+      #       for FILE in "${CHANGED_FILES[@]}"; do
+      #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      #         echo "📄 FILE: $FILE"
+      #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      #         echo ""
+              
+      #         # Get diff statistics
+      #         STATS=$(git diff --cached --numstat "$FILE" || echo "0 0")
+      #         ADDITIONS=$(echo "$STATS" | awk '{print $1}')
+      #         DELETIONS=$(echo "$STATS" | awk '{print $2}')
+              
+      #         echo "📊 Changes: +$ADDITIONS / -$DELETIONS"
+      #         echo ""
+              
+      #         # Show the actual diff with context
+      #         echo "🔍 Detailed Changes:"
+      #         echo ""
+      #         git diff --cached --unified=5 "$FILE" | tail -n +5 | head -50 || true
+      #         echo ""
+              
+      #         # If file is too long, show line count
+      #         DIFF_LINES=$(git diff --cached "$FILE" | wc -l)
+      #         if [ "$DIFF_LINES" -gt 50 ]; then
+      #           echo "... (diff truncated, total $DIFF_LINES lines)"
+      #           echo ""
+      #         fi
+              
+      #         # Show modified function/method names if possible
+      #         echo "🔍 Modified Functions/Areas:"
+      #         git diff --cached --function-context "$FILE" 2>/dev/null | \
+      #           grep -E '^@@.*@@' | \
+      #           sed 's/^@@ .* @@//' | \
+      #           head -10 | \
+      #           while IFS= read -r func; do
+      #             if [ -n "$func" ]; then
+      #               echo "   • $func"
+      #             fi
+      #           done || echo "   (unable to detect function context)"
+      #         echo ""
+      #       done
+            
+      #       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      #       echo "✅ All changes are clean (no conflicts)"
+      #       echo ""
+            
+      #       git commit -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE}"
+      #       echo "✅ Changes committed successfully"
+      #       echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
+      #       echo "committed=true" >> "$GITHUB_OUTPUT"
+      #       exit 0
+      #     fi
+          
+      #     # ── Conflicts detected ────────────────────────────────────────────────
+      #     CONFLICT_COUNT=$(echo "$REAL_CONFLICTS" | wc -l | tr -d ' ')
+          
+      #     echo ""
+      #     echo "⚠️  Conflicts detected: $CONFLICT_COUNT file(s)"
+      #     echo "$REAL_CONFLICTS" | while IFS= read -r f; do echo "  ❌ $f"; done
+          
+      #     # Save conflict list to file for next steps
+      #     echo "$REAL_CONFLICTS" > /tmp/conflict_files.txt
+          
+      #     echo "has_conflicts=true" >> "$GITHUB_OUTPUT"
+      #     echo "committed=false" >> "$GITHUB_OUTPUT"
+      #     echo "conflict_count=$CONFLICT_COUNT" >> "$GITHUB_OUTPUT"
+
+
+
       # ── 4a. Cherry-pick and detect conflicts ──────────────────────────────────
       - name: "Phase 1: Cherry-pick and detect conflicts"
         if: steps.info.outputs.skip != 'true'
@@ -269,11 +482,11 @@ jobs:
           
           echo "▶ Cherry-picking commit: $MERGE_SHA"
           
-          # Detect merge commit vs normal commit (smart handling)
+          # Detect merge commit vs normal commit
           PARENT_COUNT=$(git rev-list --parents -n 1 "$MERGE_SHA" | awk '{print NF-1}')
           echo "Commit type: $([ "$PARENT_COUNT" -gt 1 ] && echo 'MERGE' || echo 'NORMAL') ($PARENT_COUNT parent(s))"
           
-          # Disable error checking only for cherry-pick (expected to fail with conflicts)
+          # Disable error checking only for cherry-pick
           set +e
           if [[ "$PARENT_COUNT" -gt 1 ]]; then
             git cherry-pick -m 1 --no-commit "$MERGE_SHA" 2>&1
@@ -294,7 +507,7 @@ jobs:
           echo "╚══════════════════════════════════════════════════════════════════╝"
           echo ""
           
-          # Get ALL files affected by cherry-pick (staged + unstaged + unmerged)
+          # Get ALL files affected by cherry-pick
           ALL_CHANGED=$(git diff --name-only HEAD 2>/dev/null || true)
           TOTAL_COUNT=$(echo "$ALL_CHANGED" | grep -v '^$' | wc -l | tr -d ' ')
           
@@ -309,7 +522,6 @@ jobs:
             REAL_FILES=$(echo "$ALL_CHANGED" | grep -v '^\.github/' || true)
 
             # IMPORTANT: grep can return 1 when there are no matches.
-            # || true prevents set -euo pipefail from stopping the workflow.
             GITHUB_COUNT=$(echo "$GITHUB_FILES" | grep -v '^$' | wc -l | tr -d ' ' || true)
             REAL_COUNT=$(echo "$REAL_FILES" | grep -v '^$' | wc -l | tr -d ' ' || true)
 
@@ -327,7 +539,6 @@ jobs:
               echo "✅ Code files (will be backported):"
               echo "$REAL_FILES" | while IFS= read -r f; do
                 if [ -n "$f" ]; then
-                  # Check if file has conflicts
                   if git ls-files -u | cut -f2 | grep -q "^$f$"; then
                     echo "   ⚠️  $f (has conflicts)"
                   else
@@ -338,35 +549,176 @@ jobs:
               echo ""
             fi
           fi
+
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
           
-          # Remove .github/ conflicts (always excluded from release branches)
+          # Remove .github/ conflicts
           GITHUB_CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null | grep '^\.github/' || true)
+
           if [ -n "$GITHUB_CONFLICTS" ]; then
             echo "Excluding .github/ folder (not needed on release branch):"
+
             echo "$GITHUB_CONFLICTS" | while IFS= read -r f; do
               git rm --cached --force "$f" 2>/dev/null || true
               rm -f "$f" 2>/dev/null || true
               echo "  ⛔ $f"
             done
+
             git restore --staged .github/ 2>/dev/null || true
             git checkout HEAD -- .github/ 2>/dev/null || true
           fi
-          
-          # Detect real conflicts - AUTHORITATIVE (uses Git index, not diff output)
+
+
+          # ═══════════════════════════════════════════════════════════
+          # DETECT CURRENT REAL CONFLICTS
+          # ═══════════════════════════════════════════════════════════
+
           REAL_CONFLICTS=$(git ls-files -u | cut -f2 | sort -u | grep -v '^\.github/' || true)
-          
-          # ── Early Exit: No conflicts, clean cherry-pick ──────────────────────
+
+
+          # ═══════════════════════════════════════════════════════════
+          # NEW: SAFE FALLBACK FOR COMPATIBLE CHANGES
+          #
+          # If normal cherry-pick reported a conflict, do NOT
+          # immediately declare it a final conflict.
+          #
+          # First try to apply the actual PR change relative to
+          # parent 1 using Git's 3-way patch application.
+          #
+          # If this succeeds:
+          #     commit → push → PR
+          #
+          # If this fails:
+          #     leave unresolved conflict → Phase 4b
+          # ═══════════════════════════════════════════════════════════
+
+          if [ "$CP_EXIT" -ne 0 ] && [ -n "$REAL_CONFLICTS" ]; then
+
+            echo ""
+            echo "⚠️ Normal cherry-pick produced conflicts."
+            echo "🔍 Trying safe 3-way application of the actual PR changes..."
+            echo ""
+
+            # For merge commits, parent 1 is the source PR base.
+            PARENT1=$(git rev-list --parents -n 1 "$MERGE_SHA" | awk '{print $2}')
+
+            if [ -z "$PARENT1" ]; then
+              echo "❌ Could not determine parent 1 of merge commit."
+            else
+
+              echo "PR base parent: $PARENT1"
+
+              # Abort the failed cherry-pick and return to the clean
+              # feature branch based on support/<version>.
+              git cherry-pick --abort || true
+
+              # Extract ONLY the changes introduced by the PR
+              # relative to parent 1.
+              git diff --binary --full-index "$PARENT1" "$MERGE_SHA" \
+                -- ':!.github/*' > /tmp/backport.patch
+
+              if [ ! -s /tmp/backport.patch ]; then
+
+                echo "ℹ️ No code changes to backport."
+
+                echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
+                echo "committed=false" >> "$GITHUB_OUTPUT"
+
+                exit 0
+
+              fi
+
+              echo "📦 PR patch generated."
+              echo "▶ Applying PR changes using Git 3-way application..."
+
+              set +e
+              git apply --3way --index /tmp/backport.patch
+              PATCH_EXIT=$?
+              set -e
+
+              # Re-check Git's index after the fallback attempt.
+              REAL_CONFLICTS=$(git ls-files -u | cut -f2 | sort -u | grep -v '^\.github/' || true)
+
+              # -------------------------------------------------------
+              # FALLBACK SUCCESS
+              # -------------------------------------------------------
+              if [ "$PATCH_EXIT" -eq 0 ] && [ -z "$REAL_CONFLICTS" ]; then
+
+                echo ""
+                echo "╔══════════════════════════════════════════════════════════════════╗"
+                echo "║       ✅ PR CHANGES APPLIED SUCCESSFULLY                        ║"
+                echo "╠══════════════════════════════════════════════════════════════════╣"
+                echo "║  Normal cherry-pick required conflict reconciliation.            ║"
+                echo "║  Git 3-way patch application applied the PR changes safely.      ║"
+                echo "║                                                                  ║"
+                echo "║  Result: Changes will be committed and backported.              ║"
+                echo "╚══════════════════════════════════════════════════════════════════╝"
+                echo ""
+
+                if git diff --cached --quiet; then
+
+                  echo "ℹ️ No code changes to commit."
+
+                  echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
+                  echo "committed=false" >> "$GITHUB_OUTPUT"
+
+                  exit 0
+
+                fi
+
+                echo "▶ Committing automatically applied changes..."
+
+                git commit -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE}"
+
+                echo "✅ Changes committed successfully."
+
+                echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
+                echo "committed=true" >> "$GITHUB_OUTPUT"
+
+                exit 0
+
+              fi
+
+              # -------------------------------------------------------
+              # FALLBACK FAILED
+              # -------------------------------------------------------
+
+              echo ""
+              echo "⚠️ Safe 3-way application could not resolve the change."
+              echo "➡️ This remains a REAL conflict."
+              echo "➡️ Continuing to Phase 4b for analysis."
+              echo ""
+
+            fi
+          fi
+
+
+          # ═══════════════════════════════════════════════════════════
+          # FINAL AUTHORITATIVE CONFLICT CHECK
+          #
+          # At this point:
+          #
+          #   1. Normal cherry-pick was attempted
+          #   2. Safe fallback was attempted if required
+          #   3. If unresolved entries remain → REAL CONFLICT
+          # ═══════════════════════════════════════════════════════════
+
+          REAL_CONFLICTS=$(git ls-files -u | cut -f2 | sort -u | grep -v '^\.github/' || true)
+
+
+          # ── No conflicts → clean cherry-pick ──────────────────────
           if [ -z "$REAL_CONFLICTS" ]; then
+
             echo ""
             echo "✅ Cherry-pick succeeded with no conflicts"
             
             # Check if there are staged changes to commit
             if git diff --cached --quiet; then
+
               echo ""
               echo "╔══════════════════════════════════════════════════════════════════╗"
-              echo "║  ℹ️  NO CODE CHANGES TO BACKPORT                               ║"
+              echo "║  ℹ️  NO CODE CHANGES TO BACKPORT                                ║"
               echo "╠══════════════════════════════════════════════════════════════════╣"
               echo "║  The cherry-picked commit only modified .github/ workflow files,║"
               echo "║  which are excluded from release branches.                      ║"
@@ -374,19 +726,20 @@ jobs:
               echo "║  Result: No changes applied to $FEATURE_BRANCH                  ║"
               echo "╚══════════════════════════════════════════════════════════════════╝"
               echo ""
+
               echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
               echo "committed=false" >> "$GITHUB_OUTPUT"
+
               exit 0
             fi
             
-            # ── Show detailed change analysis ─────────────────────────────────
+            # ── Show detailed change analysis ────────────────────────
             echo ""
             echo "╔══════════════════════════════════════════════════════════════════╗"
             echo "║           📝 DETAILED CHANGE ANALYSIS                           ║"
             echo "╚══════════════════════════════════════════════════════════════════╝"
             echo ""
             
-            # Get list of changed files
             mapfile -t CHANGED_FILES < <(git diff --cached --name-only)
             FILE_COUNT=${#CHANGED_FILES[@]}
             
@@ -394,12 +747,12 @@ jobs:
             echo ""
             
             for FILE in "${CHANGED_FILES[@]}"; do
+
               echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
               echo "📄 FILE: $FILE"
               echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
               echo ""
               
-              # Get diff statistics
               STATS=$(git diff --cached --numstat "$FILE" || echo "0 0")
               ADDITIONS=$(echo "$STATS" | awk '{print $1}')
               DELETIONS=$(echo "$STATS" | awk '{print $2}')
@@ -407,21 +760,22 @@ jobs:
               echo "📊 Changes: +$ADDITIONS / -$DELETIONS"
               echo ""
               
-              # Show the actual diff with context
               echo "🔍 Detailed Changes:"
               echo ""
+
               git diff --cached --unified=5 "$FILE" | tail -n +5 | head -50 || true
+
               echo ""
               
-              # If file is too long, show line count
               DIFF_LINES=$(git diff --cached "$FILE" | wc -l)
+
               if [ "$DIFF_LINES" -gt 50 ]; then
                 echo "... (diff truncated, total $DIFF_LINES lines)"
                 echo ""
               fi
               
-              # Show modified function/method names if possible
               echo "🔍 Modified Functions/Areas:"
+
               git diff --cached --function-context "$FILE" 2>/dev/null | \
                 grep -E '^@@.*@@' | \
                 sed 's/^@@ .* @@//' | \
@@ -431,6 +785,7 @@ jobs:
                     echo "   • $func"
                   fi
                 done || echo "   (unable to detect function context)"
+
               echo ""
             done
             
@@ -439,20 +794,30 @@ jobs:
             echo ""
             
             git commit -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE}"
+
             echo "✅ Changes committed successfully"
+
             echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
             echo "committed=true" >> "$GITHUB_OUTPUT"
+
             exit 0
           fi
           
-          # ── Conflicts detected ────────────────────────────────────────────────
-          CONFLICT_COUNT=$(echo "$REAL_CONFLICTS" | wc -l | tr -d ' ')
           
+          # ═══════════════════════════════════════════════════════════
+          # REAL CONFLICTS REMAIN → PHASE 4B
+          # ═══════════════════════════════════════════════════════════
+
+          CONFLICT_COUNT=$(echo "$REAL_CONFLICTS" | wc -l | tr -d ' ')
+
           echo ""
           echo "⚠️  Conflicts detected: $CONFLICT_COUNT file(s)"
-          echo "$REAL_CONFLICTS" | while IFS= read -r f; do echo "  ❌ $f"; done
+
+          echo "$REAL_CONFLICTS" | while IFS= read -r f; do
+            echo "  ❌ $f"
+          done
           
-          # Save conflict list to file for next steps
+          # Save conflict list for Phase 4b
           echo "$REAL_CONFLICTS" > /tmp/conflict_files.txt
           
           echo "has_conflicts=true" >> "$GITHUB_OUTPUT"
