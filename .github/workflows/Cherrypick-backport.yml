@@ -462,6 +462,7 @@ jobs:
 
 
       # ── 4a. Apply PR changes and detect real conflicts ────────────────────────
+      # ── 4a. Apply PR changes and detect real conflicts ────────────────────────
       - name: "Phase 1: Apply PR changes and detect conflicts"
         if: steps.info.outputs.skip != 'true'
         id: cherry_pick
@@ -503,17 +504,16 @@ jobs:
           # MERGE COMMIT
           #
           # IMPORTANT:
+          #
           # Do NOT start with:
           #
           #   git cherry-pick -m 1
           #
-          # Instead:
+          # Instead, calculate:
           #
           #   parent1 -> merge commit
           #
-          # represents the actual PR result.
-          #
-          # We apply that change directly to the release feature branch.
+          # This represents the actual PR result.
           # ═══════════════════════════════════════════════════════════════════
 
           if [ "$PARENT_COUNT" -gt 1 ]; then
@@ -535,7 +535,7 @@ jobs:
             echo ""
 
             # ═════════════════════════════════════════════════════════════════
-            # SUMMARY
+            # CALCULATE ACTUAL PR CHANGES
             # ═════════════════════════════════════════════════════════════════
 
             echo "▶ Calculating files changed by the PR..."
@@ -571,7 +571,7 @@ jobs:
             echo ""
 
             # ═════════════════════════════════════════════════════════════════
-            # GENERATE ACTUAL PR CHANGE
+            # GENERATE ACTUAL PR PATCH
             # ═════════════════════════════════════════════════════════════════
 
             echo "▶ Generating actual PR change..."
@@ -596,15 +596,13 @@ jobs:
             # ═════════════════════════════════════════════════════════════════
             # SOURCE → RELEASE PATH MAPPING
             #
-            # Your repository:
+            # Example:
             #
             # dummy_develop:
             #     plugin/DisplaySettings.cpp
             #
             # support/8.3.4.0:
             #     DisplaySettings/DisplaySettings.cpp
-            #
-            # The code is the same logical file, but the path is different.
             # ═════════════════════════════════════════════════════════════════
 
             sed -i \
@@ -612,6 +610,20 @@ jobs:
               /tmp/backport.patch
 
             echo "📍 Source path mapped to release path where required."
+
+            # ═════════════════════════════════════════════════════════════════
+            # REMOVE FILE-MODE-ONLY CHANGES
+            #
+            # 100644 vs 100755 must NOT turn a simple content change into
+            # a merge conflict.
+            # ═════════════════════════════════════════════════════════════════
+
+            sed -i \
+              -e '/^old mode /d' \
+              -e '/^new mode /d' \
+              -e '/^new file mode /d' \
+              -e '/^deleted file mode /d' \
+              /tmp/backport.patch
 
             echo ""
             echo "╔══════════════════════════════════════════════════════════════════╗"
@@ -626,60 +638,76 @@ jobs:
             echo ""
 
             # ═════════════════════════════════════════════════════════════════
-            # ATTEMPT 1
+            # ATTEMPT 1 — DIRECT PATCH VALIDATION
             #
-            # Apply the actual PR change.
+            # First ask Git:
             #
-            # --unidiff-zero:
-            #   Do not require surrounding context lines to be identical.
+            #   Can this actual PR change be applied cleanly?
             #
-            # --3way:
-            #   If normal application cannot locate the exact context,
-            #   Git tries a 3-way merge using the patch's original blob.
+            # If YES:
+            #     apply → commit → has_conflicts=false → STOP
             #
-            # This is important for your demo:
-            #
-            # TARGET:
-            #   LOGWARN("failure: ...");
-            #
-            # PR:
-            #   LOGWARN("failure: ...");
-            #   LOGWARN("LOG ADDED");
-            #
-            # The added LOG line can still be applied even if the surrounding
-            # source differs.
+            # If NO:
+            #     try 3-way only to determine whether there is a REAL
+            #     unresolved Git conflict.
             # ═════════════════════════════════════════════════════════════════
 
-            echo "▶ Attempting to apply PR changes..."
+            echo "▶ Validating whether PR changes can be applied cleanly..."
 
             set +e
 
             git apply \
-              --3way \
+              --check \
               --unidiff-zero \
-              --index \
+              --ignore-space-change \
+              --ignore-whitespace \
               /tmp/backport.patch
 
-            PATCH_EXIT=$?
+            CHECK_EXIT=$?
 
             set -e
 
             # ═════════════════════════════════════════════════════════════════
-            # AUTHORITATIVE CONFLICT CHECK
+            # CLEAN PATCH
             # ═════════════════════════════════════════════════════════════════
 
-            REAL_CONFLICTS=$(
-              git ls-files -u |
-              cut -f2 |
-              sort -u |
-              grep -v '^\.github/' || true
-            )
+            if [ "$CHECK_EXIT" -eq 0 ]; then
 
-            # ═════════════════════════════════════════════════════════════════
-            # SUCCESS
-            # ═════════════════════════════════════════════════════════════════
+              echo ""
+              echo "✅ PR patch can be applied cleanly."
+              echo "▶ Applying PR changes..."
 
-            if [ "$PATCH_EXIT" -eq 0 ] && [ -z "$REAL_CONFLICTS" ]; then
+              git apply \
+                --index \
+                --unidiff-zero \
+                --ignore-space-change \
+                --ignore-whitespace \
+                /tmp/backport.patch
+
+              # Authoritative check AFTER applying.
+              REAL_CONFLICTS=$(
+                git ls-files -u |
+                cut -f2 |
+                sort -u |
+                grep -v '^\.github/' || true
+              )
+
+              if [ -n "$REAL_CONFLICTS" ]; then
+
+                echo ""
+                echo "❌ Unexpected unresolved Git index conflicts:"
+                echo "$REAL_CONFLICTS"
+
+                echo "$REAL_CONFLICTS" > /tmp/conflict_files.txt
+
+                CONFLICT_COUNT=$(echo "$REAL_CONFLICTS" | grep -c . || true)
+
+                echo "has_conflicts=true" >> "$GITHUB_OUTPUT"
+                echo "committed=false" >> "$GITHUB_OUTPUT"
+                echo "conflict_count=$CONFLICT_COUNT" >> "$GITHUB_OUTPUT"
+
+                exit 0
+              fi
 
               echo ""
               echo "╔══════════════════════════════════════════════════════════════════╗"
@@ -714,19 +742,55 @@ jobs:
               echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
               echo "committed=true" >> "$GITHUB_OUTPUT"
 
+              # IMPORTANT:
+              # Clean application is COMPLETE.
+              #
+              # has_conflicts=false means 4b will NOT run.
               exit 0
             fi
 
             # ═════════════════════════════════════════════════════════════════
-            # APPLICATION FAILED
+            # ATTEMPT 2 — 3-WAY APPLICATION
             #
-            # Do NOT automatically modify/resolve the code.
+            # Direct application failed.
             #
-            # Send the unresolved situation to Phase 4b.
+            # Now use 3-way ONLY to determine whether Git has a genuine
+            # unresolved conflict.
             # ═════════════════════════════════════════════════════════════════
 
             echo ""
-            echo "⚠️ PR changes could not be applied automatically."
+            echo "⚠️ Direct PR patch application failed."
+            echo "▶ Trying 3-way application to determine whether this is"
+            echo "  a genuine merge conflict..."
+
+            set +e
+
+            git apply \
+              --3way \
+              --unidiff-zero \
+              --ignore-space-change \
+              --ignore-whitespace \
+              --index \
+              /tmp/backport.patch
+
+            PATCH_EXIT=$?
+
+            set -e
+
+            # ═════════════════════════════════════════════════════════════════
+            # AUTHORITATIVE CONFLICT CHECK
+            # ═════════════════════════════════════════════════════════════════
+
+            REAL_CONFLICTS=$(
+              git ls-files -u |
+              cut -f2 |
+              sort -u |
+              grep -v '^\.github/' || true
+            )
+
+            # ═════════════════════════════════════════════════════════════════
+            # REAL CONFLICT → 4b
+            # ═════════════════════════════════════════════════════════════════
 
             if [ -n "$REAL_CONFLICTS" ]; then
 
@@ -737,7 +801,6 @@ jobs:
               echo "║                  ⚠️ REAL CONFLICT                              ║"
               echo "╚══════════════════════════════════════════════════════════════════╝"
               echo ""
-
               echo "Conflicting files: $CONFLICT_COUNT"
 
               echo "$REAL_CONFLICTS" | while IFS= read -r f; do
@@ -753,28 +816,49 @@ jobs:
               echo "committed=false" >> "$GITHUB_OUTPUT"
               echo "conflict_count=$CONFLICT_COUNT" >> "$GITHUB_OUTPUT"
 
-              exit 0
-
-            else
-
-              # Patch failed but Git did not create unresolved index entries.
-              # Do not falsely call this a successful backport.
-              echo ""
-              echo "⚠️ Patch application failed without Git index conflicts."
-              echo "➡️ Sending to Phase 4b for deeper analysis."
-
-              echo "has_conflicts=true" >> "$GITHUB_OUTPUT"
-              echo "committed=false" >> "$GITHUB_OUTPUT"
-              echo "conflict_count=0" >> "$GITHUB_OUTPUT"
-
+              # IMPORTANT:
+              # exit 0 means 4a successfully reported the conflict state.
+              # It does NOT mean there was no conflict.
+              #
+              # 4b will run because has_conflicts=true.
               exit 0
             fi
+
+            # ═════════════════════════════════════════════════════════════════
+            # PATCH FAILED BUT NO REAL GIT CONFLICT
+            #
+            # This is NOT a merge conflict.
+            #
+            # Examples:
+            #   - wrong path
+            #   - malformed patch
+            #   - unexpected patch format
+            #   - source/release path mismatch
+            #   - other application problem
+            #
+            # Do NOT send this to 4b.
+            # ═════════════════════════════════════════════════════════════════
+
+            echo ""
+            echo "❌ PR patch could not be applied."
+            echo "❌ Git did not report an actual unresolved merge conflict."
+            echo ""
+            echo "This is an application/patch problem, NOT a merge conflict."
+            echo "The workflow will stop safely."
+
+            # Clean any partial state from the failed attempt.
+            git reset --merge 2>/dev/null || git reset --hard HEAD
+
+            echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
+            echo "committed=false" >> "$GITHUB_OUTPUT"
+            echo "conflict_count=0" >> "$GITHUB_OUTPUT"
+
+            exit 1
+
           fi
 
           # ═══════════════════════════════════════════════════════════════════
           # NORMAL COMMIT
-          #
-          # Normal commits can use normal cherry-pick.
           # ═══════════════════════════════════════════════════════════════════
 
           echo ""
@@ -866,7 +950,7 @@ jobs:
           fi
 
           # ═══════════════════════════════════════════════════════════════════
-          # NORMAL COMMIT REAL CONFLICT → PHASE 4B
+          # NORMAL COMMIT REAL CONFLICT → 4b
           # ═══════════════════════════════════════════════════════════════════
 
           CONFLICT_COUNT=$(echo "$REAL_CONFLICTS" | grep -c . || true)
