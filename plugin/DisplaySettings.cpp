@@ -809,24 +809,32 @@ namespace WPEFramework {
                         }
                         vectorSet(connectedAudioPorts, portName);
                     }
-		    else if (portName == "HDMI_ARC0" && m_hdmiInAudioDeviceConnected == true && m_arcEarcAudioEnabled == false)
-		    {
-	               /* This is the case where we get ARC initiation or eARC detection done before HPD.Send connectedport update as ARC disconnected and Restart the ARC-eARC again */
-			//coverity fix: MISSING_LOCK - acquire lock to protect shared audio device state variables
-			{
-			    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-			    m_hdmiInAudioDeviceConnected = false;
-			    m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
-			    m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
-			    m_requestSadRetrigger = false;
-			    m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
-			    m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UNKNOWN;
-			    m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
-			}
-			DisplaySettings::_instance->connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, false);
-			LOGINFO("[HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n");
-			sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
-		    }
+		            else if (portName == "HDMI_ARC0")
+		            {
+                        //coverity fix: LOCK_EVASION - acquire lock before reading m_hdmiInAudioDeviceConnected and m_arcEarcAudioEnabled
+                        bool shouldResetArc = false;
+                        {
+                            std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                            shouldResetArc = (m_hdmiInAudioDeviceConnected == true && m_arcEarcAudioEnabled == false);
+                        }
+                        if (shouldResetArc)
+                        {
+	                   
+			            {
+			                std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+			                m_hdmiInAudioDeviceConnected = false;
+			                m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
+			                m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
+			                m_requestSadRetrigger = false;
+			                m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
+			                m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UNKNOWN;
+			                m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
+			            }
+			            DisplaySettings::_instance->connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, false);
+			            LOGINFO("[HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n");
+			            sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
+                        }
+		            }
                 }
             }
             catch(const device::Exception& err)
@@ -876,7 +884,7 @@ namespace WPEFramework {
                 {
                     device::VideoOutputPort &vPort = vPorts.at(i);
                     //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for videoDisplay
-                    string videoDisplay = std::move(vPort.getName());
+                    string videoDisplay = (vPort.getName());
                     vectorSet(supportedVideoDisplays, std::move(videoDisplay));
                 }
             }
@@ -1015,7 +1023,6 @@ namespace WPEFramework {
                                 HAL_hasSurround = true;
                                 continue;
                             }
-                            //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for audioMode
                             vectorSet(supportedAudioModes,std::move(audioMode));
                         }
                     }
