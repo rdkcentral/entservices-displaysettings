@@ -6123,3 +6123,4 @@ void DisplaySettings::sendMsgThread()
 	}
     } // namespace Plugin
 } // namespace WPEFramework
+            LOGWARN("Latest Log Added");
