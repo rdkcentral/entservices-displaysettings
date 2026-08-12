@@ -476,7 +476,7 @@ jobs:
           set -euo pipefail
 
           # ═══════════════════════════════════════════════════════════════════
-          # VALIDATE
+          # VALIDATE INPUT
           # ═══════════════════════════════════════════════════════════════════
 
           if [ -z "$MERGE_SHA" ] || [ -z "$TICKET" ] || \
@@ -500,20 +500,9 @@ jobs:
             [ "$PARENT_COUNT" -gt 1 ] && echo 'MERGE' || echo 'NORMAL'
           ) ($PARENT_COUNT parent(s))"
 
+
           # ═══════════════════════════════════════════════════════════════════
           # MERGE COMMIT
-          #
-          # IMPORTANT:
-          #
-          # Do NOT start with:
-          #
-          #   git cherry-pick -m 1
-          #
-          # Instead, calculate:
-          #
-          #   parent1 -> merge commit
-          #
-          # This represents the actual PR result.
           # ═══════════════════════════════════════════════════════════════════
 
           if [ "$PARENT_COUNT" -gt 1 ]; then
@@ -534,8 +523,9 @@ jobs:
             echo "Parent 1     : $PARENT1"
             echo ""
 
+
             # ═════════════════════════════════════════════════════════════════
-            # CALCULATE ACTUAL PR CHANGES
+            # FIND ACTUAL PR CHANGES
             # ═════════════════════════════════════════════════════════════════
 
             echo "▶ Calculating files changed by the PR..."
@@ -566,20 +556,28 @@ jobs:
               fi
             done
 
-            echo ""
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo ""
 
             # ═════════════════════════════════════════════════════════════════
-            # GENERATE ACTUAL PR PATCH
+            # GENERATE PATCH
+            #
+            # IMPORTANT:
+            #
+            # Use REAL CONTEXT.
+            #
+            # Do NOT use --unified=0.
+            #
+            # The surrounding source code allows Git to identify the exact
+            # location inside sendMsgThread(), rather than merely inserting
+            # the line somewhere in the file.
             # ═════════════════════════════════════════════════════════════════
 
-            echo "▶ Generating actual PR change..."
+            echo ""
+            echo "▶ Generating actual PR change with source context..."
 
             git diff \
               --binary \
               --full-index \
-              --unified=0 \
+              --unified=20 \
               "$PARENT1" "$MERGE_SHA" \
               -- ':!.github/*' \
               > /tmp/backport.patch
@@ -593,16 +591,9 @@ jobs:
               exit 0
             fi
 
+
             # ═════════════════════════════════════════════════════════════════
-            # SOURCE → RELEASE PATH MAPPING
-            #
-            # Example:
-            #
-            # dummy_develop:
-            #     plugin/DisplaySettings.cpp
-            #
-            # support/8.3.4.0:
-            #     DisplaySettings/DisplaySettings.cpp
+            # MAP SOURCE PATH → RELEASE PATH
             # ═════════════════════════════════════════════════════════════════
 
             sed -i \
@@ -611,11 +602,11 @@ jobs:
 
             echo "📍 Source path mapped to release path where required."
 
+
             # ═════════════════════════════════════════════════════════════════
-            # REMOVE FILE-MODE-ONLY CHANGES
+            # REMOVE FILE-MODE-ONLY INFORMATION
             #
-            # 100644 vs 100755 must NOT turn a simple content change into
-            # a merge conflict.
+            # 100644 vs 100755 must not create a content conflict.
             # ═════════════════════════════════════════════════════════════════
 
             sed -i \
@@ -624,6 +615,11 @@ jobs:
               -e '/^new file mode /d' \
               -e '/^deleted file mode /d' \
               /tmp/backport.patch
+
+
+            # ═════════════════════════════════════════════════════════════════
+            # SHOW PATCH
+            # ═════════════════════════════════════════════════════════════════
 
             echo ""
             echo "╔══════════════════════════════════════════════════════════════════╗"
@@ -635,30 +631,65 @@ jobs:
 
             echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+
+            # ═════════════════════════════════════════════════════════════════
+            # EXTRACT EXPECTED FUNCTION CONTEXT
+            #
+            # Example:
+            #
+            # @@ ... @@ void DisplaySettings::sendMsgThread()
+            #
+            # We remember that function.
+            #
+            # After applying the patch we verify that the changed code is
+            # still inside that expected function.
+            # ═════════════════════════════════════════════════════════════════
+
+            EXPECTED_FUNCTIONS=$(
+              grep '^@@' /tmp/backport.patch |
+              sed 's/^.*@@[[:space:]]*//' |
+              sed 's/^.*@@[[:space:]]*//' |
+              grep -E '[A-Za-z_][A-Za-z0-9_:<>~]*[[:space:]]*\(' |
+              sed 's/^[[:space:]]*//' |
+              sort -u || true
+            )
+
             echo ""
+            echo "▶ Expected function context:"
+
+            if [ -n "$EXPECTED_FUNCTIONS" ]; then
+              echo "$EXPECTED_FUNCTIONS" | while IFS= read -r f; do
+                [ -n "$f" ] && echo "   • $f"
+              done
+            else
+              echo "   ℹ️ Function context not available in patch."
+            fi
+
 
             # ═════════════════════════════════════════════════════════════════
-            # ATTEMPT 1 — DIRECT PATCH VALIDATION
+            # ATTEMPT 1 — CLEAN DIRECT APPLICATION
             #
-            # First ask Git:
+            # First try normal patch application.
             #
-            #   Can this actual PR change be applied cleanly?
+            # If Git can find the exact surrounding source context:
             #
-            # If YES:
-            #     apply → commit → has_conflicts=false → STOP
+            #     apply
+            #       ↓
+            #     validate location
+            #       ↓
+            #     commit
             #
-            # If NO:
-            #     try 3-way only to determine whether there is a REAL
-            #     unresolved Git conflict.
+            # No 4b.
             # ═════════════════════════════════════════════════════════════════
 
-            echo "▶ Validating whether PR changes can be applied cleanly..."
+            echo ""
+            echo "▶ Checking whether PR changes apply cleanly..."
 
             set +e
 
             git apply \
               --check \
-              --unidiff-zero \
               --ignore-space-change \
               --ignore-whitespace \
               /tmp/backport.patch
@@ -667,6 +698,7 @@ jobs:
 
             set -e
 
+
             # ═════════════════════════════════════════════════════════════════
             # CLEAN PATCH
             # ═════════════════════════════════════════════════════════════════
@@ -674,17 +706,20 @@ jobs:
             if [ "$CHECK_EXIT" -eq 0 ]; then
 
               echo ""
-              echo "✅ PR patch can be applied cleanly."
+              echo "✅ Git reports a clean patch."
               echo "▶ Applying PR changes..."
 
               git apply \
                 --index \
-                --unidiff-zero \
                 --ignore-space-change \
                 --ignore-whitespace \
                 /tmp/backport.patch
 
-              # Authoritative check AFTER applying.
+
+              # ═══════════════════════════════════════════════════════════════
+              # AUTHORITATIVE GIT CONFLICT CHECK
+              # ═══════════════════════════════════════════════════════════════
+
               REAL_CONFLICTS=$(
                 git ls-files -u |
                 cut -f2 |
@@ -695,8 +730,7 @@ jobs:
               if [ -n "$REAL_CONFLICTS" ]; then
 
                 echo ""
-                echo "❌ Unexpected unresolved Git index conflicts:"
-                echo "$REAL_CONFLICTS"
+                echo "⚠️ Git reports unresolved conflicts."
 
                 echo "$REAL_CONFLICTS" > /tmp/conflict_files.txt
 
@@ -709,18 +743,142 @@ jobs:
                 exit 0
               fi
 
+
+              # ═══════════════════════════════════════════════════════════════
+              # LOCATION VALIDATION
+              #
+              # This is the IMPORTANT NEW PROTECTION.
+              #
+              # A clean git apply is NOT enough.
+              #
+              # We inspect the resulting staged diff and verify that the
+              # expected function context is present.
+              # ═══════════════════════════════════════════════════════════════
+
+              LOCATION_OK=true
+
+              if [ -n "$EXPECTED_FUNCTIONS" ]; then
+
+                echo ""
+                echo "▶ Validating change location..."
+
+                STAGED_FUNCTION_CONTEXT=$(
+                  git diff --cached --function-context -- \
+                    'DisplaySettings/*.cpp' \
+                    'plugin/*.cpp' \
+                    2>/dev/null || true
+                )
+
+                while IFS= read -r EXPECTED_FUNC; do
+
+                  [ -z "$EXPECTED_FUNC" ] && continue
+
+                  # Extract the function name before '('.
+                  FUNC_NAME=$(
+                    echo "$EXPECTED_FUNC" |
+                    sed 's/(.*//' |
+                    awk '{print $NF}' |
+                    tr -d '*&'
+                  )
+
+                  if [ -z "$FUNC_NAME" ]; then
+                    continue
+                  fi
+
+                  if ! echo "$STAGED_FUNCTION_CONTEXT" | grep -Fq "$FUNC_NAME"; then
+
+                    echo ""
+                    echo "❌ LOCATION VALIDATION FAILED"
+                    echo "   Expected function: $FUNC_NAME"
+                    echo "   The changed code could not be verified inside"
+                    echo "   the expected function."
+
+                    LOCATION_OK=false
+                  else
+                    echo "   ✅ Verified function: $FUNC_NAME"
+                  fi
+
+                done <<< "$EXPECTED_FUNCTIONS"
+
+              else
+
+                echo ""
+                echo "ℹ️ No function context available for validation."
+
+              fi
+
+
+              # ═══════════════════════════════════════════════════════════════
+              # LOCATION IS WRONG
+              #
+              # IMPORTANT:
+              #
+              # Do NOT commit.
+              # Do NOT claim success.
+              #
+              # Send it to 4b as an unresolved backport/application problem.
+              # ═══════════════════════════════════════════════════════════════
+
+              if [ "$LOCATION_OK" != "true" ]; then
+
+                echo ""
+                echo "╔══════════════════════════════════════════════════════════════════╗"
+                echo "║              ⚠️ UNSAFE PATCH LOCATION                          ║"
+                echo "╚══════════════════════════════════════════════════════════════════╝"
+                echo ""
+                echo "Git applied the patch, but the resulting change could not"
+                echo "be verified in the expected function/location."
+                echo ""
+                echo "➡️ Sending to Phase 4b for analysis."
+
+                # Keep the changed file available for Phase 4b analysis.
+                git diff --cached > /tmp/applied_backport.diff || true
+
+                CONFLICT_FILES=$(
+                  git diff --cached --name-only |
+                  grep -v '^\.github/' || true
+                )
+
+                if [ -z "$CONFLICT_FILES" ]; then
+                  CONFLICT_FILES="$ALL_CHANGED"
+                fi
+
+                echo "$CONFLICT_FILES" > /tmp/conflict_files.txt
+
+                CONFLICT_COUNT=$(echo "$CONFLICT_FILES" | grep -c . || true)
+
+                echo "has_conflicts=true" >> "$GITHUB_OUTPUT"
+                echo "committed=false" >> "$GITHUB_OUTPUT"
+                echo "conflict_count=$CONFLICT_COUNT" >> "$GITHUB_OUTPUT"
+
+                # IMPORTANT:
+                # 4a completed detection.
+                # 4b will run because has_conflicts=true.
+                exit 0
+              fi
+
+
+              # ═══════════════════════════════════════════════════════════════
+              # CLEAN + CORRECT LOCATION
+              #
+              # This is the SUCCESS path.
+              # ═══════════════════════════════════════════════════════════════
+
               echo ""
               echo "╔══════════════════════════════════════════════════════════════════╗"
-              echo "║              ✅ CLEAN BACKPORT — NO CONFLICT                   ║"
+              echo "║          ✅ CLEAN + CORRECT BACKPORT                            ║"
               echo "╠══════════════════════════════════════════════════════════════════╣"
-              echo "║ PR changes were successfully applied to the feature branch.     ║"
+              echo "║ PR changes applied at the expected source location.             ║"
               echo "║                                                                  ║"
               echo "║ Result: commit → push → PR                                      ║"
               echo "╚══════════════════════════════════════════════════════════════════╝"
               echo ""
 
+              git diff --cached --stat
+
               if git diff --cached --quiet; then
-                echo "ℹ️ No changes to commit."
+
+                echo "ℹ️ No staged changes."
 
                 echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
                 echo "committed=false" >> "$GITHUB_OUTPUT"
@@ -728,11 +886,8 @@ jobs:
                 exit 0
               fi
 
-              echo "▶ Changes that will be committed:"
-              git diff --cached --stat
-
               echo ""
-              echo "▶ Committing automatically applied PR changes..."
+              echo "▶ Committing clean backport..."
 
               git commit \
                 -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE}"
@@ -742,32 +897,29 @@ jobs:
               echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
               echo "committed=true" >> "$GITHUB_OUTPUT"
 
-              # IMPORTANT:
-              # Clean application is COMPLETE.
+              # STOP 4a.
               #
-              # has_conflicts=false means 4b will NOT run.
+              # 4b condition checks has_conflicts.
+              # It is false, so 4b will NOT execute.
               exit 0
             fi
 
+
             # ═════════════════════════════════════════════════════════════════
-            # ATTEMPT 2 — 3-WAY APPLICATION
+            # DIRECT APPLY FAILED
             #
-            # Direct application failed.
-            #
-            # Now use 3-way ONLY to determine whether Git has a genuine
-            # unresolved conflict.
+            # Now use 3-way application only to determine whether Git sees a
+            # genuine unresolved conflict.
             # ═════════════════════════════════════════════════════════════════
 
             echo ""
-            echo "⚠️ Direct PR patch application failed."
-            echo "▶ Trying 3-way application to determine whether this is"
-            echo "  a genuine merge conflict..."
+            echo "⚠️ Direct patch application failed."
+            echo "▶ Trying 3-way application..."
 
             set +e
 
             git apply \
               --3way \
-              --unidiff-zero \
               --ignore-space-change \
               --ignore-whitespace \
               --index \
@@ -777,8 +929,9 @@ jobs:
 
             set -e
 
+
             # ═════════════════════════════════════════════════════════════════
-            # AUTHORITATIVE CONFLICT CHECK
+            # CHECK REAL GIT CONFLICT
             # ═════════════════════════════════════════════════════════════════
 
             REAL_CONFLICTS=$(
@@ -788,9 +941,6 @@ jobs:
               grep -v '^\.github/' || true
             )
 
-            # ═════════════════════════════════════════════════════════════════
-            # REAL CONFLICT → 4b
-            # ═════════════════════════════════════════════════════════════════
 
             if [ -n "$REAL_CONFLICTS" ]; then
 
@@ -801,6 +951,7 @@ jobs:
               echo "║                  ⚠️ REAL CONFLICT                              ║"
               echo "╚══════════════════════════════════════════════════════════════════╝"
               echo ""
+
               echo "Conflicting files: $CONFLICT_COUNT"
 
               echo "$REAL_CONFLICTS" | while IFS= read -r f; do
@@ -816,37 +967,25 @@ jobs:
               echo "committed=false" >> "$GITHUB_OUTPUT"
               echo "conflict_count=$CONFLICT_COUNT" >> "$GITHUB_OUTPUT"
 
-              # IMPORTANT:
-              # exit 0 means 4a successfully reported the conflict state.
-              # It does NOT mean there was no conflict.
-              #
-              # 4b will run because has_conflicts=true.
+              # 4b WILL run.
               exit 0
             fi
 
+
             # ═════════════════════════════════════════════════════════════════
-            # PATCH FAILED BUT NO REAL GIT CONFLICT
+            # PATCH FAILED BUT THERE IS NO REAL GIT CONFLICT
             #
-            # This is NOT a merge conflict.
-            #
-            # Examples:
-            #   - wrong path
-            #   - malformed patch
-            #   - unexpected patch format
-            #   - source/release path mismatch
-            #   - other application problem
-            #
-            # Do NOT send this to 4b.
+            # This is an application problem, not a merge conflict.
+            # Do NOT pretend it is a conflict.
             # ═════════════════════════════════════════════════════════════════
 
             echo ""
             echo "❌ PR patch could not be applied."
-            echo "❌ Git did not report an actual unresolved merge conflict."
+            echo "❌ No unresolved Git conflict was detected."
             echo ""
-            echo "This is an application/patch problem, NOT a merge conflict."
-            echo "The workflow will stop safely."
+            echo "This is an application/path/patch problem."
+            echo "Stopping safely."
 
-            # Clean any partial state from the failed attempt.
             git reset --merge 2>/dev/null || git reset --hard HEAD
 
             echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
@@ -856,6 +995,7 @@ jobs:
             exit 1
 
           fi
+
 
           # ═══════════════════════════════════════════════════════════════════
           # NORMAL COMMIT
@@ -879,8 +1019,9 @@ jobs:
 
           echo "cherry_pick_exit=$CP_EXIT" >> "$GITHUB_OUTPUT"
 
+
           # ═══════════════════════════════════════════════════════════════════
-          # EXCLUDE .github CONFLICTS
+          # REMOVE .github CONFLICTS
           # ═══════════════════════════════════════════════════════════════════
 
           GITHUB_CONFLICTS=$(
@@ -893,6 +1034,7 @@ jobs:
             echo "Excluding .github/ conflicts:"
 
             echo "$GITHUB_CONFLICTS" | while IFS= read -r f; do
+
               if [ -n "$f" ]; then
 
                 git rm --cached --force "$f" 2>/dev/null || true
@@ -900,11 +1042,13 @@ jobs:
 
                 echo "  ⛔ $f"
               fi
+
             done
 
             git restore --staged .github/ 2>/dev/null || true
             git checkout HEAD -- .github/ 2>/dev/null || true
           fi
+
 
           # ═══════════════════════════════════════════════════════════════════
           # AUTHORITATIVE NORMAL-COMMIT CONFLICT CHECK
@@ -917,8 +1061,9 @@ jobs:
             grep -v '^\.github/' || true
           )
 
+
           # ═══════════════════════════════════════════════════════════════════
-          # NORMAL COMMIT SUCCESS
+          # NORMAL COMMIT — CLEAN
           # ═══════════════════════════════════════════════════════════════════
 
           if [ -z "$REAL_CONFLICTS" ]; then
@@ -936,8 +1081,6 @@ jobs:
               exit 0
             fi
 
-            echo "▶ Committing changes..."
-
             git commit \
               -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE}"
 
@@ -949,8 +1092,9 @@ jobs:
             exit 0
           fi
 
+
           # ═══════════════════════════════════════════════════════════════════
-          # NORMAL COMMIT REAL CONFLICT → 4b
+          # NORMAL COMMIT — REAL CONFLICT → 4b
           # ═══════════════════════════════════════════════════════════════════
 
           CONFLICT_COUNT=$(echo "$REAL_CONFLICTS" | grep -c . || true)
@@ -971,6 +1115,7 @@ jobs:
           echo "committed=false" >> "$GITHUB_OUTPUT"
           echo "conflict_count=$CONFLICT_COUNT" >> "$GITHUB_OUTPUT"
 
+          # 4b WILL run.
           exit 0
 
       # ── 4b. Analyze conflicts ─────────────────────────────────────────────────
