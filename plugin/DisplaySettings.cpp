@@ -6277,7 +6277,8 @@ void DisplaySettings::sendMsgThread()
 				}
 				else
 				{
-                    	        LOGWARN("The failure: %s is not the connected!",strVideoPort.c_str());
+                    	        LOGWARN("The failure: %s is not connected!",strVideoPort.c_str());
+                                LOGWARN("LOG ADDED");
 
 				}
 			}
