@@ -577,7 +577,7 @@ jobs:
             git diff \
               --binary \
               --full-index \
-              --unified=20 \
+              --unified=3 \
               "$PARENT1" "$MERGE_SHA" \
               -- ':!.github/*' \
               > /tmp/backport.patch
