@@ -885,7 +885,7 @@ namespace WPEFramework {
                     device::VideoOutputPort &vPort = vPorts.at(i);
                     //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for videoDisplay
                     string videoDisplay = (vPort.getName());
-                    vectorSet(supportedVideoDisplays, std::move(videoDisplay));
+                    vectorSet(supportedVideoDisplays, videoDisplay);
                 }
             }
             catch (const device::Exception& err)
@@ -1023,7 +1023,7 @@ namespace WPEFramework {
                                 HAL_hasSurround = true;
                                 continue;
                             }
-                            vectorSet(supportedAudioModes,std::move(audioMode));
+                            vectorSet(supportedAudioModes, audioMode);
                         }
                     }
                 }
@@ -1659,9 +1659,9 @@ namespace WPEFramework {
             {
                 vector<unsigned char> edidVec2;
                 device::Host::getInstance().getHostEDID(edidVec2);
-                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for edidVec2
+				size_t edidSize = edidVec2.size();
                 edidVec = std::move(edidVec2);//edidVec must be "unknown" unless we successfully get to this line
-                LOGINFO("getHostEDID size is %d.", int(edidVec2.size()));
+                LOGINFO("getHostEDID size is %d.", int(edidSize));
             }
             catch (const device::Exception& err)
             {
@@ -2197,7 +2197,7 @@ namespace WPEFramework {
             }
             catch(const device::Exception& err)
             {
-                LOG_DEVICE_EXCEPTION1(string(audioPort));
+                LOG_DEVICE_EXCEPTION1(std::move(audioPort));
                 success = false;
             }
             returnResponse(success);
@@ -2862,7 +2862,7 @@ namespace WPEFramework {
             }
             catch(const device::Exception& err)
             {
-                LOG_DEVICE_EXCEPTION1(string(audioPort));
+                LOG_DEVICE_EXCEPTION1(std::move(audioPort));
                 response["enable"] = false;
                 response["enhancerlevel"] = 0;
                 success = false;
@@ -3025,7 +3025,7 @@ namespace WPEFramework {
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.setMS12AudioProfileSetttingsOverride(audioProfileState,audioProfileName,audioProfileSettingsName, audioProfileSettingValue);
+                aPort.setMS12AudioProfileSetttingsOverride(std::move(audioProfileState),std::move(audioProfileName),std::move(audioProfileSettingsName), std::move(audioProfileSettingValue));
             }
             catch (const device::Exception& err)
             {
@@ -4861,10 +4861,10 @@ namespace WPEFramework {
                 }
 
                 if(hdmi_arc_supported) {
-          LOGINFO("Current Arc/eArc states m_currentArcRoutingState = %d, m_hdmiInAudioDeviceConnected =%d, m_arcEarcAudioEnabled =%d, m_hdmiInAudioDeviceType = %d\n", DisplaySettings::_instance->m_currentArcRoutingState, DisplaySettings::_instance->m_hdmiInAudioDeviceConnected, \
-                  DisplaySettings::_instance->m_arcEarcAudioEnabled, DisplaySettings::_instance->m_hdmiInAudioDeviceType);
                   {
-                std::lock_guard<std::mutex> lock(DisplaySettings::_instance->m_AudioDeviceStatesUpdateMutex);
+                    std::lock_guard<std::mutex> lock(DisplaySettings::_instance->m_AudioDeviceStatesUpdateMutex);
+				    LOGINFO("Current Arc/eArc states m_currentArcRoutingState = %d, m_hdmiInAudioDeviceConnected =%d, m_arcEarcAudioEnabled =%d, m_hdmiInAudioDeviceType = %d\n", DisplaySettings::_instance->m_currentArcRoutingState, DisplaySettings::_instance->m_hdmiInAudioDeviceConnected, \
+                    DisplaySettings::_instance->m_arcEarcAudioEnabled, DisplaySettings::_instance->m_hdmiInAudioDeviceType);  
                         LOGINFO("%s: Cleanup ARC/eARC state\n",__FUNCTION__);
                         if(DisplaySettings::_instance->m_currentArcRoutingState != ARC_STATE_ARC_TERMINATED)
                             DisplaySettings::_instance->m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
@@ -4942,8 +4942,14 @@ void DisplaySettings::sendMsgThread()
 	if(!DisplaySettings::_instance)
                  return;
 
-	while(!_instance->m_sendMsgThreadExit) 
+	bool shouldExit = false;
+	while(true) 
 	{
+		{
+			std::lock_guard<std::mutex> lock(DisplaySettings::_instance->m_sendMsgMutex);
+			shouldExit = _instance->m_sendMsgThreadExit;
+		}
+		if (shouldExit) break;
 		msgInfo.msg = -1;
         	msgInfo.param = NULL;
 		{
@@ -5263,7 +5269,12 @@ void DisplaySettings::sendMsgThread()
 
 			bool wasSADTimerActive = false;
 
-			if (m_currentArcRoutingState == ARC_STATE_ARC_INITIATED) {
+			int arcRoutingState;
+			{
+				std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+				arcRoutingState = m_currentArcRoutingState;
+			}
+			if (arcRoutingState == ARC_STATE_ARC_INITIATED) {
 			    if (m_SADDetectionTimer.isActive()) {
 			        //Timer is active, so stop the timer and if audio is not routed set SAD and route the audio
 			        LOGINFO("%s: Stopping the SAD timer\n", __FUNCTION__);
@@ -5510,6 +5521,7 @@ void DisplaySettings::sendMsgThread()
 				LOGINFO("eARC connection notification is already sent m_arcEarcConnectionNotifiedToUI =%d", m_arcEarcConnectionNotifiedToUI);
 			}
                     } else {
+			std::lock_guard<std::mutex> lock(m_callMutex);			
 			if ((m_hdmiInAudioDeviceConnected == false) && !(m_ArcDetectionTimer.isActive())) {
 			    // tinymix commad to detect eArc is failed, start the timer for 3 seconds
 			    LOGINFO("Starting timer to detect eArc for %d milli seconds", ARC_DETECTION_CHECK_TIME_IN_MILLISECONDS);
@@ -5542,7 +5554,12 @@ void DisplaySettings::sendMsgThread()
 	    try{
             device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort("HDMI_ARC0");
             aPort.getSupportedARCTypes(&types);
-	    if(m_currentArcRoutingState != ARC_STATE_ARC_INITIATED) {
+	    int arcRoutingState;
+	    {
+		    std::lock_guard<std::mutex> arcLock(m_AudioDeviceStatesUpdateMutex);
+		    arcRoutingState = m_currentArcRoutingState;
+	    }
+	    if(arcRoutingState != ARC_STATE_ARC_INITIATED) {
 	       if((types & dsAUDIOARCSUPPORT_eARC) && (m_hdmiInAudioDeviceConnected == false)) {
                    m_hdmiInAudioDeviceConnected = true;
 		   m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_eARC;
@@ -5920,8 +5937,8 @@ void DisplaySettings::sendMsgThread()
                     }
                     else if (!firstResolutionSet)
                     {
-                        firstDisplay = display;
-                        firstResolution = resolution;
+                        firstDisplay = std::move(display);
+                        firstResolution = std::move(resolution);
                         firstResolutionSet = true;
                     }
                 }
@@ -6475,9 +6492,9 @@ void DisplaySettings::sendMsgThread()
                     LOGINFO("Received OnHDMIInEventHotPlug  HDMI_ARC Port, connected status[%d]",  hdmiin_hotplug_conn);
                     if(!hdmiin_hotplug_conn)
                     {
+                        std::lock_guard<std::mutex> lock(DisplaySettings::_instance->m_AudioDeviceStatesUpdateMutex);
                         LOGINFO("Current Arc/eArc states m_currentArcRoutingState = %d, m_hdmiInAudioDeviceConnected =%d, m_arcEarcAudioEnabled =%d, m_hdmiInAudioDeviceType = %d", DisplaySettings::_instance->m_currentArcRoutingState, DisplaySettings::_instance->m_hdmiInAudioDeviceConnected, \
                                      DisplaySettings::_instance->m_arcEarcAudioEnabled, DisplaySettings::_instance->m_hdmiInAudioDeviceType);
-                        std::lock_guard<std::mutex> lock(DisplaySettings::_instance->m_AudioDeviceStatesUpdateMutex);
                         if (DisplaySettings::_instance->m_hdmiInAudioDeviceConnected == true)
                         {
                             DisplaySettings::_instance->m_hdmiInAudioDeviceConnected =  false;
