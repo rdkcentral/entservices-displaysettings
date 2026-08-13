@@ -1149,9 +1149,19 @@ namespace WPEFramework {
                 string res = currentResolutionCache;
                 if (!isResCacheUpdated) {
                     device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
-                    res = vPort.getResolution().getName();
-                    currentResolutionCache = res;
-                    isResCacheUpdated = true;
+                    try
+                    {
+                        res = vPort.getResolution().getName();
+                        currentResolutionCache = res;
+                        isResCacheUpdated = true;
+                    }
+                    catch(const device::Exception& err)
+                    {
+                        // Standby boot case: live HAL resolution may be unavailable.
+                        // Fall back to persisted resolution so callers still get a valid value.
+                        LOGWARN("DS_TEST1 : getCurrentResolution: getResolution failed for %s, trying persisted default resolution", videoDisplay.c_str());
+                        res = vPort.getDefaultResolution().getName();
+                    }    
                 } else {
                     LOGINFO("Using currentResolutionCache cache \n");
                 }
