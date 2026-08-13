@@ -6125,3 +6125,4 @@ void DisplaySettings::sendMsgThread()
 	}
     } // namespace Plugin
 } // namespace WPEFramework
+                    LOGWARN("The failure Log Added");
