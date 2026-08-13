@@ -335,7 +335,7 @@ jobs:
               echo "   ✅ Exact target path exists:" >&2
               echo "      $SRC_FILE" >&2
 
-              printf '%s\n' "$SRC_FILE"
+              printf '%s' "$SRC_FILE"
               return 0
             fi
 
@@ -379,7 +379,7 @@ jobs:
               printf '%s\n' "$MATCHES" |
                 sed 's/^/      /' >&2
 
-              printf '%s\n' "$MATCHES"
+              printf '%s' "$MATCHES"
 
               return 0
             fi
@@ -498,7 +498,6 @@ jobs:
               # ==========================================================
 
               if ! DST_FILE="$(resolve_target_file "$SRC_FILE")"; then
-
                 echo ""
                 echo "❌ Cannot safely resolve target file:"
                 echo "   $SRC_FILE"
@@ -509,6 +508,9 @@ jobs:
                 # This is a mapping failure, not a merge conflict.
                 exit 1
               fi
+              DST_FILE="${DST_FILE//$'\r'/}"
+              DST_FILE="${DST_FILE//$'\n'/}"
+              # DST_FILE="$(printf '%s' "$DST_FILE" | xargs)"
 
               echo ""
               echo "   📍 Target mapping:"
