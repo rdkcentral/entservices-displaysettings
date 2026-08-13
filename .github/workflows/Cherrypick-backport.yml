@@ -244,14 +244,10 @@ jobs:
           
           echo "✅ On branch: $CURRENT_BRANCH"
 
-      # ══════════════════════════════════════════════════════════════════════════
-      # 4. APPLY CHANGES (4 PHASES)
-      # ══════════════════════════════════════════════════════════════════════════
        # ── 4a. Apply PR changes and detect real conflicts ────────────────────────
       - name: "Phase 1: Apply PR changes and detect conflicts"
         if: steps.info.outputs.skip != 'true'
         id: cherry_pick
-
         env:
           MERGE_SHA:      ${{ steps.info.outputs.merge_sha }}
           TICKET:         ${{ steps.info.outputs.ticket }}
@@ -453,11 +449,15 @@ jobs:
               fi
 
               # ============================================================
-              # GENERATE NORMAL PR PATCH
+              # GENERATE THE REAL PR PATCH
               #
-              # KEEP unified=3.
+              # IMPORTANT:
+              # ALWAYS KEEP REAL CONTEXT.
               #
-              # DO NOT change this globally to unified=0.
+              # Do NOT use unified=0 here.
+              # Do NOT use --unidiff-zero.
+              #
+              # The context is what tells Git WHERE the PR change belongs.
               # ============================================================
 
               PATCH_FILE="/tmp/backport_${CONFLICT_COUNT_NUM}.patch"
@@ -475,9 +475,7 @@ jobs:
                 -- "$SRC_FILE" > "$PATCH_FILE"
 
               if [ ! -s "$PATCH_FILE" ]; then
-
                 echo "   ℹ️ No content changes found for $SRC_FILE"
-
                 continue
               fi
 
@@ -494,7 +492,7 @@ jobs:
               fi
 
               echo ""
-              echo "   📦 Actual PR change:"
+              echo "   📦 ACTUAL PR CHANGE:"
               echo "   ─────────────────────────────────────────────────────────────"
 
               cat "$PATCH_FILE"
@@ -502,11 +500,20 @@ jobs:
               echo "   ─────────────────────────────────────────────────────────────"
 
               # ============================================================
+              # REMOVE ANY STALE CONFLICT STATE
+              # ============================================================
+
+              git reset --merge 2>/dev/null || true
+
+              # ============================================================
               # ATTEMPT 1
               #
               # NORMAL PATCH APPLICATION
               #
               # This is the preferred path.
+              #
+              # Whitespace differences in surrounding context are ignored,
+              # but the actual patch context is still retained.
               # ============================================================
 
               echo ""
@@ -545,7 +552,14 @@ jobs:
 
                 if [ -z "$REAL_FILE_CONFLICT" ]; then
 
-                  echo "   ✅ Applied successfully: $DST_FILE"
+                  echo ""
+                  echo "   ╔══════════════════════════════════════════════════════════╗"
+                  echo "   ║              ✅ CLEAN APPLICATION                       ║"
+                  echo "   ╚══════════════════════════════════════════════════════════╝"
+
+                  echo ""
+                  echo "   ▶ Applied change:"
+                  git diff --cached -- "$DST_FILE"
 
                   continue
                 fi
@@ -562,186 +576,23 @@ jobs:
               # ============================================================
               # ATTEMPT 2
               #
-              # DETERMINE WHETHER THIS IS ADDITION-ONLY
-              #
-              # Example:
-              #
-              #   LOGWARN("existing");
-              # + LOGWARN("new");
-              #
-              # There are additions but NO deletions.
-              #
-              # This is important because a context mismatch should NOT
-              # immediately become a merge conflict.
-              # ============================================================
-
-              echo ""
-              echo "   ⚠️ Normal patch did not apply."
-              echo "   ▶ Checking PR change type..."
-
-              ADDITION_LINES=$(
-                git diff --unified=0 \
-                  "$PARENT1" "$MERGE_SHA" \
-                  -- "$SRC_FILE" |
-                grep '^+[^+]' || true
-              )
-
-              DELETION_LINES=$(
-                git diff --unified=0 \
-                  "$PARENT1" "$MERGE_SHA" \
-                  -- "$SRC_FILE" |
-                grep '^-[^-]' || true
-              )
-
-              ADDITION_COUNT=$(
-                printf '%s\n' "$ADDITION_LINES" |
-                grep -c . || true
-              )
-
-              DELETION_COUNT=$(
-                printf '%s\n' "$DELETION_LINES" |
-                grep -c . || true
-              )
-
-              echo "   Added lines   : $ADDITION_COUNT"
-              echo "   Deleted lines : $DELETION_COUNT"
-
-              # ============================================================
-              # ADDITION-ONLY
-              # ============================================================
-
-              if [ "$ADDITION_COUNT" -gt 0 ] && \
-                [ "$DELETION_COUNT" -eq 0 ]; then
-
-                echo ""
-                echo "   ✅ Addition-only PR detected."
-                echo ""
-                echo "   This is NOT automatically a merge conflict."
-                echo "   ▶ Trying zero-context application ONLY for this case."
-
-                # IMPORTANT:
-                #
-                # We do NOT change the main PATCH_FILE to unified=0.
-                #
-                # We create a separate fallback patch.
-                #
-                ADDITION_PATCH="/tmp/addition_${CONFLICT_COUNT_NUM}.patch"
-
-                git diff \
-                  --binary \
-                  --full-index \
-                  --unified=0 \
-                  "$PARENT1" "$MERGE_SHA" \
-                  -- "$SRC_FILE" > "$ADDITION_PATCH"
-
-                if [ "$SRC_FILE" != "$DST_FILE" ]; then
-
-                  sed -i \
-                    "s#${SRC_FILE}#${DST_FILE}#g" \
-                    "$ADDITION_PATCH"
-
-                fi
-
-                echo ""
-                echo "   📦 Addition-only fallback patch:"
-                echo "   ─────────────────────────────────────────────────────────────"
-
-                cat "$ADDITION_PATCH"
-
-                echo "   ─────────────────────────────────────────────────────────────"
-
-                # ========================================================
-                # IMPORTANT:
-                #
-                # Zero-context is ONLY a FALLBACK.
-                #
-                # If it succeeds -> apply.
-                # If it fails -> DO NOT pretend it succeeded.
-                # ========================================================
-
-                set +e
-
-                git apply \
-                  --check \
-                  --unidiff-zero \
-                  --ignore-space-change \
-                  --ignore-whitespace \
-                  --recount \
-                  "$ADDITION_PATCH"
-
-                ADD_CHECK_EXIT=$?
-
-                set -e
-
-                if [ "$ADD_CHECK_EXIT" -eq 0 ]; then
-
-                  echo "   ✅ Addition-only patch can be applied."
-
-                  git apply \
-                    --index \
-                    --unidiff-zero \
-                    --ignore-space-change \
-                    --ignore-whitespace \
-                    --recount \
-                    "$ADDITION_PATCH"
-
-                  REAL_FILE_CONFLICT=$(
-                    git ls-files -u |
-                    cut -f2 |
-                    sort -u |
-                    grep -Fx "$DST_FILE" || true
-                  )
-
-                  if [ -z "$REAL_FILE_CONFLICT" ]; then
-
-                    echo ""
-                    echo "   ╔══════════════════════════════════════════════════════════╗"
-                    echo "   ║       ✅ SIMPLE ADDITION APPLIED                       ║"
-                    echo "   ╚══════════════════════════════════════════════════════════╝"
-
-                    echo ""
-                    echo "   ▶ Applied change:"
-                    git diff --cached -- "$DST_FILE"
-
-                    continue
-                  fi
-
-                  echo "   ❌ Addition created an unresolved Git conflict."
-
-                  HAS_CONFLICTS=true
-                  CONFLICT_COUNT_NUM=$((CONFLICT_COUNT_NUM + 1))
-                  CONFLICT_LIST="${CONFLICT_LIST}${DST_FILE}"$'\n'
-
-                  continue
-                fi
-
-                echo ""
-                echo "   ⚠️ Zero-context addition application failed."
-                echo "   ▶ It will NOT be blindly inserted."
-                echo "   ▶ Falling through to 3-way reconciliation."
-
-              fi
-
-              # ============================================================
-              # ATTEMPT 3
-              #
-              # 3-WAY APPLICATION
-              #
-              # Used for:
-              #
-              #   - modifications
-              #   - deletions
-              #   - complex changes
-              #   - addition-only changes that could not safely apply
+              # GIT 3-WAY APPLICATION
               #
               # IMPORTANT:
-              # Only an actual unresolved index conflict goes to 4b.
+              # Use the ORIGINAL PR PATCH.
+              #
+              # NO unified=0.
+              # NO --unidiff-zero.
+              #
+              # Git uses the PR's parent/blob information to determine
+              # the correct location.
               # ============================================================
 
               echo ""
-              echo "   ▶ Attempt 3: Git 3-way reconciliation..."
+              echo "   ⚠️ Normal patch did not apply exactly."
+              echo "   ▶ Attempt 2: Git 3-way reconciliation..."
 
-              # Make sure there are no stale unmerged entries before trying.
+              # Make sure no stale conflict entries exist.
               git reset --merge 2>/dev/null || true
 
               set +e
@@ -759,7 +610,11 @@ jobs:
               set -e
 
               # ============================================================
-              # AUTHORITATIVE CONFLICT TEST
+              # AUTHORITATIVE REAL-CONFLICT CHECK
+              #
+              # Do NOT decide conflict merely because git apply returned 1.
+              #
+              # A REAL conflict means the index contains unmerged entries.
               # ============================================================
 
               REAL_FILE_CONFLICT=$(
@@ -768,10 +623,6 @@ jobs:
                 sort -u |
                 grep -Fx "$DST_FILE" || true
               )
-
-              # ============================================================
-              # REAL CONFLICT
-              # ============================================================
 
               if [ -n "$REAL_FILE_CONFLICT" ]; then
 
@@ -782,6 +633,7 @@ jobs:
 
                 echo ""
                 echo "   File: $DST_FILE"
+                echo "   ➡️ Sending this file to Phase 4b."
 
                 HAS_CONFLICTS=true
                 CONFLICT_COUNT_NUM=$((CONFLICT_COUNT_NUM + 1))
@@ -791,7 +643,11 @@ jobs:
               fi
 
               # ============================================================
-              # 3-WAY SUCCESS
+              # CLEAN 3-WAY SUCCESS
+              #
+              # Even if git apply returned a non-zero value, if there are
+              # no unresolved index entries and the resulting file is staged,
+              # do not manufacture a conflict.
               # ============================================================
 
               if [ "$APPLY_EXIT" -eq 0 ]; then
@@ -799,25 +655,30 @@ jobs:
                 git add "$DST_FILE"
 
                 echo ""
-                echo "   ✅ 3-way application succeeded:"
-                echo "      $DST_FILE"
+                echo "   ╔══════════════════════════════════════════════════════════╗"
+                echo "   ║              ✅ 3-WAY APPLICATION SUCCESS                ║"
+                echo "   ╚══════════════════════════════════════════════════════════╝"
+
+                echo ""
+                echo "   ▶ Applied change:"
+                git diff --cached -- "$DST_FILE"
 
                 continue
               fi
 
               # ============================================================
-              # PATCH FAILED BUT NO GIT CONFLICT
+              # FAILED WITHOUT A REAL CONFLICT
               #
-              # This is NOT a reason to manufacture a conflict.
+              # NEVER GUESS.
               #
-              # But also do NOT silently apply the change.
-              # Stop safely.
+              # We intentionally do NOT use unified=0 here because that
+              # could insert a line into the wrong function/location.
               # ============================================================
 
               echo ""
               echo "   ❌ PR change could not be safely applied."
-              echo "   ❌ Git did not report an unresolved merge conflict."
-              echo "   🛑 Stopping safely rather than inserting code incorrectly."
+              echo "   ❌ Git did not produce a resolvable application."
+              echo "   🛑 Refusing to insert the change at an arbitrary location."
 
               git reset --merge 2>/dev/null || git reset --hard HEAD
 
@@ -892,6 +753,7 @@ jobs:
             git diff --cached --stat
 
             echo ""
+            echo "▶ Final staged diff:"
             git diff --cached --unified=3
 
             echo ""
@@ -914,7 +776,7 @@ jobs:
           # ================================================================
           # NORMAL COMMIT
           #
-          # Keep existing normal-commit behavior.
+          # Keep normal commit behavior.
           # ================================================================
 
           echo ""
@@ -1033,7 +895,6 @@ jobs:
 
           # 4b WILL run.
           exit 0
-
 
 
 
