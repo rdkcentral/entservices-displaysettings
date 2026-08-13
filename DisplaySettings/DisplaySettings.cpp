@@ -6050,6 +6050,7 @@ void DisplaySettings::sendMsgThread()
                     break;
                 case dsHDRSTANDARD_TechnicolorPrime:
                     LOGINFO("Video Format: TechnicolorPrime\n");
+                    LOGINFO("Video Format: TechnicolorPrime\n");
                     strValue = "TechnicolorPrime";
                     break;
                 default:
