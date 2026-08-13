@@ -6046,7 +6046,7 @@ void DisplaySettings::sendMsgThread()
                     strValue = "HLG";
                     break;
                 case dsHDRSTANDARD_DolbyVision:
-                    LOGINFO("Video Format: DV\n");
+                    LOGINFO("DOLBY Video Format: DV\n");
                     strValue = "DV";
                     break;
                 case dsHDRSTANDARD_TechnicolorPrime:
