@@ -512,9 +512,8 @@ jobs:
 
               echo ""
               echo "   📍 Target mapping:"
-              echo "      Source : $SRC_FILE"
-              echo "      Target : $DST_FILE"
-
+              printf '      Source : %s\n' "$SRC_FILE"
+              printf '      Target : %s\n' "$DST_FILE"
               # ==========================================================
               # GENERATE ACTUAL PR DIFF
               #
@@ -556,13 +555,19 @@ jobs:
 
               if [ "$SRC_FILE" != "$DST_FILE" ]; then
 
-                # Escape paths for sed replacement.
-                SRC_ESCAPED=$(printf '%s\n' "$SRC_FILE" | sed 's/[.[\*^$()+?{|\\]/\\&/g')
-                DST_ESCAPED=$(printf '%s\n' "$DST_FILE" | sed 's/[&/\]/\\&/g')
+                echo "   🔄 Remapping patch path:"
+                echo "      $SRC_FILE"
+                echo "      → $DST_FILE"
 
-                sed -i \
-                  "s#${SRC_ESCAPED}#${DST_ESCAPED}#g" \
-                  "$PATCH_FILE"
+                SRC_PATH="$SRC_FILE" \
+                DST_PATH="$DST_FILE" \
+                PATCH_PATH="$PATCH_FILE" \
+                perl -0pi -e '
+                    my $src = $ENV{SRC_PATH};
+                    my $dst = $ENV{DST_PATH};
+
+                    s/\Q$src\E/$dst/g;
+                ' "$PATCH_FILE"
 
               fi
 
