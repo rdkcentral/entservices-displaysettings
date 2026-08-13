@@ -6224,7 +6224,8 @@ void DisplaySettings::sendMsgThread()
                     strValue = "TechnicolorPrime";
                     break;
                 default:
-                    LOGINFO("The Video Format: NONE\n");
+                    LOGINFO("Video Format: NONE\n");
+                    LOGINFO("Latest video");
                     strValue = "NONE";
                     break;
             }
