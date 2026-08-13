@@ -4942,7 +4942,6 @@ void DisplaySettings::sendMsgThread()
 	if(!DisplaySettings::_instance)
                  return;
 
-	bool shouldExit = false;
 	while(true) 
 	{
 		msgInfo.msg = -1;
@@ -4951,7 +4950,7 @@ void DisplaySettings::sendMsgThread()
 		{
 			LOGINFO("%s: Debug: Wait for message \n",__FUNCTION__);
 			std::unique_lock<std::mutex> lock(DisplaySettings::_instance->m_sendMsgMutex);
-			instance->m_sendMsgCV.wait(lock, []{
+			_instance->m_sendMsgCV.wait(lock, []{
 				// Lock is held while evaluating predicate
 				return (_instance->m_sendMsgThreadRun == true || _instance->m_sendMsgThreadExit == true);
 			});
