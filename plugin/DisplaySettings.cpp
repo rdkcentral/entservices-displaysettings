@@ -6225,7 +6225,6 @@ void DisplaySettings::sendMsgThread()
                     break;
                 default:
                     LOGINFO("Video Format: NONE\n");
-                    LOGINFO("Latest video");
                     strValue = "NONE";
                     break;
             }
