@@ -245,6 +245,7 @@ jobs:
           echo "✅ On branch: $CURRENT_BRANCH"
 
        # ── 4a. Apply PR changes and detect real conflicts ────────────────────────
+        # ── 4a. Apply PR changes and detect real conflicts ────────────────────────
       - name: "Phase 1: Apply PR changes and detect conflicts"
         if: steps.info.outputs.skip != 'true'
         id: cherry_pick
@@ -266,7 +267,6 @@ jobs:
             [ -z "$TICKET" ] || \
             [ -z "$VERSION" ] || \
             [ -z "$FEATURE_BRANCH" ]; then
-
             echo "❌ FATAL: Required environment variables are missing"
             exit 1
           fi
@@ -285,6 +285,128 @@ jobs:
           echo "Commit type: $(
             [ "$PARENT_COUNT" -gt 1 ] && echo 'MERGE' || echo 'NORMAL'
           ) ($PARENT_COUNT parent(s))"
+
+          # ================================================================
+          # GENERIC TARGET FILE RESOLUTION
+          #
+          # IMPORTANT:
+          # Do NOT hard-code repository-specific paths.
+          #
+          # Example:
+          #
+          # Source:
+          #   plugin/DisplaySettings.cpp
+          #
+          # Target:
+          #   DisplaySettings/DisplaySettings.cpp
+          #
+          # We extract:
+          #   DisplaySettings.cpp
+          #
+          # and search the TARGET branch for that filename.
+          #
+          # Rules:
+          #
+          # 1. Exact source path exists in target -> use it.
+          # 2. Otherwise search target branch by filename only.
+          # 3. Exactly one match -> use it.
+          # 4. Multiple matches -> NEVER guess.
+          # 5. No match -> NEVER guess.
+          # ================================================================
+
+          resolve_target_file() {
+
+            local SRC_FILE="$1"
+            local FILE_NAME
+
+            FILE_NAME="$(basename "$SRC_FILE")"
+
+            echo ""
+            echo "   🔎 Resolving target file..." >&2
+            echo "      Source path : $SRC_FILE" >&2
+            echo "      File name   : $FILE_NAME" >&2
+
+            # ------------------------------------------------------------
+            # First: exact path
+            # ------------------------------------------------------------
+
+            if git cat-file -e "HEAD:$SRC_FILE" 2>/dev/null; then
+
+              echo "   ✅ Exact target path exists:" >&2
+              echo "      $SRC_FILE" >&2
+
+              printf '%s\n' "$SRC_FILE"
+              return 0
+            fi
+
+            # ------------------------------------------------------------
+            # Second: filename-only search
+            # ------------------------------------------------------------
+
+            local MATCHES
+
+            MATCHES="$(
+              git ls-tree -r --name-only HEAD |
+              awk -v filename="$FILE_NAME" '
+                {
+                  n = split($0, parts, "/")
+                  if (parts[n] == filename)
+                    print $0
+                }
+              '
+            )"
+
+            MATCHES="$(
+              printf '%s\n' "$MATCHES" |
+              sed '/^[[:space:]]*$/d'
+            )"
+
+            local MATCH_COUNT
+
+            MATCH_COUNT="$(
+              printf '%s\n' "$MATCHES" |
+              grep -c . || true
+            )"
+
+            # ------------------------------------------------------------
+            # Exactly one target file
+            # ------------------------------------------------------------
+
+            if [ "$MATCH_COUNT" -eq 1 ]; then
+
+              echo "   ✅ Unique target file found:" >&2
+
+              printf '%s\n' "$MATCHES" |
+                sed 's/^/      /' >&2
+
+              printf '%s\n' "$MATCHES"
+
+              return 0
+            fi
+
+            # ------------------------------------------------------------
+            # No target file
+            # ------------------------------------------------------------
+
+            if [ "$MATCH_COUNT" -eq 0 ]; then
+
+              echo "   ❌ No target file found for: $FILE_NAME" >&2
+
+              return 1
+            fi
+
+            # ------------------------------------------------------------
+            # Multiple target files
+            # ------------------------------------------------------------
+
+            echo "   ❌ Multiple target files found for: $FILE_NAME" >&2
+            echo "   🛑 Refusing to guess the target path." >&2
+
+            printf '%s\n' "$MATCHES" |
+              sed 's/^/      ❌ /' >&2
+
+            return 2
+          }
 
           # ================================================================
           # MERGE COMMIT
@@ -308,9 +430,9 @@ jobs:
             echo "Parent 1     : $PARENT1"
             echo ""
 
-            # ================================================================
-            # FIND ACTUAL PR CHANGES
-            # ================================================================
+            # ============================================================
+            # GET FILES CHANGED BY PR
+            # ============================================================
 
             echo "▶ Calculating files changed by the PR..."
 
@@ -341,6 +463,7 @@ jobs:
             echo ""
 
             echo "✅ Code files:"
+
             printf '%s\n' "$ALL_CHANGED" |
               while IFS= read -r f; do
                 [ -n "$f" ] && echo "   • $f"
@@ -349,123 +472,67 @@ jobs:
             echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-            # ================================================================
-            # PATH REMAPPING
-            # ================================================================
-
-            remap_path() {
-              case "$1" in
-                plugin/DisplaySettings.cpp)
-                  echo "DisplaySettings/DisplaySettings.cpp"
-                  ;;
-                *)
-                  echo "$1"
-                  ;;
-              esac
-            }
-
-            echo ""
-            echo "▶ Applying ACTUAL PR changes..."
-            echo ""
+            # ============================================================
+            # STATE
+            # ============================================================
 
             HAS_CONFLICTS=false
             CONFLICT_LIST=""
             CONFLICT_COUNT_NUM=0
 
-            # ================================================================
-            # PROCESS EACH PR FILE
-            # ================================================================
+            # ============================================================
+            # PROCESS EACH FILE
+            # ============================================================
 
             while IFS= read -r SRC_FILE; do
 
               [ -z "$SRC_FILE" ] && continue
 
-              DST_FILE=$(remap_path "$SRC_FILE")
+              echo ""
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "📄 Processing source file: $SRC_FILE"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-              if [ "$SRC_FILE" != "$DST_FILE" ]; then
-                echo "   📍 Path remapped:"
-                echo "      $SRC_FILE"
-                echo "      → $DST_FILE"
+              # ==========================================================
+              # RESOLVE TARGET FILE BY FILE NAME
+              # ==========================================================
+
+              if ! DST_FILE="$(resolve_target_file "$SRC_FILE")"; then
+
+                echo ""
+                echo "❌ Cannot safely resolve target file:"
+                echo "   $SRC_FILE"
+                echo ""
+                echo "🛑 Refusing to guess."
+
+                # Do not create a fake Git conflict.
+                # This is a mapping failure, not a merge conflict.
+                exit 1
               fi
 
-              # ============================================================
-              # CHECK SOURCE FILE EXISTENCE
-              # ============================================================
+              echo ""
+              echo "   📍 Target mapping:"
+              echo "      Source : $SRC_FILE"
+              echo "      Target : $DST_FILE"
 
-              SRC_IN_BASE=true
-              SRC_IN_MERGE=true
-
-              git show "${PARENT1}:${SRC_FILE}" \
-                > /dev/null 2>&1 || SRC_IN_BASE=false
-
-              git show "${MERGE_SHA}:${SRC_FILE}" \
-                > /dev/null 2>&1 || SRC_IN_MERGE=false
-
-              # ============================================================
-              # NEW FILE
-              # ============================================================
-
-              if [ "$SRC_IN_BASE" = false ] && [ "$SRC_IN_MERGE" = true ]; then
-
-                echo "   ✅ NEW: $DST_FILE"
-
-                mkdir -p "$(dirname "$DST_FILE")"
-
-                git show "${MERGE_SHA}:${SRC_FILE}" > "$DST_FILE"
-
-                git add "$DST_FILE"
-
-                continue
-              fi
-
-              # ============================================================
-              # DELETED FILE
-              # ============================================================
-
-              if [ "$SRC_IN_BASE" = true ] && [ "$SRC_IN_MERGE" = false ]; then
-
-                echo "   🗑️ DELETE: $DST_FILE"
-
-                if [ -f "$DST_FILE" ]; then
-                  git rm -f "$DST_FILE"
-                fi
-
-                continue
-              fi
-
-              # ============================================================
-              # TARGET FILE MUST EXIST
-              # ============================================================
-
-              if [ ! -f "$DST_FILE" ]; then
-
-                echo "   ❌ Target file does not exist: $DST_FILE"
-
-                HAS_CONFLICTS=true
-                CONFLICT_COUNT_NUM=$((CONFLICT_COUNT_NUM + 1))
-                CONFLICT_LIST="${CONFLICT_LIST}${DST_FILE}"$'\n'
-
-                continue
-              fi
-
-              # ============================================================
-              # GENERATE THE REAL PR PATCH
+              # ==========================================================
+              # GENERATE ACTUAL PR DIFF
               #
               # IMPORTANT:
-              # ALWAYS KEEP REAL CONTEXT.
               #
-              # Do NOT use unified=0 here.
-              # Do NOT use --unidiff-zero.
+              # KEEP REAL CONTEXT.
               #
-              # The context is what tells Git WHERE the PR change belongs.
-              # ============================================================
+              # Do NOT use:
+              #   --unified=0
+              #   --unidiff-zero
+              #
+              # The context is what tells Git where the change belongs.
+              # ==========================================================
 
               PATCH_FILE="/tmp/backport_${CONFLICT_COUNT_NUM}.patch"
 
               echo ""
-              echo "   ▶ Generating actual PR diff:"
-              echo "      $SRC_FILE"
-              echo "      $PARENT1 → $MERGE_SHA"
+              echo "   ▶ Generating actual PR change..."
 
               git diff \
                 --binary \
@@ -475,18 +542,26 @@ jobs:
                 -- "$SRC_FILE" > "$PATCH_FILE"
 
               if [ ! -s "$PATCH_FILE" ]; then
-                echo "   ℹ️ No content changes found for $SRC_FILE"
+                echo "   ℹ️ No content changes for $SRC_FILE"
                 continue
               fi
 
-              # ============================================================
-              # MAP SOURCE PATH TO RELEASE PATH
-              # ============================================================
+              # ==========================================================
+              # MAP SOURCE PATH → TARGET PATH
+              #
+              # This is NOT hard-coded.
+              #
+              # The source and target file names are known dynamically.
+              # ==========================================================
 
               if [ "$SRC_FILE" != "$DST_FILE" ]; then
 
+                # Escape paths for sed replacement.
+                SRC_ESCAPED=$(printf '%s\n' "$SRC_FILE" | sed 's/[.[\*^$()+?{|\\]/\\&/g')
+                DST_ESCAPED=$(printf '%s\n' "$DST_FILE" | sed 's/[&/\]/\\&/g')
+
                 sed -i \
-                  "s#${SRC_FILE}#${DST_FILE}#g" \
+                  "s#${SRC_ESCAPED}#${DST_ESCAPED}#g" \
                   "$PATCH_FILE"
 
               fi
@@ -499,25 +574,24 @@ jobs:
 
               echo "   ─────────────────────────────────────────────────────────────"
 
-              # ============================================================
-              # REMOVE ANY STALE CONFLICT STATE
-              # ============================================================
+              # ==========================================================
+              # REMOVE ANY STALE MERGE STATE
+              # ==========================================================
 
               git reset --merge 2>/dev/null || true
 
-              # ============================================================
+              # ==========================================================
               # ATTEMPT 1
               #
-              # NORMAL PATCH APPLICATION
+              # NORMAL PATCH
               #
-              # This is the preferred path.
+              # Whitespace differences are tolerated.
               #
-              # Whitespace differences in surrounding context are ignored,
-              # but the actual patch context is still retained.
-              # ============================================================
+              # But REAL PATCH CONTEXT IS RETAINED.
+              # ==========================================================
 
               echo ""
-              echo "   ▶ Attempt 1: normal PR patch application..."
+              echo "   ▶ Attempt 1: normal patch application..."
 
               set +e
 
@@ -534,7 +608,7 @@ jobs:
 
               if [ "$CHECK_EXIT" -eq 0 ]; then
 
-                echo "   ✅ Normal patch applies cleanly."
+                echo "   ✅ Patch applies cleanly."
 
                 git apply \
                   --index \
@@ -558,13 +632,13 @@ jobs:
                   echo "   ╚══════════════════════════════════════════════════════════╝"
 
                   echo ""
-                  echo "   ▶ Applied change:"
+                  echo "   ▶ Applied diff:"
                   git diff --cached -- "$DST_FILE"
 
                   continue
                 fi
 
-                echo "   ❌ Unexpected unresolved conflict."
+                echo "   ❌ Unexpected unresolved index state."
 
                 HAS_CONFLICTS=true
                 CONFLICT_COUNT_NUM=$((CONFLICT_COUNT_NUM + 1))
@@ -573,26 +647,24 @@ jobs:
                 continue
               fi
 
-              # ============================================================
+              # ==========================================================
               # ATTEMPT 2
               #
-              # GIT 3-WAY APPLICATION
+              # GIT 3-WAY
               #
               # IMPORTANT:
-              # Use the ORIGINAL PR PATCH.
               #
-              # NO unified=0.
-              # NO --unidiff-zero.
+              # Same REAL PR patch.
+              # Same REAL context.
               #
-              # Git uses the PR's parent/blob information to determine
-              # the correct location.
-              # ============================================================
+              # No unified=0.
+              # No unidiff-zero.
+              # ==========================================================
 
               echo ""
               echo "   ⚠️ Normal patch did not apply exactly."
               echo "   ▶ Attempt 2: Git 3-way reconciliation..."
 
-              # Make sure no stale conflict entries exist.
               git reset --merge 2>/dev/null || true
 
               set +e
@@ -609,13 +681,11 @@ jobs:
 
               set -e
 
-              # ============================================================
-              # AUTHORITATIVE REAL-CONFLICT CHECK
+              # ==========================================================
+              # AUTHORITATIVE CONFLICT DETECTION
               #
-              # Do NOT decide conflict merely because git apply returned 1.
-              #
-              # A REAL conflict means the index contains unmerged entries.
-              # ============================================================
+              # A real conflict means unmerged index entries exist.
+              # ==========================================================
 
               REAL_FILE_CONFLICT=$(
                 git ls-files -u |
@@ -633,22 +703,20 @@ jobs:
 
                 echo ""
                 echo "   File: $DST_FILE"
-                echo "   ➡️ Sending this file to Phase 4b."
+                echo "   ➡️ Sending to Phase 4b."
 
                 HAS_CONFLICTS=true
+
                 CONFLICT_COUNT_NUM=$((CONFLICT_COUNT_NUM + 1))
+
                 CONFLICT_LIST="${CONFLICT_LIST}${DST_FILE}"$'\n'
 
                 continue
               fi
 
-              # ============================================================
+              # ==========================================================
               # CLEAN 3-WAY SUCCESS
-              #
-              # Even if git apply returned a non-zero value, if there are
-              # no unresolved index entries and the resulting file is staged,
-              # do not manufacture a conflict.
-              # ============================================================
+              # ==========================================================
 
               if [ "$APPLY_EXIT" -eq 0 ]; then
 
@@ -656,43 +724,41 @@ jobs:
 
                 echo ""
                 echo "   ╔══════════════════════════════════════════════════════════╗"
-                echo "   ║              ✅ 3-WAY APPLICATION SUCCESS                ║"
+                echo "   ║              ✅ 3-WAY APPLICATION SUCCESS               ║"
                 echo "   ╚══════════════════════════════════════════════════════════╝"
 
                 echo ""
-                echo "   ▶ Applied change:"
+                echo "   ▶ Applied diff:"
                 git diff --cached -- "$DST_FILE"
 
                 continue
               fi
 
-              # ============================================================
-              # FAILED WITHOUT A REAL CONFLICT
+              # ==========================================================
+              # FAILED WITHOUT REAL CONFLICT
               #
               # NEVER GUESS.
               #
-              # We intentionally do NOT use unified=0 here because that
-              # could insert a line into the wrong function/location.
-              # ============================================================
+              # Do not use unified=0.
+              # Do not insert/delete based on line number.
+              # ==========================================================
 
               echo ""
-              echo "   ❌ PR change could not be safely applied."
-              echo "   ❌ Git did not produce a resolvable application."
-              echo "   🛑 Refusing to insert the change at an arbitrary location."
+              echo "   ❌ Git could not safely apply this PR change."
+              echo "   🛑 Refusing to guess the location."
+              echo ""
+              echo "   Source : $SRC_FILE"
+              echo "   Target : $DST_FILE"
 
               git reset --merge 2>/dev/null || git reset --hard HEAD
-
-              echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
-              echo "committed=false" >> "$GITHUB_OUTPUT"
-              echo "conflict_count=0" >> "$GITHUB_OUTPUT"
 
               exit 1
 
             done <<< "$ALL_CHANGED"
 
-            # ================================================================
+            # ============================================================
             # REAL CONFLICTS → 4b
-            # ================================================================
+            # ============================================================
 
             if [ "$HAS_CONFLICTS" = true ]; then
 
@@ -720,13 +786,12 @@ jobs:
               echo "committed=false" >> "$GITHUB_OUTPUT"
               echo "conflict_count=$CONFLICT_COUNT_NUM" >> "$GITHUB_OUTPUT"
 
-              # 4b owns the conflict-resolution path.
               exit 0
             fi
 
-            # ================================================================
-            # ALL MERGE PR CHANGES APPLIED
-            # ================================================================
+            # ============================================================
+            # NO CONFLICTS → COMMIT
+            # ============================================================
 
             if git diff --cached --quiet; then
 
@@ -742,22 +807,23 @@ jobs:
 
             echo ""
             echo "╔══════════════════════════════════════════════════════════════════╗"
-            echo "║             ✅ CLEAN PR BACKPORT                               ║"
+            echo "║              ✅ CLEAN BACKPORT                                  ║"
             echo "╠══════════════════════════════════════════════════════════════════╣"
-            echo "║ Actual PR changes applied successfully.                         ║"
+            echo "║ PR changes applied successfully.                                ║"
             echo "║ No unresolved Git conflicts.                                    ║"
+            echo "║                                                                  ║"
+            echo "║ Result: commit → push → PR                                      ║"
             echo "╚══════════════════════════════════════════════════════════════════╝"
 
             echo ""
-            echo "▶ Changes that will be committed:"
+            echo "▶ Final staged changes:"
             git diff --cached --stat
 
             echo ""
-            echo "▶ Final staged diff:"
             git diff --cached --unified=3
 
             echo ""
-            echo "▶ Committing clean backport..."
+            echo "▶ Committing..."
 
             git commit \
               -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE}"
@@ -768,15 +834,12 @@ jobs:
             echo "committed=true" >> "$GITHUB_OUTPUT"
             echo "conflict_count=0" >> "$GITHUB_OUTPUT"
 
-            # NO CONFLICT → 4b MUST NOT RUN.
             exit 0
 
           fi
 
           # ================================================================
           # NORMAL COMMIT
-          #
-          # Keep normal commit behavior.
           # ================================================================
 
           echo ""
@@ -798,7 +861,7 @@ jobs:
           echo "cherry_pick_exit=$CP_EXIT" >> "$GITHUB_OUTPUT"
 
           # ================================================================
-          # REMOVE .github CONFLICTS
+          # EXCLUDE .github CONFLICTS
           # ================================================================
 
           GITHUB_CONFLICTS=$(
@@ -858,6 +921,8 @@ jobs:
               exit 0
             fi
 
+            echo "▶ Committing changes..."
+
             git commit \
               -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE}"
 
@@ -893,15 +958,12 @@ jobs:
           echo "committed=false" >> "$GITHUB_OUTPUT"
           echo "conflict_count=$CONFLICT_COUNT" >> "$GITHUB_OUTPUT"
 
-          # 4b WILL run.
           exit 0
 
 
 
-
-
       # ── 4b. Analyze conflicts ─────────────────────────────────────────────────
-      - name: "Phase 2: Analyze conflicts"
+      - name: "Phase 4b: Analyze conflicts"
         if: steps.info.outputs.skip != 'true' && steps.cherry_pick.outputs.has_conflicts == 'true'
         id: analyze
         env:
