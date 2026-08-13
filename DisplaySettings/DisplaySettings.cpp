@@ -6030,6 +6030,7 @@ void DisplaySettings::sendMsgThread()
             {
                 case dsHDRSTANDARD_SDR:
                     LOGINFO("Video Format: SDR\n");
+                    LOGINFO("Video Format: SDR\n");
                     strValue = "SDR";
                     break;
                 case dsHDRSTANDARD_HDR10:
