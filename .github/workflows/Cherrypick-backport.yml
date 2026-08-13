@@ -557,33 +557,156 @@ jobs:
             done
 
 
+
             # ═════════════════════════════════════════════════════════════════
-            # GENERATE PATCH
+            # APPLY CHANGES USING GIT MERGE-FILE (PER-FILE 3-WAY MERGE)
             #
-            # IMPORTANT:
+            # Instead of generating a patch from develop and applying it
+            # (which breaks when file paths differ between branches or
+            # when context lines don't match), we do a proper 3-way merge
+            # for each file individually.
             #
-            # Use REAL CONTEXT.
+            # For each changed file:
+            #   BASE   = file content on develop BEFORE PR  (PARENT1)
+            #   THEIRS = file content on develop AFTER PR   (MERGE_SHA)
+            #   OURS   = file content on feature branch     (current)
             #
-            # Do NOT use --unified=0.
-            #
-            # The surrounding source code allows Git to identify the exact
-            # location inside sendMsgThread(), rather than merely inserting
-            # the line somewhere in the file.
+            # git merge-file merges (BASE → THEIRS) changes into OURS.
+            # This handles path remapping and content divergence correctly.
             # ═════════════════════════════════════════════════════════════════
+
+            # ── PATH REMAPPING TABLE ──────────────────────────────────────
+            # Source path (dummy_develop)  →  Target path (support branch)
+            remap_path() {
+              case "$1" in
+                plugin/DisplaySettings.cpp) echo "DisplaySettings/DisplaySettings.cpp" ;;
+                *) echo "$1" ;;
+              esac
+            }
 
             echo ""
-            echo "▶ Generating actual PR change with source context..."
+            echo "▶ Applying PR changes using per-file 3-way merge..."
+            echo ""
 
-            git diff \
-              --binary \
-              --full-index \
-              --unified=3 \
-              "$PARENT1" "$MERGE_SHA" \
-              -- ':!.github/*' \
-              > /tmp/backport.patch
+            HAS_CONFLICTS=false
+            CONFLICT_LIST=""
+            CONFLICT_COUNT_NUM=0
 
-            if [ ! -s /tmp/backport.patch ]; then
-              echo "ℹ️ No code changes to backport."
+            while IFS= read -r SRC_FILE; do
+              [ -z "$SRC_FILE" ] && continue
+
+              DST_FILE=$(remap_path "$SRC_FILE")
+
+              if [ "$SRC_FILE" != "$DST_FILE" ]; then
+                echo "   📍 Path remapped: $SRC_FILE → $DST_FILE"
+              fi
+
+              # ── Detect change type ──────────────────────────────────────
+              SRC_IN_BASE=true
+              SRC_IN_MERGE=true
+              git show "${PARENT1}:${SRC_FILE}" > /dev/null 2>&1 || SRC_IN_BASE=false
+              git show "${MERGE_SHA}:${SRC_FILE}" > /dev/null 2>&1 || SRC_IN_MERGE=false
+
+              # ── NEW FILE (added by PR) ──────────────────────────────────
+              if [ "$SRC_IN_BASE" = false ] && [ "$SRC_IN_MERGE" = true ]; then
+                echo "   ✅ NEW: $DST_FILE"
+                mkdir -p "$(dirname "$DST_FILE")"
+                git show "${MERGE_SHA}:${SRC_FILE}" > "$DST_FILE"
+                git add "$DST_FILE"
+                continue
+              fi
+
+              # ── DELETED FILE ────────────────────────────────────────────
+              if [ "$SRC_IN_BASE" = true ] && [ "$SRC_IN_MERGE" = false ]; then
+                echo "   ✅ DEL: $DST_FILE"
+                if [ -f "$DST_FILE" ]; then
+                  git rm -f "$DST_FILE" 2>/dev/null || true
+                fi
+                continue
+              fi
+
+              # ── MODIFIED FILE ───────────────────────────────────────────
+              if [ ! -f "$DST_FILE" ]; then
+                echo "   ⚠️ Target not found: $DST_FILE (creating from merge commit)"
+                mkdir -p "$(dirname "$DST_FILE")"
+                git show "${MERGE_SHA}:${SRC_FILE}" > "$DST_FILE"
+                git add "$DST_FILE"
+                continue
+              fi
+
+              # Extract 3 versions for proper merge
+              git show "${PARENT1}:${SRC_FILE}" > /tmp/merge_base.tmp
+              git show "${MERGE_SHA}:${SRC_FILE}" > /tmp/merge_theirs.tmp
+              cp "$DST_FILE" /tmp/merge_ours.tmp
+
+              # ── 3-way merge ─────────────────────────────────────────────
+              set +e
+              git merge-file "$DST_FILE" /tmp/merge_base.tmp /tmp/merge_theirs.tmp
+              MERGE_EXIT=$?
+              set -e
+
+              if [ "$MERGE_EXIT" -eq 0 ]; then
+                # Clean merge — stage the result
+                git add "$DST_FILE"
+                echo "   ✅ MOD: $DST_FILE (clean merge)"
+              else
+                # Conflicts — set up unmerged index for Phase 2
+                echo "   ⚠️ MOD: $DST_FILE (conflicts detected)"
+                HAS_CONFLICTS=true
+                CONFLICT_COUNT_NUM=$((CONFLICT_COUNT_NUM + 1))
+                CONFLICT_LIST="${CONFLICT_LIST}${DST_FILE}"$'\n'
+
+                # Set up proper unmerged index entries so Phase 2
+                # can use git show :1:, :2:, :3: to extract versions
+                BASE_HASH=$(git hash-object -w /tmp/merge_base.tmp)
+                OURS_HASH=$(git hash-object -w /tmp/merge_ours.tmp)
+                THEIRS_HASH=$(git hash-object -w /tmp/merge_theirs.tmp)
+
+                git update-index --force-remove "$DST_FILE" 2>/dev/null || true
+
+                printf '%s %s %s\t%s\n' \
+                  "100644" "$BASE_HASH" "1" "$DST_FILE" \
+                  "100644" "$OURS_HASH" "2" "$DST_FILE" \
+                  "100644" "$THEIRS_HASH" "3" "$DST_FILE" |
+                git update-index --index-info
+              fi
+
+            done <<< "$ALL_CHANGED"
+
+
+            # ═════════════════════════════════════════════════════════════════
+            # HANDLE CONFLICTS → Phase 2
+            # ═════════════════════════════════════════════════════════════════
+
+            if [ "$HAS_CONFLICTS" = true ]; then
+
+              echo ""
+              echo "⚠️ Conflicts detected: $CONFLICT_COUNT_NUM file(s)"
+              echo "$CONFLICT_LIST" | grep -v '^$' | while IFS= read -r f; do
+                echo "  ❌ $f"
+              done
+
+              echo "$CONFLICT_LIST" | grep -v '^$' > /tmp/conflict_files.txt
+
+              echo ""
+              echo "➡️ Sending to Phase 2 for analysis."
+
+              echo "has_conflicts=true" >> "$GITHUB_OUTPUT"
+              echo "committed=false" >> "$GITHUB_OUTPUT"
+              echo "conflict_count=$CONFLICT_COUNT_NUM" >> "$GITHUB_OUTPUT"
+
+              exit 0
+            fi
+
+
+            # ═════════════════════════════════════════════════════════════════
+            # ALL CLEAN — VALIDATE LOCATION
+            # ═════════════════════════════════════════════════════════════════
+
+            if git diff --cached --quiet; then
+
+              echo ""
+              echo "ℹ️ No staged changes to commit."
 
               echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
               echo "committed=false" >> "$GITHUB_OUTPUT"
@@ -591,63 +714,14 @@ jobs:
               exit 0
             fi
 
-
-            # ═════════════════════════════════════════════════════════════════
-            # MAP SOURCE PATH → RELEASE PATH
-            # ═════════════════════════════════════════════════════════════════
-
-            sed -i \
-              's#plugin/DisplaySettings\.cpp#DisplaySettings/DisplaySettings.cpp#g' \
-              /tmp/backport.patch
-
-            echo "📍 Source path mapped to release path where required."
-
-
-            # ═════════════════════════════════════════════════════════════════
-            # REMOVE FILE-MODE-ONLY INFORMATION
-            #
-            # 100644 vs 100755 must not create a content conflict.
-            # ═════════════════════════════════════════════════════════════════
-
-            sed -i \
-              -e '/^old mode /d' \
-              -e '/^new mode /d' \
-              -e '/^new file mode /d' \
-              -e '/^deleted file mode /d' \
-              /tmp/backport.patch
-
-
-            # ═════════════════════════════════════════════════════════════════
-            # SHOW PATCH
-            # ═════════════════════════════════════════════════════════════════
-
             echo ""
-            echo "╔══════════════════════════════════════════════════════════════════╗"
-            echo "║                    📦 PR CHANGE                                 ║"
-            echo "╚══════════════════════════════════════════════════════════════════╝"
-            echo ""
+            echo "▶ Validating change location..."
 
-            cat /tmp/backport.patch
-
-            echo ""
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-
-            # ═════════════════════════════════════════════════════════════════
-            # EXTRACT EXPECTED FUNCTION CONTEXT
-            #
-            # Example:
-            #
-            # @@ ... @@ void DisplaySettings::sendMsgThread()
-            #
-            # We remember that function.
-            #
-            # After applying the patch we verify that the changed code is
-            # still inside that expected function.
-            # ═════════════════════════════════════════════════════════════════
-
+            # Extract expected functions from the original PR diff
             EXPECTED_FUNCTIONS=$(
-              grep '^@@' /tmp/backport.patch |
+              git diff --unified=3 "$PARENT1" "$MERGE_SHA" \
+                -- ':!.github/*' 2>/dev/null |
+              grep '^@@' |
               sed 's/^.*@@[[:space:]]*//' |
               sed 's/^.*@@[[:space:]]*//' |
               grep -E '[A-Za-z_][A-Za-z0-9_:<>~]*[[:space:]]*\(' |
@@ -655,344 +729,101 @@ jobs:
               sort -u || true
             )
 
-            echo ""
-            echo "▶ Expected function context:"
+            LOCATION_OK=true
 
             if [ -n "$EXPECTED_FUNCTIONS" ]; then
-              echo "$EXPECTED_FUNCTIONS" | while IFS= read -r f; do
-                [ -n "$f" ] && echo "   • $f"
-              done
+
+              STAGED_FUNCTION_CONTEXT=$(
+                git diff --cached --function-context -- \
+                  'DisplaySettings/*.cpp' \
+                  'plugin/*.cpp' \
+                  2>/dev/null || true
+              )
+
+              while IFS= read -r EXPECTED_FUNC; do
+
+                [ -z "$EXPECTED_FUNC" ] && continue
+
+                FUNC_NAME=$(
+                  echo "$EXPECTED_FUNC" |
+                  sed 's/(.*//' |
+                  awk '{print $NF}' |
+                  tr -d '*&'
+                )
+
+                [ -z "$FUNC_NAME" ] && continue
+
+                if ! echo "$STAGED_FUNCTION_CONTEXT" | grep -Fq "$FUNC_NAME"; then
+                  echo "   ❌ Location validation failed for: $FUNC_NAME"
+                  LOCATION_OK=false
+                else
+                  echo "   ✅ Verified function: $FUNC_NAME"
+                fi
+
+              done <<< "$EXPECTED_FUNCTIONS"
+
             else
-              echo "   ℹ️ Function context not available in patch."
+              echo "   ℹ️ No function context available for validation."
             fi
 
-
-            # ═════════════════════════════════════════════════════════════════
-            # ATTEMPT 1 — CLEAN DIRECT APPLICATION
-            #
-            # First try normal patch application.
-            #
-            # If Git can find the exact surrounding source context:
-            #
-            #     apply
-            #       ↓
-            #     validate location
-            #       ↓
-            #     commit
-            #
-            # No 4b.
-            # ═════════════════════════════════════════════════════════════════
-
-            echo ""
-            echo "▶ Checking whether PR changes apply cleanly..."
-
-            set +e
-
-            git apply \
-              --check \
-              --ignore-space-change \
-              --ignore-whitespace \
-              /tmp/backport.patch
-
-            CHECK_EXIT=$?
-
-            set -e
-
-
-            # ═════════════════════════════════════════════════════════════════
-            # CLEAN PATCH
-            # ═════════════════════════════════════════════════════════════════
-
-            if [ "$CHECK_EXIT" -eq 0 ]; then
+            if [ "$LOCATION_OK" != "true" ]; then
 
               echo ""
-              echo "✅ Git reports a clean patch."
-              echo "▶ Applying PR changes..."
+              echo "╔══════════════════════════════════════════════════════════════════╗"
+              echo "║              ⚠️ UNSAFE PATCH LOCATION                          ║"
+              echo "╚══════════════════════════════════════════════════════════════════╝"
+              echo ""
+              echo "Changes could not be verified in the expected function/location."
+              echo "➡️ Sending to Phase 2 for analysis."
 
-              git apply \
-                --index \
-                --ignore-space-change \
-                --ignore-whitespace \
-                /tmp/backport.patch
+              git diff --cached > /tmp/applied_backport.diff || true
 
-
-              # ═══════════════════════════════════════════════════════════════
-              # AUTHORITATIVE GIT CONFLICT CHECK
-              # ═══════════════════════════════════════════════════════════════
-
-              REAL_CONFLICTS=$(
-                git ls-files -u |
-                cut -f2 |
-                sort -u |
+              CONFLICT_FILES=$(
+                git diff --cached --name-only |
                 grep -v '^\.github/' || true
               )
 
-              if [ -n "$REAL_CONFLICTS" ]; then
+              [ -z "$CONFLICT_FILES" ] && CONFLICT_FILES="$ALL_CHANGED"
 
-                echo ""
-                echo "⚠️ Git reports unresolved conflicts."
-
-                echo "$REAL_CONFLICTS" > /tmp/conflict_files.txt
-
-                CONFLICT_COUNT=$(echo "$REAL_CONFLICTS" | grep -c . || true)
-
-                echo "has_conflicts=true" >> "$GITHUB_OUTPUT"
-                echo "committed=false" >> "$GITHUB_OUTPUT"
-                echo "conflict_count=$CONFLICT_COUNT" >> "$GITHUB_OUTPUT"
-
-                exit 0
-              fi
-
-
-              # ═══════════════════════════════════════════════════════════════
-              # LOCATION VALIDATION
-              #
-              # This is the IMPORTANT NEW PROTECTION.
-              #
-              # A clean git apply is NOT enough.
-              #
-              # We inspect the resulting staged diff and verify that the
-              # expected function context is present.
-              # ═══════════════════════════════════════════════════════════════
-
-              LOCATION_OK=true
-
-              if [ -n "$EXPECTED_FUNCTIONS" ]; then
-
-                echo ""
-                echo "▶ Validating change location..."
-
-                STAGED_FUNCTION_CONTEXT=$(
-                  git diff --cached --function-context -- \
-                    'DisplaySettings/*.cpp' \
-                    'plugin/*.cpp' \
-                    2>/dev/null || true
-                )
-
-                while IFS= read -r EXPECTED_FUNC; do
-
-                  [ -z "$EXPECTED_FUNC" ] && continue
-
-                  # Extract the function name before '('.
-                  FUNC_NAME=$(
-                    echo "$EXPECTED_FUNC" |
-                    sed 's/(.*//' |
-                    awk '{print $NF}' |
-                    tr -d '*&'
-                  )
-
-                  if [ -z "$FUNC_NAME" ]; then
-                    continue
-                  fi
-
-                  if ! echo "$STAGED_FUNCTION_CONTEXT" | grep -Fq "$FUNC_NAME"; then
-
-                    echo ""
-                    echo "❌ LOCATION VALIDATION FAILED"
-                    echo "   Expected function: $FUNC_NAME"
-                    echo "   The changed code could not be verified inside"
-                    echo "   the expected function."
-
-                    LOCATION_OK=false
-                  else
-                    echo "   ✅ Verified function: $FUNC_NAME"
-                  fi
-
-                done <<< "$EXPECTED_FUNCTIONS"
-
-              else
-
-                echo ""
-                echo "ℹ️ No function context available for validation."
-
-              fi
-
-
-              # ═══════════════════════════════════════════════════════════════
-              # LOCATION IS WRONG
-              #
-              # IMPORTANT:
-              #
-              # Do NOT commit.
-              # Do NOT claim success.
-              #
-              # Send it to 4b as an unresolved backport/application problem.
-              # ═══════════════════════════════════════════════════════════════
-
-              if [ "$LOCATION_OK" != "true" ]; then
-
-                echo ""
-                echo "╔══════════════════════════════════════════════════════════════════╗"
-                echo "║              ⚠️ UNSAFE PATCH LOCATION                          ║"
-                echo "╚══════════════════════════════════════════════════════════════════╝"
-                echo ""
-                echo "Git applied the patch, but the resulting change could not"
-                echo "be verified in the expected function/location."
-                echo ""
-                echo "➡️ Sending to Phase 4b for analysis."
-
-                # Keep the changed file available for Phase 4b analysis.
-                git diff --cached > /tmp/applied_backport.diff || true
-
-                CONFLICT_FILES=$(
-                  git diff --cached --name-only |
-                  grep -v '^\.github/' || true
-                )
-
-                if [ -z "$CONFLICT_FILES" ]; then
-                  CONFLICT_FILES="$ALL_CHANGED"
-                fi
-
-                echo "$CONFLICT_FILES" > /tmp/conflict_files.txt
-
-                CONFLICT_COUNT=$(echo "$CONFLICT_FILES" | grep -c . || true)
-
-                echo "has_conflicts=true" >> "$GITHUB_OUTPUT"
-                echo "committed=false" >> "$GITHUB_OUTPUT"
-                echo "conflict_count=$CONFLICT_COUNT" >> "$GITHUB_OUTPUT"
-
-                # IMPORTANT:
-                # 4a completed detection.
-                # 4b will run because has_conflicts=true.
-                exit 0
-              fi
-
-
-              # ═══════════════════════════════════════════════════════════════
-              # CLEAN + CORRECT LOCATION
-              #
-              # This is the SUCCESS path.
-              # ═══════════════════════════════════════════════════════════════
-
-              echo ""
-              echo "╔══════════════════════════════════════════════════════════════════╗"
-              echo "║          ✅ CLEAN + CORRECT BACKPORT                            ║"
-              echo "╠══════════════════════════════════════════════════════════════════╣"
-              echo "║ PR changes applied at the expected source location.             ║"
-              echo "║                                                                  ║"
-              echo "║ Result: commit → push → PR                                      ║"
-              echo "╚══════════════════════════════════════════════════════════════════╝"
-              echo ""
-
-              git diff --cached --stat
-
-              if git diff --cached --quiet; then
-
-                echo "ℹ️ No staged changes."
-
-                echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
-                echo "committed=false" >> "$GITHUB_OUTPUT"
-
-                exit 0
-              fi
-
-              echo ""
-              echo "▶ Committing clean backport..."
-
-              git commit \
-                -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE}"
-
-              echo "✅ Changes committed successfully."
-
-              echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
-              echo "committed=true" >> "$GITHUB_OUTPUT"
-
-              # STOP 4a.
-              #
-              # 4b condition checks has_conflicts.
-              # It is false, so 4b will NOT execute.
-              exit 0
-            fi
-
-
-            # ═════════════════════════════════════════════════════════════════
-            # DIRECT APPLY FAILED
-            #
-            # Now use 3-way application only to determine whether Git sees a
-            # genuine unresolved conflict.
-            # ═════════════════════════════════════════════════════════════════
-
-            echo ""
-            echo "⚠️ Direct patch application failed."
-            echo "▶ Trying 3-way application..."
-
-            set +e
-
-            git apply \
-              --3way \
-              --ignore-space-change \
-              --ignore-whitespace \
-              --index \
-              /tmp/backport.patch
-
-            PATCH_EXIT=$?
-
-            set -e
-
-
-            # ═════════════════════════════════════════════════════════════════
-            # CHECK REAL GIT CONFLICT
-            # ═════════════════════════════════════════════════════════════════
-
-            REAL_CONFLICTS=$(
-              git ls-files -u |
-              cut -f2 |
-              sort -u |
-              grep -v '^\.github/' || true
-            )
-
-
-            if [ -n "$REAL_CONFLICTS" ]; then
-
-              CONFLICT_COUNT=$(echo "$REAL_CONFLICTS" | grep -c . || true)
-
-              echo ""
-              echo "╔══════════════════════════════════════════════════════════════════╗"
-              echo "║                  ⚠️ REAL CONFLICT                              ║"
-              echo "╚══════════════════════════════════════════════════════════════════╝"
-              echo ""
-
-              echo "Conflicting files: $CONFLICT_COUNT"
-
-              echo "$REAL_CONFLICTS" | while IFS= read -r f; do
-                echo "  ❌ $f"
-              done
-
-              echo "$REAL_CONFLICTS" > /tmp/conflict_files.txt
-
-              echo ""
-              echo "➡️ Sending to Phase 4b for analysis."
+              echo "$CONFLICT_FILES" > /tmp/conflict_files.txt
+              CONFLICT_COUNT=$(echo "$CONFLICT_FILES" | grep -c . || true)
 
               echo "has_conflicts=true" >> "$GITHUB_OUTPUT"
               echo "committed=false" >> "$GITHUB_OUTPUT"
               echo "conflict_count=$CONFLICT_COUNT" >> "$GITHUB_OUTPUT"
 
-              # 4b WILL run.
               exit 0
             fi
 
 
             # ═════════════════════════════════════════════════════════════════
-            # PATCH FAILED BUT THERE IS NO REAL GIT CONFLICT
-            #
-            # This is an application problem, not a merge conflict.
-            # Do NOT pretend it is a conflict.
+            # CLEAN + CORRECT LOCATION — COMMIT
             # ═════════════════════════════════════════════════════════════════
 
             echo ""
-            echo "❌ PR patch could not be applied."
-            echo "❌ No unresolved Git conflict was detected."
+            echo "╔══════════════════════════════════════════════════════════════════╗"
+            echo "║          ✅ CLEAN + CORRECT BACKPORT                            ║"
+            echo "╠══════════════════════════════════════════════════════════════════╣"
+            echo "║ PR changes applied at the expected source location.             ║"
+            echo "║                                                                  ║"
+            echo "║ Result: commit → push → PR                                      ║"
+            echo "╚══════════════════════════════════════════════════════════════════╝"
             echo ""
-            echo "This is an application/path/patch problem."
-            echo "Stopping safely."
 
-            git reset --merge 2>/dev/null || git reset --hard HEAD
+            git diff --cached --stat
+
+            echo ""
+            echo "▶ Committing clean backport..."
+
+            git commit \
+              -m "${TICKET}: Backport to support/${VERSION} — ${PR_TITLE}"
+
+            echo "✅ Changes committed successfully."
 
             echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
-            echo "committed=false" >> "$GITHUB_OUTPUT"
-            echo "conflict_count=0" >> "$GITHUB_OUTPUT"
+            echo "committed=true" >> "$GITHUB_OUTPUT"
 
-            exit 1
+            exit 0
 
           fi
 
@@ -1117,6 +948,15 @@ jobs:
 
           # 4b WILL run.
           exit 0
+
+
+
+
+
+
+
+
+
 
       # ── 4b. Analyze conflicts ─────────────────────────────────────────────────
       - name: "Phase 2: Analyze conflicts"
