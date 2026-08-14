@@ -4969,6 +4969,7 @@ void DisplaySettings::sendMsgThread()
 			}
 			
 			msgInfo = DisplaySettings::_instance->m_sendMsgQueue.front();
+			DisplaySettings::_instance->m_sendMsgQueue.pop();
 		}		
 			switch(msgInfo.msg)
 			{
@@ -5034,7 +5035,6 @@ void DisplaySettings::sendMsgThread()
 			    LOGERR(" send cec msg [%d] failed \n",msgInfo.msg);
 			}
 						
-		DisplaySettings::_instance->m_sendMsgQueue.pop();
 	}
 }
 
@@ -5147,7 +5147,10 @@ void DisplaySettings::sendMsgThread()
                     try
                     {
 			if(m_hdmiInAudioDeviceConnected ==  false) {
-                            m_hdmiInAudioDeviceConnected = true;
+                            {
+                                std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                                m_hdmiInAudioDeviceConnected = true;
+                            }
 			    if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_DISCONNECTED) {
 				LOGINFO("Arc Initiation sucess, Notify UI\n");
 			        connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, true);
@@ -5520,8 +5523,11 @@ void DisplaySettings::sendMsgThread()
                     aPort.getSupportedARCTypes(&types);
                     if((types & dsAUDIOARCSUPPORT_eARC) && (m_hdmiInAudioDeviceConnected == false)) {
 			    LOGINFO("%s: Audio device is eArc m_hdmiInAudioDeviceConnected =%d",__FUNCTION__,m_hdmiInAudioDeviceConnected);
-                        m_hdmiInAudioDeviceConnected = true;
-			m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_eARC;
+                        {
+                            std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                            m_hdmiInAudioDeviceConnected = true;
+                            m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_eARC;
+                        }
 			if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_DISCONNECTED) {
 			    // Notify UI that Audio device is connected and is in ON state
                             LOGINFO("Triggered from HPD: eARC audio device power on: Notify UI !!! \n");
@@ -5571,8 +5577,11 @@ void DisplaySettings::sendMsgThread()
 	    }
 	    if(arcRoutingState != ARC_STATE_ARC_INITIATED) {
 	       if((types & dsAUDIOARCSUPPORT_eARC) && (m_hdmiInAudioDeviceConnected == false)) {
-                   m_hdmiInAudioDeviceConnected = true;
-		   m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_eARC;
+                   {
+                       std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                       m_hdmiInAudioDeviceConnected = true;
+                       m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_eARC;
+                   }
 		   if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_DISCONNECTED) {
                        LOGINFO("Triggered from HPD: eARC audio device power on: Notify UI !!! \n");
                        connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, true);
