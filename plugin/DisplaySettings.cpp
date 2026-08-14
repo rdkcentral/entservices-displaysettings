@@ -4950,9 +4950,10 @@ void DisplaySettings::sendMsgThread()
 		{
 			LOGINFO("%s: Debug: Wait for message \n",__FUNCTION__);
 			std::unique_lock<std::mutex> lock(DisplaySettings::_instance->m_sendMsgMutex);
-			_instance->m_sendMsgCV.wait(lock, []{
-				// Lock is held while evaluating predicate
-				return (_instance->m_sendMsgThreadRun == true || _instance->m_sendMsgThreadExit == true);
+			auto* inst = _instance;
+                       _instance->m_sendMsgCV.wait(lock, [inst]{
+                               // Lock is held while evaluating predicate (unique_lock passed to wait maintains lock)
+                               return (inst->m_sendMsgThreadRun == true || inst->m_sendMsgThreadExit == true);
 			});
 			
 			//Check exit condition first while holding mutex
@@ -5147,10 +5148,7 @@ void DisplaySettings::sendMsgThread()
                     try
                     {
 			if(m_hdmiInAudioDeviceConnected ==  false) {
-                            {
-                                std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-                                m_hdmiInAudioDeviceConnected = true;
-                            }
+            	m_hdmiInAudioDeviceConnected = true;
 			    if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_DISCONNECTED) {
 				LOGINFO("Arc Initiation sucess, Notify UI\n");
 			        connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, true);
@@ -5472,9 +5470,12 @@ void DisplaySettings::sendMsgThread()
 		            LOGINFO("SAD already cleared\n");
 	            }
                 //if m_arcEarcAudioEnabled == true(case where arc/earc is already routed) we will not reset device type because it will be done from setEnableAudioPort during disable from the connectedAudioPort update
-				if (m_arcEarcAudioEnabled == false && m_hdmiInAudioDeviceType != dsAUDIOARCSUPPORT_NONE) {
-					LOGINFO("Reset m_hdmiInAudioDeviceType since m_arcEarcAudioEnabled = %d", m_arcEarcAudioEnabled);
-					m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
+				{
+                    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                    if (m_arcEarcAudioEnabled == false && m_hdmiInAudioDeviceType != dsAUDIOARCSUPPORT_NONE) {
+                        LOGINFO("Reset m_hdmiInAudioDeviceType since m_arcEarcAudioEnabled = %d", m_arcEarcAudioEnabled);
+                        m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
+                        }
 				}
 
             }
@@ -5492,7 +5493,7 @@ void DisplaySettings::sendMsgThread()
 		}
                 hdmiArcVolumeLevel = 0;
 		hdmiArcMuteStatus = false;
-        }
+    }
 
 	void DisplaySettings::onAudioDevicePowerStatusEventHandler(const JsonObject& parameters) {
             string value;
@@ -5521,8 +5522,13 @@ void DisplaySettings::sendMsgThread()
                     int types = dsAUDIOARCSUPPORT_NONE;
                     device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort("HDMI_ARC0");
                     aPort.getSupportedARCTypes(&types);
-                    if((types & dsAUDIOARCSUPPORT_eARC) && (m_hdmiInAudioDeviceConnected == false)) {
-			    LOGINFO("%s: Audio device is eArc m_hdmiInAudioDeviceConnected =%d",__FUNCTION__,m_hdmiInAudioDeviceConnected);
+                    bool isArcConnected = false;
+                    {
+                        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                        isArcConnected = m_hdmiInAudioDeviceConnected;
+                    }
+                    if((types & dsAUDIOARCSUPPORT_eARC) && (isArcConnected == false)) {
+                           LOGINFO("%s: Audio device is eArc m_hdmiInAudioDeviceConnected =%d",__FUNCTION__,isArcConnected);
                         {
                             std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
                             m_hdmiInAudioDeviceConnected = true;
@@ -5576,37 +5582,49 @@ void DisplaySettings::sendMsgThread()
 		    arcRoutingState = m_currentArcRoutingState;
 	    }
 	    if(arcRoutingState != ARC_STATE_ARC_INITIATED) {
-	       if((types & dsAUDIOARCSUPPORT_eARC) && (m_hdmiInAudioDeviceConnected == false)) {
-                   {
-                       std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-                       m_hdmiInAudioDeviceConnected = true;
-                       m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_eARC;
-                   }
-		   if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_DISCONNECTED) {
-                       LOGINFO("Triggered from HPD: eARC audio device power on: Notify UI !!! \n");
-                       connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, true);
+	       bool isArcConnected = false;
+           {
+               std::lock_guard<std::mutex> arcLock(m_AudioDeviceStatesUpdateMutex);
+               isArcConnected = m_hdmiInAudioDeviceConnected;
+           }
+           if((types & dsAUDIOARCSUPPORT_eARC) && (isArcConnected == false)) {
+               {
+                   std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                   m_hdmiInAudioDeviceConnected = true;
+                   m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_eARC;
+               }
+		       if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_DISCONNECTED) {
+                   LOGINFO("Triggered from HPD: eARC audio device power on: Notify UI !!! \n");
+                   connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, true);
 		       m_arcEarcConnectionNotifiedToUI = ARC_EARC_CONNECTED;
-		   } else {
-		       LOGINFO("Arc connection notification is already sent m_arcEarcConnectionNotifiedToUI = %d", m_arcEarcConnectionNotifiedToUI);
-		   }
-               } else if(m_hdmiInAudioDeviceConnected == false) {
-		    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-		    retryArcCount ++;
-		    LOGINFO("device Type is ARC, checking if eARC - retryArcCount [%d]", retryArcCount);
-		    if (retryArcCount >= 3 )
-		    {
-		        m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_ARC;
-                        if((m_currentArcRoutingState == ARC_STATE_ARC_TERMINATED) && (isCecEnabled == true)) {
-			    LOGINFO("ARC_mode: Send dummy ARC initiation request... \n");
-                            LOGINFO("ARC_mode: Notify Arc routing with m_currentArcRoutingStat [%d] \n", DisplaySettings::_instance->m_currentArcRoutingState );
-                            m_currentArcRoutingState = ARC_STATE_REQUEST_ARC_INITIATION;
-                            sendMsgToQueue(SEND_REQUEST_ARC_INITIATION, NULL);
-                        } else {
-			    LOGINFO("Arc initiation request not sent\n");
-		        }
+		       } else {
+		           LOGINFO("Arc connection notification is already sent m_arcEarcConnectionNotifiedToUI = %d", m_arcEarcConnectionNotifiedToUI);
+		       }
+            } else {
+                //coverity fix: LOCK_EVASION - capture read under lock to check before entering locked block
+                bool isArcNotConnected = false;
+                {
+                    std::lock_guard<std::mutex> arcLock(m_AudioDeviceStatesUpdateMutex);
+                    isArcNotConnected = (m_hdmiInAudioDeviceConnected == false);
+                }
+                if(isArcNotConnected) {
+		        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+		        retryArcCount ++;
+		        LOGINFO("device Type is ARC, checking if eARC - retryArcCount [%d]", retryArcCount);
+		        if (retryArcCount >= 3 )
+		        {
+		            m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_ARC;
+                    if((m_currentArcRoutingState == ARC_STATE_ARC_TERMINATED) && (isCecEnabled == true)) {
+			            LOGINFO("ARC_mode: Send dummy ARC initiation request... \n");
+                        LOGINFO("ARC_mode: Notify Arc routing with m_currentArcRoutingStat [%d] \n", DisplaySettings::_instance->m_currentArcRoutingState );
+                        m_currentArcRoutingState = ARC_STATE_REQUEST_ARC_INITIATION;
+                        sendMsgToQueue(SEND_REQUEST_ARC_INITIATION, NULL);
+                    } else {
+			            LOGINFO("Arc initiation request not sent\n");
+		            }
 	            }
-	       }//Release Mutex m_AudioDeviceStatesUpdateMutex
-	    } else {
+	            }//Release Mutex m_AudioDeviceStatesUpdateMutex
+	        } else {
 		    int arcState;
 		    {
 		        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
