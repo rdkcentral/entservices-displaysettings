@@ -150,6 +150,7 @@ namespace
             if (strcmp(s, name_mappings[i].IArmBusName) == 0)
                 return name_mappings[i].SvcManagerName;
             i++;
+			/// add stub
         }
         return name;
     }
