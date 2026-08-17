@@ -5624,6 +5624,7 @@ void DisplaySettings::sendMsgThread()
 		            }
 	            }
 	            }//Release Mutex m_AudioDeviceStatesUpdateMutex
+		      }
 	        } else {
 		    int arcState;
 		    {
@@ -5646,9 +5647,9 @@ void DisplaySettings::sendMsgThread()
                     m_ArcDetectionTimer.stop();
             }
 	    }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(string(" Exception in checkArcDeviceConnected"));
+        catch(const device::Exception& err)
+        {
+            LOG_DEVICE_EXCEPTION1(string(" Exception in checkArcDeviceConnected"));
 	    }
 	}	
 	/* DisplaaySettings gets notified whenever CEC is made Enable or Disable  */
