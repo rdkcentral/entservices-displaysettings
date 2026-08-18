@@ -6281,6 +6281,7 @@ void DisplaySettings::sendMsgThread()
 				else
 				{
                     LOGWARN("failure: %s is not connected!",strVideoPort.c_str());
+                    LOGWARN("Testing Log Added for PR Checking");
 				}
 			}
 			catch (const device::Exception& err)
