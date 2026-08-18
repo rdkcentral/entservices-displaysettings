@@ -48,6 +48,7 @@ jobs:
           PR_BRANCH:   ${{ github.event.pull_request.head.ref }}
           PR_TITLE:    ${{ github.event.pull_request.title }}
           PR_URL:      ${{ github.event.pull_request.html_url }}
+          PR_NUMBER:   ${{ github.event.pull_request.number }}
           MERGE_SHA:   ${{ github.event.pull_request.merge_commit_sha }}
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
         run: |
@@ -122,16 +123,18 @@ jobs:
           fi
           
           # ── Extract and validate ticket ────────────────────────────────────
-          TICKET=$(echo "$PR_BRANCH" | grep -oE '[A-Z]+-[0-9]+' | head -1 || true)
-          
+          # Extract ticket strictly from PR title. If not present, fallback to PR-number based name.
+          # This enforces consistent behavior for dummy_develop and dummy_support runs.
+          TICKET=$(echo "$PR_TITLE" | grep -oE '[A-Z]+-[0-9]+' | head -1 || true)
+
           if [ -z "$TICKET" ]; then
-            echo "⚠️  No ticket found in branch name '$PR_BRANCH'"
-            echo "   Using fallback: BACKPORT"
-            TICKET="BACKPORT"
+            echo "⚠️  No ticket found in PR title: '$PR_TITLE'"
+            echo "   Falling back to: BACKPORT_${PR_NUMBER}"
+            TICKET="BACKPORT_${PR_NUMBER}"
           else
-            echo "✅ Ticket extracted: $TICKET"
+            echo "✅ Ticket extracted from PR title: $TICKET"
           fi
-          
+
           FEATURE_BRANCH="feature/${TICKET}"
           
           # ── Set outputs ────────────────────────────────────────────────────
