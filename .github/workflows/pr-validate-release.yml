@@ -19,6 +19,7 @@ on:
     types: [opened, edited, reopened, synchronize]
     branches:
       - dummy_develop
+      - dummy_support/**
       - 'support/**'
       - 'release/**'
 
