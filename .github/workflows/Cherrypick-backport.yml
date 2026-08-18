@@ -191,6 +191,7 @@ jobs:
 
       # ── 3. Create or checkout feature branch from support ────────────────────
       - name: Create or checkout feature branch
+        id: setup_feature
         if: steps.info.outputs.skip != 'true'
         env:
           SUPPORT_BRANCH: ${{ steps.info.outputs.support_branch }}
@@ -202,37 +203,70 @@ jobs:
             echo "❌ FATAL: SUPPORT_BRANCH is empty"
             exit 1
           fi
-          
+
           if [ -z "$FEATURE_BRANCH" ]; then
             echo "❌ FATAL: FEATURE_BRANCH is empty"
             exit 1
           fi
-          
+
           git fetch origin "$SUPPORT_BRANCH"
-          
-          # CUMULATIVE COMMITS: Preserve existing backport commits
-          if git ls-remote --exit-code --heads origin "$FEATURE_BRANCH" > /dev/null 2>&1; then
-            echo "Feature branch '$FEATURE_BRANCH' already exists"
-            echo "Checking out and pulling latest commits (APPEND mode - preserves history)..."
-            git fetch origin "$FEATURE_BRANCH"
-            git checkout "$FEATURE_BRANCH"
-            git pull origin "$FEATURE_BRANCH"
-            
-            # Verify we're on the right base
-            MERGE_BASE=$(git merge-base HEAD "origin/$SUPPORT_BRANCH")
-            SUPPORT_SHA=$(git rev-parse "origin/$SUPPORT_BRANCH")
-            
-            if [ "$MERGE_BASE" != "$SUPPORT_SHA" ]; then
-              echo "⚠️  WARNING: Feature branch has diverged from support branch"
-              echo "   Merge base: $MERGE_BASE"
-              echo "   Support:    $SUPPORT_SHA"
-              echo "   This may cause issues. Consider manual rebase if needed."
+
+          # Determine a unique feature branch name. If the base feature branch
+          # already exists on origin or an open PR already targets the support
+          # branch using that head, pick feature/<TICKET>_1, _2, ... to avoid
+          # accumulating changes into the same branch/PR.
+
+          BASE_FEATURE="$FEATURE_BRANCH"
+          CAND="$BASE_FEATURE"
+          SUFFIX=1
+
+          # helper to test whether a PR exists for a given head->base
+          pr_exists() {
+            local head="$1"
+            local base="$2"
+            # If GH CLI available, use it; otherwise conservatively treat as not existing
+            if command -v gh >/dev/null 2>&1; then
+              local url
+              url=$(gh pr list --head "$head" --base "$base" --state open --json url --jq '.[0].url' 2>/dev/null || true)
+              if [ -n "$url" ]; then
+                return 0
+              fi
             fi
-          else
-            echo "Creating new feature branch '$FEATURE_BRANCH' from '$SUPPORT_BRANCH'..."
-            git checkout -b "$FEATURE_BRANCH" "origin/$SUPPORT_BRANCH"
-          fi
-          
+            return 1
+          }
+
+          # Loop until we find a candidate that has no branch on origin and no open PR
+          while :; do
+            # Check remote branch existence
+            if git ls-remote --exit-code --heads origin "$CAND" > /dev/null 2>&1; then
+              exists_remote=true
+            else
+              exists_remote=false
+            fi
+
+            # Check open PR existence (best-effort)
+            if pr_exists "$CAND" "$SUPPORT_BRANCH"; then
+              exists_pr=true
+            else
+              exists_pr=false
+            fi
+
+            if [ "$exists_remote" = false ] && [ "$exists_pr" = false ]; then
+              break
+            fi
+
+            # generate next candidate
+            CAND="${BASE_FEATURE}_$SUFFIX"
+            SUFFIX=$((SUFFIX + 1))
+          done
+
+          FEATURE_BRANCH="$CAND"
+
+          echo "Using feature branch: $FEATURE_BRANCH"
+
+          echo "Creating new feature branch '$FEATURE_BRANCH' from '$SUPPORT_BRANCH'..."
+          git checkout -b "$FEATURE_BRANCH" "origin/$SUPPORT_BRANCH"
+
           # Verify checkout succeeded
           CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
           if [ "$CURRENT_BRANCH" != "$FEATURE_BRANCH" ]; then
@@ -241,8 +275,11 @@ jobs:
             echo "   Got: $CURRENT_BRANCH"
             exit 1
           fi
-          
+
           echo "✅ On branch: $CURRENT_BRANCH"
+
+          # Publish chosen feature branch name to subsequent steps
+          echo "feature_branch=$FEATURE_BRANCH" >> "$GITHUB_OUTPUT"
 
        # ── 4a. Apply PR changes and detect real conflicts ────────────────────────
         # ── 4a. Apply PR changes and detect real conflicts ────────────────────────
@@ -254,7 +291,7 @@ jobs:
           TICKET:         ${{ steps.info.outputs.ticket }}
           VERSION:        ${{ steps.info.outputs.version }}
           PR_TITLE:       ${{ steps.info.outputs.pr_title }}
-          FEATURE_BRANCH: ${{ steps.info.outputs.feature_branch }}
+          FEATURE_BRANCH: ${{ steps.setup_feature.outputs.feature_branch }}
 
         run: |
           set -euo pipefail
@@ -974,7 +1011,7 @@ jobs:
         if: steps.info.outputs.skip != 'true' && steps.cherry_pick.outputs.has_conflicts == 'true'
         id: analyze
         env:
-          FEATURE_BRANCH: ${{ steps.info.outputs.feature_branch }}
+          FEATURE_BRANCH: ${{ steps.setup_feature.outputs.feature_branch }}
           SUPPORT_BRANCH: ${{ steps.info.outputs.support_branch }}
           CONFLICT_COUNT: ${{ steps.cherry_pick.outputs.conflict_count }}
           VERSION:        ${{ steps.info.outputs.version }}
@@ -1435,7 +1472,7 @@ jobs:
       - name: Push feature branch
         if: steps.info.outputs.skip != 'true' && steps.apply.outputs.applied == 'true'
         env:
-          FEATURE_BRANCH: ${{ steps.info.outputs.feature_branch }}
+          FEATURE_BRANCH: ${{ steps.setup_feature.outputs.feature_branch }}
         run: |
           set -euo pipefail
 
@@ -1452,7 +1489,7 @@ jobs:
         if: steps.info.outputs.skip != 'true' && steps.apply.outputs.applied == 'true'
         env:
           GH_TOKEN:          ${{ secrets.RDKCM_RDKE }}
-          FEATURE_BRANCH:    ${{ steps.info.outputs.feature_branch }}
+          FEATURE_BRANCH:    ${{ steps.setup_feature.outputs.feature_branch }}
           SUPPORT_BRANCH:    ${{ steps.info.outputs.support_branch }}
           TICKET:            ${{ steps.info.outputs.ticket }}
           VERSION:           ${{ steps.info.outputs.version }}
@@ -1474,8 +1511,10 @@ jobs:
             exit 0
           fi
 
+          # Use the original merged PR title for the backport PR
+          TITLE="${PR_TITLE}"
+
           if [ "$CONFLICT_RESOLVED" = "true" ]; then
-            TITLE="${TICKET}: Backport into support/${VERSION} [conflicts auto-resolved]"
             BODY="${TICKET}: Backport of **${PR_TITLE}** into \`${SUPPORT_BRANCH}\`.
 
           ⚠️ **Conflicts were auto-resolved** — please review carefully before merging.
@@ -1485,7 +1524,6 @@ jobs:
 
           release_version: none"
           else
-            TITLE="${TICKET}: Backport into support/${VERSION}"
             BODY="${TICKET}: Backport of **${PR_TITLE}** into \`${SUPPORT_BRANCH}\`.
 
           ---
