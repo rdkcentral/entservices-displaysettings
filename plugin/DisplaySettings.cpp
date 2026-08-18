@@ -6278,6 +6278,8 @@ void DisplaySettings::sendMsgThread()
 				else
 				{
 					LOGWARN("failure: %s is not connected!",strVideoPort.c_str());
+                    LOGWARN("Adding Second Log for Develop branch");
+
 				}
 			}
 			catch (const device::Exception& err)
