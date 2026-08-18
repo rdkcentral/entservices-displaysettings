@@ -125,6 +125,8 @@ namespace
         { 0,  0 }
     };
 
+
+
     string svc2iarm(const string &name)
     {
         const char *s = name.c_str();
@@ -396,7 +398,7 @@ namespace WPEFramework {
         void DisplaySettings::InitAudioPorts() 
         {   //sample servicemanager response: {"success":true,"supportedAudioPorts":["HDMI0"]}
             //LOGINFOMETHOD();
-            LOGINFO("Entering DisplaySettings::InitAudioPorts");
+            LOGINFO("predebug Entering DisplaySettings::InitAudioPorts");
             uint32_t ret = Core::ERROR_NONE;
 	    m_systemAudioMode_Power_RequestedAndReceived = true; //resetting this variable for bootup for AVR case
             try
