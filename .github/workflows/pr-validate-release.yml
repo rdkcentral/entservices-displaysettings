@@ -162,94 +162,40 @@ jobs:
           echo ""
 
           # ────────────────────────────────────────────────────────────────────
-          # Rule 5: Validate version format (X.Y.Z or X.Y.Z.W)
+          # Rule 5: Simplified validation and mapping (develop | numeric)
           # ────────────────────────────────────────────────────────────────────
-          echo "▶ Rule 5: Validating version format..."
-          
-          # Check basic format
-          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
-            echo "  ❌ VALIDATION FAILED: Invalid format '$VERSION'"
-            echo ""
-            echo "  ┌─ VALID FORMATS ──────────────────────────────────────────────┐"
-            echo "  │  release_version: none       → no backport                   │"
-            echo "  │  release_version: 8.3.4      → 3-part version (X.Y.Z)        │"
-            echo "  │  release_version: 8.3.4.0    → 4-part version (X.Y.Z.W)      │"
-            echo "  │                                                               │"
-            echo "  │  ❌ INVALID examples:                                         │"
-            echo "  │  release_version: 8              → too short (need X.Y.Z)    │"
-            echo "  │  release_version: 8.3            → missing patch number      │"
-            echo "  │  release_version: 08.03.04.00    → no leading zeros allowed  │"
-            echo "  │  release_version: 999999999.9.9  → numbers too large         │"
-            echo "  └───────────────────────────────────────────────────────────────┘"
-            exit 1
-          fi
-          
-          echo "  ✅ Basic format valid (X.Y.Z or X.Y.Z.W)"
-          echo ""
+          echo "▶ Rule 5: Validating version format (numeric X.Y.Z(.W) or 'develop')..."
 
-          # ────────────────────────────────────────────────────────────────────
-          # Rule 6: Validate no leading zeros
-          # ────────────────────────────────────────────────────────────────────
-          echo "▶ Rule 6: Checking for leading zeros..."
-          
-          # Split version parts and check each
-          IFS='.' read -ra PARTS <<< "$VERSION"
-          HAS_LEADING_ZERO=false
-          
-          for i in "${!PARTS[@]}"; do
-            PART="${PARTS[$i]}"
-            # Check if part has leading zero and is not just "0"
-            if [[ "$PART" =~ ^0[0-9]+ ]]; then
-              echo "  ❌ VALIDATION FAILED: Part $((i+1)) has leading zero: '$PART'"
-              HAS_LEADING_ZERO=true
-            fi
-          done
-          
-          if [ "$HAS_LEADING_ZERO" = true ]; then
-            echo ""
-            echo "  Invalid: 08.03.04.00"
-            echo "  Valid  : 8.3.4.0"
-            exit 1
-          fi
-          
-          echo "  ✅ No leading zeros"
-          echo ""
-
-          # ────────────────────────────────────────────────────────────────────
-          # Rule 7: Validate reasonable number ranges (0-999 per part)
-          # ────────────────────────────────────────────────────────────────────
-          echo "▶ Rule 7: Validating number ranges..."
-          
-          for i in "${!PARTS[@]}"; do
-            PART="${PARTS[$i]}"
-            if [ "$PART" -gt 999 ]; then
-              echo "  ❌ VALIDATION FAILED: Part $((i+1)) is too large: $PART (max: 999)"
-              echo ""
-              echo "  Each version part must be between 0 and 999"
-              echo "  Invalid: 999999999.9.9"
-              echo "  Valid  : 8.3.4.0"
+          # If explicitly 'develop', accept and map to develop
+          if echo "$VERSION" | grep -qiE '^develop$'; then
+            SUPPORT_BRANCH="develop"
+            echo "  ✅ 'develop' accepted → branch: develop"
+          else
+            # Accept numeric semantic versions: X.Y.Z or X.Y.Z.W
+            if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+              echo "  ❌ VALIDATION FAILED: Invalid format '$VERSION'"
+              echo "  Allowed: 'develop' or semantic numeric like 8.3.4 or 8.3.4.0"
               exit 1
             fi
-          done
-          
-          echo "  ✅ All parts within valid range (0-999)"
-          echo ""
 
-          # ────────────────────────────────────────────────────────────────────
-          # Rule 8: Build support branch name
-          # ────────────────────────────────────────────────────────────────────
-          echo "▶ Rule 8: Mapping version to support branch..."
-          
-          PART_COUNT=${#PARTS[@]}
-          if [ "$PART_COUNT" -eq 3 ]; then
-            SUPPORT_BRANCH="support/${VERSION}.0"
-          else
-            SUPPORT_BRANCH="support/${VERSION}"
+            # Simple leading-zero check for parts (e.g., disallow '08')
+            IFS='.' read -ra PARTS <<< "$VERSION"
+            for PART in "${PARTS[@]}"; do
+              if [[ "$PART" =~ ^0[0-9]+ ]]; then
+                echo "  ❌ VALIDATION FAILED: Part has leading zero: '$PART'"
+                exit 1
+              fi
+            done
+
+            # Map 3-part versions to support/X.Y.Z.0 (backwards compatibility)
+            if [ "${#PARTS[@]}" -eq 3 ]; then
+              SUPPORT_BRANCH="support/${VERSION}.0"
+            else
+              SUPPORT_BRANCH="support/${VERSION}"
+            fi
+
+            echo "  ✅ Numeric version accepted → branch: $SUPPORT_BRANCH"
           fi
-          
-          echo "  Version: $VERSION"
-          echo "  Maps to: $SUPPORT_BRANCH"
-          echo ""
 
           # ────────────────────────────────────────────────────────────────────
           # Rule 9: Verify support branch exists on remote (early validation)

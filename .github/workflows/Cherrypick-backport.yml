@@ -99,38 +99,25 @@ jobs:
             exit 0
           fi
           
-          # ── Validate: Format (X.Y.Z or X.Y.Z.W) ───────────────────────────
-          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
-            echo "❌ Invalid release_version format: '$VERSION'"
-            echo "   Valid: 8.3.4  or  8.3.4.0"
-            exit 1
-          fi
-          
-          # ── Validate: No leading zeros ────────────────────────────────────
-          IFS='.' read -ra PARTS <<< "$VERSION"
-          for PART in "${PARTS[@]}"; do
-            if [[ "$PART" =~ ^0[0-9]+ ]]; then
-              echo "❌ Invalid: version part has leading zero: '$PART'"
-              echo "   Wrong: 08.03.04.00"
-              echo "   Valid: 8.3.4.0"
-              exit 1
+          # ── Validate: Simplified rules (none | develop | X.Y.Z(.W)) ────────
+          # Accept 'develop' (any case) and numeric versions. Keep rules simple
+          # to avoid accidental removal of existing functionality.
+          if echo "$VERSION" | grep -qiE '^develop$'; then
+            SUPPORT_BRANCH="develop"
+            echo "✅ Target mapped: release_version 'develop' → branch: $SUPPORT_BRANCH"
+          elif echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+            # Map 3-part versions to support/X.Y.Z.0 for compatibility
+            IFS='.' read -ra PARTS <<< "$VERSION"
+            if [ "${#PARTS[@]}" -eq 3 ]; then
+              SUPPORT_BRANCH="support/${VERSION}.0"
+            else
+              SUPPORT_BRANCH="support/${VERSION}"
             fi
-          done
-          
-          # ── Validate: Reasonable ranges (0-999) ───────────────────────────
-          for PART in "${PARTS[@]}"; do
-            if [ "$PART" -gt 999 ]; then
-              echo "❌ Invalid: version part too large: $PART (max: 999)"
-              exit 1
-            fi
-          done
-          
-          # ── Build support branch name ──────────────────────────────────────
-          PART_COUNT=${#PARTS[@]}
-          if [ "$PART_COUNT" -eq 3 ]; then
-            SUPPORT_BRANCH="support/${VERSION}.0"
+            echo "✅ Numeric version accepted → branch: $SUPPORT_BRANCH"
           else
-            SUPPORT_BRANCH="support/${VERSION}"
+            echo "❌ Invalid release_version: '$VERSION'"
+            echo "   Allowed values: 'none', 'develop', or semantic numeric like 8.3.4 or 8.3.4.0"
+            exit 1
           fi
           
           # ── Extract and validate ticket ────────────────────────────────────
