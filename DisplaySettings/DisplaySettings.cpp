@@ -6030,6 +6030,7 @@ void DisplaySettings::sendMsgThread()
             {
                 case dsHDRSTANDARD_SDR:
                     LOGINFO("Video Format: SDR\n");
+                    LOGINFO("Video Format: SDR\n");
                     strValue = "SDR";
                     break;
                 case dsHDRSTANDARD_HDR10:
@@ -6045,15 +6046,17 @@ void DisplaySettings::sendMsgThread()
                     strValue = "HLG";
                     break;
                 case dsHDRSTANDARD_DolbyVision:
-                    LOGINFO("Video Format: DV\n");
+                    LOGINFO("DOLBY Video Format: DV\n");
                     strValue = "DV";
                     break;
                 case dsHDRSTANDARD_TechnicolorPrime:
+                    LOGINFO("Video Format: TechnicolorPrime\n");
                     LOGINFO("Video Format: TechnicolorPrime\n");
                     strValue = "TechnicolorPrime";
                     break;
                 default:
                     LOGINFO("Video Format: NONE\n");
+                    LOGINFO("Added here");
                     strValue = "NONE";
                     break;
             }
@@ -6116,9 +6119,9 @@ void DisplaySettings::sendMsgThread()
 		}
 		if( 0 == (int)connectedDisplays.size())
 		{
-			LOGWARN("No display connected to device (or)device's powerstate is not ON");
-            return Core::ERROR_GENERAL;
-		}
+                    LOGWARN("No display connected to device (or) device's powerstate is not ON");
+                    return Core::ERROR_GENERAL;
+                }
         return Core::ERROR_NONE;
 	}
     } // namespace Plugin
