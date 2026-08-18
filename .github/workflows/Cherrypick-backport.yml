@@ -49,6 +49,7 @@ jobs:
           PR_URL:      ${{ github.event.pull_request.html_url }}
           MERGE_SHA:   ${{ github.event.pull_request.merge_commit_sha }}
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          PR_NUMBER:   ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           
@@ -99,51 +100,45 @@ jobs:
             exit 0
           fi
           
-          # ── Validate: Format (X.Y.Z or X.Y.Z.W) ───────────────────────────
-          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
-            echo "❌ Invalid release_version format: '$VERSION'"
-            echo "   Valid: 8.3.4  or  8.3.4.0"
+          # ── Validate: Simplified rules (none | develop | X.Y.Z(.W)) ────────
+          # Accept 'develop' (any case) and numeric versions. Keep rules simple
+          # to avoid accidental removal of existing functionality.
+          if echo "$VERSION" | grep -qiE '^develop$'; then
+            SUPPORT_BRANCH="develop"
+            echo "✅ Target mapped: release_version 'develop' → branch: $SUPPORT_BRANCH"
+          elif echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+            # Map 3-part versions to support/X.Y.Z.0 for compatibility
+            IFS='.' read -ra PARTS <<< "$VERSION"
+            if [ "${#PARTS[@]}" -eq 3 ]; then
+              SUPPORT_BRANCH="support/${VERSION}.0"
+            else
+              SUPPORT_BRANCH="support/${VERSION}"
+            fi
+            echo "✅ Numeric version accepted → branch: $SUPPORT_BRANCH"
+          else
+            echo "❌ Invalid release_version: '$VERSION'"
+            echo "   Allowed values: 'none', 'develop', or semantic numeric like 8.3.4 or 8.3.4.0"
             exit 1
           fi
           
-          # ── Validate: No leading zeros ────────────────────────────────────
-          IFS='.' read -ra PARTS <<< "$VERSION"
-          for PART in "${PARTS[@]}"; do
-            if [[ "$PART" =~ ^0[0-9]+ ]]; then
-              echo "❌ Invalid: version part has leading zero: '$PART'"
-              echo "   Wrong: 08.03.04.00"
-              echo "   Valid: 8.3.4.0"
-              exit 1
-            fi
-          done
-          
-          # ── Validate: Reasonable ranges (0-999) ───────────────────────────
-          for PART in "${PARTS[@]}"; do
-            if [ "$PART" -gt 999 ]; then
-              echo "❌ Invalid: version part too large: $PART (max: 999)"
-              exit 1
-            fi
-          done
-          
-          # ── Build support branch name ──────────────────────────────────────
-          PART_COUNT=${#PARTS[@]}
-          if [ "$PART_COUNT" -eq 3 ]; then
-            SUPPORT_BRANCH="support/${VERSION}.0"
-          else
-            SUPPORT_BRANCH="support/${VERSION}"
-          fi
-          
-          # ── Extract and validate ticket ────────────────────────────────────
-          TICKET=$(echo "$PR_BRANCH" | grep -oE '[A-Z]+-[0-9]+' | head -1 || true)
-          
+          # ── Extract and validate ticket (prefer PR title, then branch, then fallback) ─────────
+          TICKET=$(echo "$PR_TITLE" | grep -oE '[A-Z]+-[0-9]+' | head -1 || true)
+
           if [ -z "$TICKET" ]; then
-            echo "⚠️  No ticket found in branch name '$PR_BRANCH'"
-            echo "   Using fallback: BACKPORT"
-            TICKET="BACKPORT"
+            TICKET=$(echo "$PR_BRANCH" | grep -oE '[A-Z]+-[0-9]+' | head -1 || true)
+            if [ -n "$TICKET" ]; then
+              echo "✅ Ticket extracted from branch name: $TICKET"
+            fi
           else
-            echo "✅ Ticket extracted: $TICKET"
+            echo "✅ Ticket extracted from PR title: $TICKET"
           fi
-          
+
+          if [ -z "$TICKET" ]; then
+            echo "⚠️  No ticket found in PR title or branch"
+            echo "   Using fallback: BACKPORT_$PR_NUMBER"
+            TICKET="BACKPORT_$PR_NUMBER"
+          fi
+
           FEATURE_BRANCH="feature/${TICKET}"
           
           # ── Set outputs ────────────────────────────────────────────────────
@@ -155,7 +150,7 @@ jobs:
           echo "merge_sha=$MERGE_SHA"             >> "$GITHUB_OUTPUT"
           echo "pr_title=$PR_TITLE"               >> "$GITHUB_OUTPUT"
           echo "pr_url=$PR_URL"                   >> "$GITHUB_OUTPUT"
-          echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
           
           echo ""
           echo "┌─ BACKPORT PLAN ────────────────────────────────────────────────┐"

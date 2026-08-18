@@ -6265,7 +6265,7 @@ void DisplaySettings::sendMsgThread()
 			try
 			{
 				std::string strVideoPort = connectedDisplays.at(i);;
-				device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
+				//device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
 				if (isDisplayConnected(strVideoPort))
 				{
 					bool enable = (newState == "GAME") ? true : false;
@@ -6281,7 +6281,6 @@ void DisplaySettings::sendMsgThread()
 				else
 				{
                     LOGWARN("failure: %s is not connected!",strVideoPort.c_str());
-                    LOGWARN("Testing Log Added for PR Checking");
 				}
 			}
 			catch (const device::Exception& err)
@@ -6292,8 +6291,7 @@ void DisplaySettings::sendMsgThread()
 		if( 0 == (int)connectedDisplays.size())
 		{
 			LOGWARN("No display connected to device (or)device's powerstate is not ON");
-            LOGWARN("Testing Log Added");
-            return Core::ERROR_GENERAL;
+            return Core::ERROR_NONE;
 		}
         return Core::ERROR_NONE;
 	}
