@@ -22,6 +22,7 @@
 
 #include "DisplaySettings.h"
 #include <algorithm>
+#include <cctype>
 #include "dsMgr.h"
 #include "host.hpp"
 #include "exception.hpp"
@@ -6092,18 +6093,20 @@ void DisplaySettings::sendMsgThread()
 			{
 				std::string strVideoPort = connectedDisplays.at(i);;
 				device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
-				if (isDisplayConnected(strVideoPort))
-				{
-					bool enable = (newState == "GAME") ? true : false;
-					vPort.getDisplay().setAllmEnabled(enable);
-					if(enable){ // Game mode
-					    vPort.getDisplay().setAVIContentType(dsAVICONTENT_TYPE_GAME);
-					    vPort.getDisplay().setAVIScanInformation(dsAVI_SCAN_TYPE_UNDERSCAN);
-					}else{ // video mode
-					    vPort.getDisplay().setAVIContentType(dsAVICONTENT_TYPE_NOT_SIGNALLED);
-					    vPort.getDisplay().setAVIScanInformation(dsAVI_SCAN_TYPE_NO_DATA);
-					}
-				}
+                if (isDisplayConnected(strVideoPort))
+                {
+                    std::string _state = newState;
+                    std::transform(_state.begin(), _state.end(), _state.begin(), ::toupper);
+                    bool enable = (_state == "GAME");
+                    vPort.getDisplay().setAllmEnabled(enable);
+                    if (enable) { // Game mode
+                        vPort.getDisplay().setAVIContentType(dsAVICONTENT_TYPE_GAME);
+                        vPort.getDisplay().setAVIScanInformation(dsAVI_SCAN_TYPE_UNDERSCAN);
+                    } else { // video mode
+                        vPort.getDisplay().setAVIContentType(dsAVICONTENT_TYPE_NOT_SIGNALLED);
+                        vPort.getDisplay().setAVIScanInformation(dsAVI_SCAN_TYPE_NO_DATA);
+                    }
+                }
 				else
 				{
 					LOGWARN("failure: %s is not connected!",strVideoPort.c_str());
