@@ -49,6 +49,7 @@ jobs:
           PR_URL:      ${{ github.event.pull_request.html_url }}
           MERGE_SHA:   ${{ github.event.pull_request.merge_commit_sha }}
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          PR_NUMBER:   ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           
@@ -120,17 +121,24 @@ jobs:
             exit 1
           fi
           
-          # ── Extract and validate ticket ────────────────────────────────────
-          TICKET=$(echo "$PR_BRANCH" | grep -oE '[A-Z]+-[0-9]+' | head -1 || true)
-          
+          # ── Extract and validate ticket (prefer PR title, then branch, then fallback) ─────────
+          TICKET=$(echo "$PR_TITLE" | grep -oE '[A-Z]+-[0-9]+' | head -1 || true)
+
           if [ -z "$TICKET" ]; then
-            echo "⚠️  No ticket found in branch name '$PR_BRANCH'"
-            echo "   Using fallback: BACKPORT"
-            TICKET="BACKPORT"
+            TICKET=$(echo "$PR_BRANCH" | grep -oE '[A-Z]+-[0-9]+' | head -1 || true)
+            if [ -n "$TICKET" ]; then
+              echo "✅ Ticket extracted from branch name: $TICKET"
+            fi
           else
-            echo "✅ Ticket extracted: $TICKET"
+            echo "✅ Ticket extracted from PR title: $TICKET"
           fi
-          
+
+          if [ -z "$TICKET" ]; then
+            echo "⚠️  No ticket found in PR title or branch"
+            echo "   Using fallback: BACKPORT_$PR_NUMBER"
+            TICKET="BACKPORT_$PR_NUMBER"
+          fi
+
           FEATURE_BRANCH="feature/${TICKET}"
           
           # ── Set outputs ────────────────────────────────────────────────────
@@ -142,7 +150,7 @@ jobs:
           echo "merge_sha=$MERGE_SHA"             >> "$GITHUB_OUTPUT"
           echo "pr_title=$PR_TITLE"               >> "$GITHUB_OUTPUT"
           echo "pr_url=$PR_URL"                   >> "$GITHUB_OUTPUT"
-          echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
           
           echo ""
           echo "┌─ BACKPORT PLAN ────────────────────────────────────────────────┐"
