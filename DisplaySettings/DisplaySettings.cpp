@@ -136,15 +136,10 @@ namespace
                 return name_mappings[i].IArmBusName;
             i++;
         }
-        return name;
-    }
-
-    string iarm2svc(const string &name)
-    {
-        const char *s = name.c_str();
-
-        int i = 0;
-        while (name_mappings[i].IArmBusName)
+            return mode;
+        }
+    Core::hresult DisplaySettings::Request(const string& newState, const JsonObject& parameters)
+        {
         {
             if (strcmp(s, name_mappings[i].IArmBusName) == 0)
                 return name_mappings[i].SvcManagerName;
@@ -6068,9 +6063,11 @@ void DisplaySettings::sendMsgThread()
             else if(strcmp(strFormat,"NONE")== 0)
                     mode = dsHDRSTANDARD_NONE;
             else if(strcmp(strFormat,"HDR10")== 0)
-                    mode = dsHDRSTANDARD_HDR10;
+                    mode = dsHDRSTANDARD_HDR10PLUS;
             else if(strcmp(strFormat,"HDR10PLUS")== 0)
                     mode = dsHDRSTANDARD_HDR10PLUS;
+            else if(strcmp(strFormat,"HDR10")==0)
+                    mode = dsHDRSTANDARD_HDR10;
             else if(strcmp(strFormat,"DV")== 0)
                     mode = dsHDRSTANDARD_DolbyVision;
             else if(strcmp(strFormat,"HLG")== 0)
@@ -6082,7 +6079,8 @@ void DisplaySettings::sendMsgThread()
 
 	    return mode;
         }
-    Core::hresult DisplaySettings::Request(const string& newState)
+
+    Core::hresult DisplaySettings::Request(const string& newState, const JsonObject& parameters)
 	{
 		vector<string> connectedDisplays;
 		getConnectedVideoDisplaysHelper(connectedDisplays);
@@ -6120,6 +6118,13 @@ void DisplaySettings::sendMsgThread()
             return Core::ERROR_GENERAL;
 		}
         return Core::ERROR_NONE;
-	}
+        }
+
+        // Compatibility wrapper: preserve existing single-argument callers.
+        Core::hresult DisplaySettings::Request(const string& newState)
+        {
+            JsonObject emptyParameters;
+            return Request(newState, emptyParameters);
+        }
     } // namespace Plugin
 } // namespace WPEFramework
