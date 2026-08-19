@@ -6242,9 +6242,11 @@ void DisplaySettings::sendMsgThread()
             else if(strcmp(strFormat,"NONE")== 0)
                     mode = dsHDRSTANDARD_NONE;
             else if(strcmp(strFormat,"HDR10")== 0)
-                    mode = dsHDRSTANDARD_HDR10;
+                    mode = dsHDRSTANDARD_HDR10PLUS;
             else if(strcmp(strFormat,"HDR10PLUS")== 0)
                     mode = dsHDRSTANDARD_HDR10PLUS;
+            else if(strcmp(strFormat,"HDR10")==0)
+                    mode = dsHDRSTANDARD_HDR10;
             else if(strcmp(strFormat,"DV")== 0)
                     mode = dsHDRSTANDARD_DolbyVision;
             else if(strcmp(strFormat,"HLG")== 0)
@@ -6256,7 +6258,7 @@ void DisplaySettings::sendMsgThread()
 
 	    return mode;
         }
-    Core::hresult DisplaySettings::Request1(const string& newState, const JsonObject& parameters)
+    Core::hresult DisplaySettings::Request(const string& newState, const JsonObject& parameters)
 	{
 		vector<string> connectedDisplays;
 		getConnectedVideoDisplaysHelper(connectedDisplays);
@@ -6293,7 +6295,7 @@ void DisplaySettings::sendMsgThread()
 			LOGWARN("No display connected to device (or)device's powerstate is not ON");
             return Core::ERROR_NONE;
 		}
-        
+        return Core::ERROR_NONE;
 	}
         void DisplaySettings::registerDsEventHandlers()
         {
