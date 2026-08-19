@@ -77,6 +77,31 @@ jobs:
             echo "  │  - With/without space after colon: 'version:' or 'version :'│"
             echo "  │  - Trailing comments: 'release_version: 8.3.4.0 # comment'   │"
             echo "  └───────────────────────────────────────────────────────────────┘"
+            echo ""
+            echo "  ▶ Validation logs and helpful checks (automated):"
+            echo ""
+            echo "    • Showing the PR description excerpt for quick inspection:"
+            echo "" 
+            echo "---- BEGIN PR BODY ----"
+            echo "$PR_BODY" | sed -n '1,120p' || true
+            echo "----  END PR BODY  ----"
+            echo ""
+            echo "    • Attempting to list remote 'support/*' branches to help pick a target:" 
+            git fetch origin --quiet || true
+            echo ""
+            echo "    Remote support branches (origin):"
+            git ls-remote --heads origin | grep 'refs/heads/support/' | awk '{print "      - " $2}' | sed 's@refs/heads/@@' || echo "      (none found)"
+            echo ""
+            echo "    • Helpful next steps:" 
+            echo "      - Add one 'release_version:' line to your PR description (see formats above)."
+            echo "      - If you don't need a backport, set: release_version: none"
+            echo "      - If you intend backport to an existing support branch, use the numeric form (X.Y.Z or X.Y.Z.W)."
+            echo "      - After adding the field, push an update to this PR and this check will re-run."
+            echo ""
+            echo "    • Example commands you can run locally to inspect branches:"
+            echo "      git fetch origin --quiet"
+            echo "      git ls-remote --heads origin 'refs/heads/support/*' | sed -e 's@refs/heads/@@'"
+            echo ""
             exit 1
           fi
           
