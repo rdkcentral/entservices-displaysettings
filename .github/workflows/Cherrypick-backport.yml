@@ -908,25 +908,22 @@ jobs:
             grep '^\.github/' || true
           )
 
-          if [ -n "$GITHUB_CONFLICTS" ]; then
+            if [ -n "$GITHUB_CONFLICTS" ]; then
 
-            echo "Excluding .github/ conflicts:"
+            echo "Skipping .github/ changes (leave target branch version intact):"
 
             echo "$GITHUB_CONFLICTS" |
               while IFS= read -r f; do
-
                 if [ -n "$f" ]; then
-
-                  git rm --cached --force "$f" 2>/dev/null || true
-                  rm -f "$f" 2>/dev/null || true
-
-                  echo "  ⛔ $f"
+                  echo "  • $f"
                 fi
-
               done
 
+            # Clear any staged state for .github files and restore working tree
+            # from HEAD (target branch) so incoming changes to workflows are
+            # ignored for the backport operation. Do NOT remove files.
             git restore --staged .github/ 2>/dev/null || true
-            git checkout HEAD -- .github/ 2>/dev/null || true
+            git checkout -- .github/ 2>/dev/null || true
           fi
 
           # ================================================================
