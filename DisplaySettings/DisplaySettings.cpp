@@ -6083,43 +6083,43 @@ void DisplaySettings::sendMsgThread()
 	    return mode;
         }
     Core::hresult DisplaySettings::Request(const string& newState)
-	{
-		vector<string> connectedDisplays;
-		getConnectedVideoDisplaysHelper(connectedDisplays);
-		for (int i = 0; i < (int)connectedDisplays.size(); i++)
-		{
-			try
-			{
-				std::string strVideoPort = connectedDisplays.at(i);;
-				device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
-				if (isDisplayConnected(strVideoPort))
-				{
-					bool enable = (newState == "GAME") ? true : false;
-					vPort.getDisplay().setAllmEnabled(enable);
-					if(enable){ // Game mode
-					    vPort.getDisplay().setAVIContentType(dsAVICONTENT_TYPE_GAME);
-					    vPort.getDisplay().setAVIScanInformation(dsAVI_SCAN_TYPE_UNDERSCAN);
-					}else{ // video mode
-					    vPort.getDisplay().setAVIContentType(dsAVICONTENT_TYPE_NOT_SIGNALLED);
-					    vPort.getDisplay().setAVIScanInformation(dsAVI_SCAN_TYPE_NO_DATA);
-					}
-				}
-				else
-				{
-					LOGWARN("failure: %s is not connected!",strVideoPort.c_str());
-				}
-			}
-			catch (const device::Exception& err)
-			{
-				LOG_DEVICE_EXCEPTION0();
-			}
-		}
-		if( 0 == (int)connectedDisplays.size())
-		{
-			LOGWARN("No display connected to device (or)device's powerstate is not ON");
+    {
+        vector<string> connectedDisplays;
+        getConnectedVideoDisplaysHelper(connectedDisplays);
+        for (int i = 0; i < (int)connectedDisplays.size(); i++)
+        {
+            try
+            {
+                std::string strVideoPort = connectedDisplays.at(i);
+                device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
+                if (isDisplayConnected(strVideoPort))
+                {
+                    bool enable = (newState == "GAME") ? true : false;
+                    if (enable) { // Game mode
+                        vPort.getDisplay().setAVIContentType(dsAVICONTENT_TYPE_GAME);
+                        vPort.getDisplay().setAVIScanInformation(dsAVI_SCAN_TYPE_UNDERSCAN);
+                    } else { // video mode
+                        vPort.getDisplay().setAVIContentType(dsAVICONTENT_TYPE_NOT_SIGNALLED);
+                        vPort.getDisplay().setAVIScanInformation(dsAVI_SCAN_TYPE_NO_DATA);
+                    }
+                    vPort.getDisplay().setAllmEnabled(enable);
+                }
+                else
+                {
+                    LOGWARN("failure: %s is not connected!", strVideoPort.c_str());
+                }
+            }
+            catch (const device::Exception& err)
+            {
+                LOG_DEVICE_EXCEPTION0();
+            }
+        }
+        if (0 == (int)connectedDisplays.size())
+        {
+            LOGWARN("No display connected to device (or)device's powerstate is not ON");
             return Core::ERROR_GENERAL;
-		}
+        }
         return Core::ERROR_NONE;
-	}
+    }
     } // namespace Plugin
 } // namespace WPEFramework
