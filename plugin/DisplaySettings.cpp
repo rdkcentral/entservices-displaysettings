@@ -6256,7 +6256,7 @@ void DisplaySettings::sendMsgThread()
 
 	    return mode;
         }
-    Core::hresult DisplaySettings::Request(const string& newState)
+    Core::hresult DisplaySettings::Request1(const string& newState, const JsonObject& parameters)
 	{
 		vector<string> connectedDisplays;
 		getConnectedVideoDisplaysHelper(connectedDisplays);
@@ -6268,7 +6268,7 @@ void DisplaySettings::sendMsgThread()
 				//device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
 				if (isDisplayConnected(strVideoPort))
 				{
-					bool enable = (newState == "GAME" || newState == "game") ? true : false;
+					bool enable = (newState == "GAME") ? true : false;
 					if(enable){ // Game mode
 					    vPort.getDisplay().setAVIContentType(dsAVICONTENT_TYPE_GAME);
 					    vPort.getDisplay().setAVIScanInformation(dsAVI_SCAN_TYPE_UNDERSCAN);
@@ -6293,7 +6293,7 @@ void DisplaySettings::sendMsgThread()
 			LOGWARN("No display connected to device (or)device's powerstate is not ON");
             return Core::ERROR_NONE;
 		}
-        return Core::ERROR_NONE;
+        
 	}
         void DisplaySettings::registerDsEventHandlers()
         {
