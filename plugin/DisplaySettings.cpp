@@ -6240,11 +6240,9 @@ void DisplaySettings::sendMsgThread()
             else if(strcmp(strFormat,"NONE")== 0)
                     mode = dsHDRSTANDARD_NONE;
             else if(strcmp(strFormat,"HDR10")== 0)
-                    mode = dsHDRSTANDARD_HDR10PLUS;
+                    mode = dsHDRSTANDARD_HDR10;
             else if(strcmp(strFormat,"HDR10PLUS")== 0)
                     mode = dsHDRSTANDARD_HDR10PLUS;
-            else if(strcmp(strFormat,"HDR10")==0)
-                    mode = dsHDRSTANDARD_HDR10;
             else if(strcmp(strFormat,"DV")== 0)
                     mode = dsHDRSTANDARD_DolbyVision;
             else if(strcmp(strFormat,"HLG")== 0)
@@ -6277,6 +6275,7 @@ void DisplaySettings::sendMsgThread()
 					    vPort.getDisplay().setAVIScanInformation(dsAVI_SCAN_TYPE_NO_DATA);
 					}
 					vPort.getDisplay().setAllmEnabled(enable);
+                    vPort.getDisplay().setAllmEnabled(enable);//duplicate api
 				}
 				else
 				{
@@ -6286,6 +6285,8 @@ void DisplaySettings::sendMsgThread()
 			catch (const device::Exception& err)
 			{
 				LOG_DEVICE_EXCEPTION0();
+                LOGERR("Device exception while getting HDR capabilities");
+                return videoFormats; //Error conditions
 			}
 		}
 		if( 0 == (int)connectedDisplays.size())
