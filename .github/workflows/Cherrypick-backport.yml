@@ -901,29 +901,44 @@ jobs:
 
           # ================================================================
           # EXCLUDE .github CONFLICTS
+          #
+          # WHY git ls-files -u instead of git diff --diff-filter=U:
+          #   --diff-filter=U only catches UU (both-modified) conflicts.
+          #   DU (deleted-by-us) and UA (added-by-them) are silently missed
+          #   by that filter and remain as unmerged index entries, which is
+          #   exactly what causes the "deleted by us" state on the feature
+          #   branch.  git ls-files -u reports ALL unmerged stages (1/2/3)
+          #   regardless of conflict type, so every .github conflict is found.
           # ================================================================
 
-          GITHUB_CONFLICTS=$(
-            git diff --name-only --diff-filter=U 2>/dev/null |
+          GITHUB_UNMERGED=$(
+            git ls-files -u |
+            cut -f2 |
+            sort -u |
             grep '^\.github/' || true
           )
 
-            if [ -n "$GITHUB_CONFLICTS" ]; then
+          if [ -n "$GITHUB_UNMERGED" ]; then
 
-            echo "Skipping .github/ changes (leave target branch version intact):"
+            echo "Excluding .github/ from cherry-pick (all conflict types: UU/DU/UA):"
 
-            echo "$GITHUB_CONFLICTS" |
+            echo "$GITHUB_UNMERGED" |
               while IFS= read -r f; do
-                if [ -n "$f" ]; then
-                  echo "  • $f"
+                [ -n "$f" ] || continue
+                echo "  • $f"
+
+                if git cat-file -e "HEAD:$f" 2>/dev/null; then
+                  # File exists on target branch — restore HEAD version so
+                  # no change is introduced into the backport commit.
+                  git checkout HEAD -- "$f" 2>/dev/null || true
+                else
+                  # File does NOT exist on target branch (DU / UA cases).
+                  # Remove unmerged index entries and working-tree file so
+                  # no "delete mode" entry appears in the final commit.
+                  git rm --cached --force "$f" 2>/dev/null || true
+                  rm -f "$f" 2>/dev/null || true
                 fi
               done
-
-            # Clear any staged state for .github files and restore working tree
-            # from HEAD (target branch) so incoming changes to workflows are
-            # ignored for the backport operation. Do NOT remove files.
-            git restore --staged .github/ 2>/dev/null || true
-            git checkout -- .github/ 2>/dev/null || true
           fi
 
           # ================================================================
@@ -1625,7 +1640,7 @@ jobs:
 
           echo "5️⃣  Commit and push:"
           echo "    git add ."
-          echo "    git cherry-pick --continue"
+          echo "    git commit -m \"${TICKET}: Backport to support/${VERSION} — ${PR_TITLE}\""
           echo "    git push origin $FEATURE_BRANCH"
           echo ""
 
