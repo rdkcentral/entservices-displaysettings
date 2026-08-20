@@ -473,6 +473,19 @@ jobs:
                 -- ':!.github/*' 2>/dev/null || true
             )
 
+            # ============================================================
+            # BUILD RENAME MAP
+            # Detects files renamed in this PR: R<score> <old> <new>
+            # R100 = pure rename (no content change) → skip
+            # R<100 = rename + content change        → use old path
+            # ============================================================
+
+            RENAME_MAP=$(
+              git diff --name-status --diff-filter=R \
+                "$PARENT1" "$MERGE_SHA" \
+                -- ':!.github/*' 2>/dev/null || true
+            )
+
             TOTAL_COUNT=$(
               printf '%s\n' "$ALL_CHANGED" |
               grep -v '^$' |
@@ -524,6 +537,59 @@ jobs:
               echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
               echo "📄 Processing source file: $SRC_FILE"
               echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+              # ==========================================================
+              # RENAME DETECTION (Case 1 / Case 2 / Case 3)
+              #
+              # SRC_FILE may be the NEW name from a rename.
+              # RENAME_MAP holds: R<score> <old_name> <new_name>
+              #
+              # Case 1 (R100): pure rename, no content change → skip
+              # Case 2 (R<100): rename + content change → reroute to old
+              # Case 3 (R<100 + conflict): rerouted old path may still
+              #         conflict → falls through to normal patch logic
+              # ==========================================================
+
+              RENAME_SOURCE=$(
+                printf '%s\n' "$RENAME_MAP" |
+                awk -v dst="$SRC_FILE" 'NF==3 && $3==dst {print $2}' || true
+              )
+
+              if [ -n "$RENAME_SOURCE" ]; then
+
+                RENAME_SCORE=$(
+                  printf '%s\n' "$RENAME_MAP" |
+                  awk -v dst="$SRC_FILE" 'NF==3 && $3==dst {gsub(/^R/,"",$1); print $1}' || true
+                )
+
+                if [ "$RENAME_SCORE" = "100" ]; then
+
+                  # ── Case 1: pure rename — nothing to backport ────────
+                  echo ""
+                  echo "   ╔══════════════════════════════════════════════════════════╗"
+                  echo "   ║    ℹ️  PURE RENAME — NO CONTENT CHANGE (R100)           ║"
+                  echo "   ╚══════════════════════════════════════════════════════════╝"
+                  echo "   Old name : $RENAME_SOURCE"
+                  echo "   New name : $SRC_FILE"
+                  echo "   Nothing to backport. Support branch keeps its existing path."
+                  echo "   Skipping."
+                  continue
+
+                else
+
+                  # ── Case 2 / Case 3: rename + content change ─────────
+                  echo ""
+                  echo "   ╔══════════════════════════════════════════════════════════╗"
+                  echo "   ║   🔄 RENAME + CONTENT CHANGE (R${RENAME_SCORE})                  ║"
+                  echo "   ╚══════════════════════════════════════════════════════════╝"
+                  echo "   Old name : $RENAME_SOURCE"
+                  echo "   New name : $SRC_FILE"
+                  echo "   Backporting content diff only to old path on support branch."
+                  echo "   Structural rename is NOT applied to support branch."
+                  SRC_FILE="$RENAME_SOURCE"
+
+                fi
+              fi
 
               # ==========================================================
               # RESOLVE TARGET FILE BY FILE NAME
