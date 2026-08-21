@@ -24,7 +24,10 @@
 #include "Module.h"
 #include "dsTypes.h"
 #include "tptimer.h"
+<<<<<<< HEAD:DisplaySettings/DisplaySettings.h
 #include "libIARM.h"
+=======
+>>>>>>> 2332a80 (Merge pull request #153 from rdkcentral/feature/RDKEMW-21092-aipoc):plugin/DisplaySettings.h
 #include "rfcapi.h"
 #include <interfaces/ISystemMode.h>
 #include <interfaces/IDeviceOptimizeStateActivator.h>
@@ -32,13 +35,20 @@
 #include <fstream>
 #include <interfaces/IPowerManager.h>
 #include "PowerManagerInterface.h"
+<<<<<<< HEAD:DisplaySettings/DisplaySettings.h
+=======
+#include "host.hpp"
+>>>>>>> 2332a80 (Merge pull request #153 from rdkcentral/feature/RDKEMW-21092-aipoc):plugin/DisplaySettings.h
 
 using PowerState = WPEFramework::Exchange::IPowerManager::PowerState;
 using ThermalTemperature = WPEFramework::Exchange::IPowerManager::ThermalTemperature;
 namespace WPEFramework {
 
     namespace Plugin {
+<<<<<<< HEAD:DisplaySettings/DisplaySettings.h
 
+=======
+>>>>>>> 2332a80 (Merge pull request #153 from rdkcentral/feature/RDKEMW-21092-aipoc):plugin/DisplaySettings.h
 		// This is a server for a JSONRPC communication channel.
 		// For a plugin to be capable to handle JSONRPC, inherit from PluginHost::JSONRPC.
 		// By inheriting from this class, the plugin realizes the interface PluginHost::IDispatcher.
@@ -51,7 +61,14 @@ namespace WPEFramework {
 		// As the registration/unregistration of notifications is realized by the class PluginHost::JSONRPC,
 		// this class exposes a public method called, Notify(), using this methods, all subscribed clients
 		// will receive a JSONRPC message as a notification, in case this method is called.
+<<<<<<< HEAD:DisplaySettings/DisplaySettings.h
         class DisplaySettings : public PluginHost::IPlugin, public PluginHost::JSONRPC,Exchange::IDeviceOptimizeStateActivator {
+=======
+        class DisplaySettings : public PluginHost::IPlugin, public PluginHost::JSONRPC,Exchange::IDeviceOptimizeStateActivator,
+                                public device::Host::IDisplayEvents, public device::Host::IAudioOutputPortEvents,
+                                public device::Host::IDisplayDeviceEvents, public device::Host::IHdmiInEvents,
+                                public device::Host::IVideoDeviceEvents, public device::Host::IVideoOutputPortEvents {
+>>>>>>> 2332a80 (Merge pull request #153 from rdkcentral/feature/RDKEMW-21092-aipoc):plugin/DisplaySettings.h
         private:
             typedef Core::JSON::String JString;
             typedef Core::JSON::ArrayType<JString> JStringArray;
@@ -89,11 +106,24 @@ namespace WPEFramework {
                 DisplaySettings& _parent;
             };
 
+<<<<<<< HEAD:DisplaySettings/DisplaySettings.h
 
+=======
+>>>>>>> 2332a80 (Merge pull request #153 from rdkcentral/feature/RDKEMW-21092-aipoc):plugin/DisplaySettings.h
             // We do not allow this plugin to be copied !!
             DisplaySettings(const DisplaySettings&) = delete;
             DisplaySettings& operator=(const DisplaySettings&) = delete;
 
+<<<<<<< HEAD:DisplaySettings/DisplaySettings.h
+=======
+            template <typename T>
+            T* baseInterface()
+            {
+                static_assert(std::is_base_of<T, DisplaySettings>(), "base type mismatch");
+                return static_cast<T*>(this);
+            }
+
+>>>>>>> 2332a80 (Merge pull request #153 from rdkcentral/feature/RDKEMW-21092-aipoc):plugin/DisplaySettings.h
             //Begin methods
             uint32_t getConnectedVideoDisplays(const JsonObject& parameters, JsonObject& response);
             uint32_t getConnectedAudioPorts(const JsonObject& parameters, JsonObject& response);
@@ -115,8 +145,11 @@ namespace WPEFramework {
             uint32_t getActiveInput(const JsonObject& parameters, JsonObject& response);
             uint32_t getTvHDRSupport(const JsonObject& parameters, JsonObject& response);
             uint32_t getSettopHDRSupport(const JsonObject& parameters, JsonObject& response);
+<<<<<<< HEAD:DisplaySettings/DisplaySettings.h
             uint32_t setVideoPortStatusInStandby(const JsonObject& parameters, JsonObject& response);
             uint32_t getVideoPortStatusInStandby(const JsonObject& parameters, JsonObject& response);
+=======
+>>>>>>> 2332a80 (Merge pull request #153 from rdkcentral/feature/RDKEMW-21092-aipoc):plugin/DisplaySettings.h
             uint32_t getCurrentOutputSettings(const JsonObject& parameters, JsonObject& response);
             uint32_t setForceHDRMode(const JsonObject& parameters, JsonObject& response);
             //End methods
@@ -189,6 +222,18 @@ namespace WPEFramework {
             uint32_t getColorDepthCapabilities(const JsonObject& parameters, JsonObject& response);
 	    uint32_t getSupportedMS12Config(const JsonObject& parameters, JsonObject& response);
 
+<<<<<<< HEAD:DisplaySettings/DisplaySettings.h
+=======
+            uint32_t setAudioDucking(const JsonObject& parameters, JsonObject& response);
+            uint32_t setEnableVideoPort(const JsonObject& parameters, JsonObject& response);
+            uint32_t getEnableVideoPort(const JsonObject& parameters, JsonObject& response);
+            uint32_t getSupportedVideoCodingFormats(const JsonObject& parameters, JsonObject& response);
+            uint32_t getVideoCodecInfo(const JsonObject& parameters, JsonObject& response);
+            uint32_t getAudioEncoding(const JsonObject& parameters, JsonObject& response);
+            uint32_t setAudioEncoding(const JsonObject& parameters, JsonObject& response);
+            uint32_t getDisplayAspectRatio(const JsonObject& parameters, JsonObject& response);
+
+>>>>>>> 2332a80 (Merge pull request #153 from rdkcentral/feature/RDKEMW-21092-aipoc):plugin/DisplaySettings.h
             void InitAudioPorts();
             void AudioPortsReInitialize();
             static void initAudioPortsWorker(void);
@@ -236,6 +281,7 @@ namespace WPEFramework {
 	    Core::hresult Request(const string& newState);
 
         private:
+<<<<<<< HEAD:DisplaySettings/DisplaySettings.h
             void InitializeIARM();
             void DeinitializeIARM();
             static void ResolutionPreChange(const char *owner, IARM_EventId_t eventId, void *data, size_t len);
@@ -247,6 +293,8 @@ namespace WPEFramework {
             static void powerEventHandler(const char *owner, IARM_EventId_t eventId, void *data, size_t len);
             static void audioPortStateEventHandler(const char *owner, IARM_EventId_t eventId, void *data, size_t len);
             static void dsSettingsChangeEventHandler(const char *owner, IARM_EventId_t eventId, void *data, size_t len);
+=======
+>>>>>>> 2332a80 (Merge pull request #153 from rdkcentral/feature/RDKEMW-21092-aipoc):plugin/DisplaySettings.h
             void getConnectedVideoDisplaysHelper(std::vector<string>& connectedDisplays);
 	    void audioFormatToString(dsAudioFormat_t audioFormat, JsonObject &response);
             const char *getVideoFormatTypeToString(dsHDRStandard_t format);
@@ -262,9 +310,20 @@ namespace WPEFramework {
 	    bool setUpHdmiCecSinkArcRouting (bool arcEnable);
 	    bool requestShortAudioDescriptor();
             bool requestAudioDevicePowerStatus();
+<<<<<<< HEAD:DisplaySettings/DisplaySettings.h
 	    bool sendHdmiCecSinkAudioDevicePowerOn();
 	    bool getHdmiCecSinkCecEnableStatus();
 	    bool getHdmiCecSinkAudioDeviceConnectedStatus();
+=======
+            bool requestDeviceAudioStatus();
+	    bool sendUserControlPressCommand(int keyCode);
+	    bool sendHdmiCecSinkAudioDevicePowerOn();
+	    bool getHdmiCecSinkCecEnableStatus();
+	    bool getHdmiCecSinkAudioDeviceConnectedStatus();
+        int getAudioDeviceSADState(void);
+        void setAudioDeviceSADState(int newState);
+        int getCurrentArcRoutingState(void);
+>>>>>>> 2332a80 (Merge pull request #153 from rdkcentral/feature/RDKEMW-21092-aipoc):plugin/DisplaySettings.h
 
 	    void onTimer();
 	    void stopCecTimeAndUnsubscribeEvent();
@@ -287,6 +346,10 @@ namespace WPEFramework {
 	    std::condition_variable arcRoutingCV;
 	    bool m_hdmiInAudioDeviceConnected;
             bool m_arcEarcAudioEnabled;
+<<<<<<< HEAD:DisplaySettings/DisplaySettings.h
+=======
+	    bool m_arcEarcConnectionNotifiedToUI;
+>>>>>>> 2332a80 (Merge pull request #153 from rdkcentral/feature/RDKEMW-21092-aipoc):plugin/DisplaySettings.h
             bool m_arcPendingSADRequest;   
 	    bool m_hdmiCecAudioDeviceDetected;
 	    bool m_systemAudioMode_Power_RequestedAndReceived;
@@ -299,6 +362,42 @@ namespace WPEFramework {
             JsonObject getAudioOutputPortConfig() { return m_audioOutputPortConfig; }
             static PowerState m_powerState;
 
+<<<<<<< HEAD:DisplaySettings/DisplaySettings.h
+=======
+    private:
+        bool _registeredDsEventHandlers;
+
+    public:
+        void registerDsEventHandlers();
+
+        /* IDisplayEvents */
+        void OnDisplayRxSense(dsDisplayEvent_t displayEvent) override;
+
+        /* IAudioOutputPortEvents*/
+        void OnAudioOutHotPlug(dsAudioPortType_t portType, uint32_t uiPortNumber, bool isPortConnected) override;
+        void OnAudioFormatUpdate(dsAudioFormat_t audioFormat) override;
+        void OnDolbyAtmosCapabilitiesChanged(dsATMOSCapability_t atmosCapability, bool status) override;
+        void OnAudioPortStateChanged(dsAudioPortState_t audioPortState) override;
+        void OnAssociatedAudioMixingChanged(bool mixing) override;
+        void OnAudioFaderControlChanged(int mixerBalance) override;
+        void OnAudioPrimaryLanguageChanged(const std::string& primaryLanguage) override;
+        void OnAudioSecondaryLanguageChanged(const std::string& secondaryLanguage) override;
+
+        /* IDisplayDeviceEvents */
+        void OnDisplayHDMIHotPlug(dsDisplayEvent_t displayEvent) override;
+
+        /* IHdmiInEvents*/
+        void OnHdmiInEventHotPlug(dsHdmiInPort_t port, bool isConnected) override;
+
+        /* IVideoDeviceEvents */
+        void OnZoomSettingsChanged(dsVideoZoom_t zoomSetting) override;
+
+        /* IVideoOutputPortEvents */
+        void OnResolutionPreChange(const int width, const int height) override;
+        void OnResolutionPostChange(const int width, const int height) override;
+        void OnVideoFormatUpdate(dsHDRStandard_t videoFormatHDR) override;
+
+>>>>>>> 2332a80 (Merge pull request #153 from rdkcentral/feature/RDKEMW-21092-aipoc):plugin/DisplaySettings.h
             enum {
                 ARC_STATE_REQUEST_ARC_INITIATION,
                 ARC_STATE_ARC_INITIATED,
@@ -327,10 +426,24 @@ namespace WPEFramework {
 		AVR_POWER_STATE_STANDBY,
 		AVR_POWER_STATE_STANDBY_TO_ON_TRANSITION
 	    };
+<<<<<<< HEAD:DisplaySettings/DisplaySettings.h
+=======
+
+	    enum {
+		ARC_EARC_DISCONNECTED,
+		ARC_EARC_CONNECTED,
+	    };
+
+>>>>>>> 2332a80 (Merge pull request #153 from rdkcentral/feature/RDKEMW-21092-aipoc):plugin/DisplaySettings.h
            typedef enum {
 		SEND_AUDIO_DEVICE_POWERON_MSG = 1,
 		REQUEST_SHORT_AUDIO_DESCRIPTOR,
 		REQUEST_AUDIO_DEVICE_POWER_STATUS,
+<<<<<<< HEAD:DisplaySettings/DisplaySettings.h
+=======
+		SEND_DEVICE_AUDIO_STATUS,
+		SEND_MUTE_KEY_EVENT,
+>>>>>>> 2332a80 (Merge pull request #153 from rdkcentral/feature/RDKEMW-21092-aipoc):plugin/DisplaySettings.h
 		SEND_REQUEST_ARC_INITIATION,
 		SEND_REQUEST_ARC_TERMINATION,
 		} msg_t;
