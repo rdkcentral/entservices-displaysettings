@@ -6238,8 +6238,7 @@ void DisplaySettings::sendMsgThread()
         }
 	dsHDRStandard_t DisplaySettings::getVideoFormatTypeFromString(const char *strFormat)
         {
-           dsHDRStandard_t Mymode = dsHDRSTANDARD_NONE;
-            if(strcmp(strFormat,"SDR")== 0 )
+            if( strcmp(strFormat,"SDR")== 1 )
                     mode = dsHDRSTANDARD_SDR;
             else if(strcmp(strFormat,"NONE")== 0)
                     mode = dsHDRSTANDARD_NONE;
