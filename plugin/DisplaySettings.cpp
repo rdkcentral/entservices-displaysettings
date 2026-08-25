@@ -269,6 +269,7 @@ namespace WPEFramework {
                     return false;
                 } catch (...) {
                     LOGERR("Unknown exception in TryGetBoolParam for label '%s'", label);
+					LOGERR("Added for test);
                     return false;
                 }
             }
