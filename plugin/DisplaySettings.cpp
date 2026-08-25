@@ -5619,18 +5619,20 @@ void DisplaySettings::sendMsgThread()
 		    LOGINFO("Arc is already initiated m_currentArcRoutingState =%d", arcState);
 	    }
 
-	    // coverity fix: MISSING_LOCK - acquire lock before reading m_currentArcRoutingState in conditional
-	    int arcStateCheck;
-	    {
-	        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-	        arcStateCheck = m_currentArcRoutingState;
-	    }
-	    if ( m_ArcDetectionTimer.isActive() && ((retryArcCount >= 3) || (arcStateCheck == ARC_STATE_ARC_INITIATED) || (m_hdmiInAudioDeviceType != dsAUDIOARCSUPPORT_NONE)) ) {
-	            retryArcCount = 0; /* reset counter */
-		    LOGINFO("Stopping the eArc detection timer retryArcCount = %d, m_currentArcRoutingState = %d, m_hdmiInAudioDeviceType = %d",\
-				    retryArcCount, m_currentArcRoutingState, m_hdmiInAudioDeviceType);
-                    m_ArcDetectionTimer.stop();
-            }
+        // coverity fix: MISSING_LOCK - acquire lock before reading state used in conditional/log
+        int arcStateCheck;
+        dsAudioARCTypes_t hdmiInTypeCheck;
+        {
+            std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+            arcStateCheck = m_currentArcRoutingState;
+            hdmiInTypeCheck = m_hdmiInAudioDeviceType;
+        }
+        if (m_ArcDetectionTimer.isActive() && ((retryArcCount >= 3) || (arcStateCheck == ARC_STATE_ARC_INITIATED) || (hdmiInTypeCheck != dsAUDIOARCSUPPORT_NONE))) {
+            retryArcCount = 0; /* reset counter */
+            LOGINFO("Stopping the eArc detection timer retryArcCount = %d, m_currentArcRoutingState = %d, m_hdmiInAudioDeviceType = %d", \
+                    retryArcCount, arcStateCheck, hdmiInTypeCheck);
+            m_ArcDetectionTimer.stop();
+        }
 	    }
         catch(const device::Exception& err)
         {
