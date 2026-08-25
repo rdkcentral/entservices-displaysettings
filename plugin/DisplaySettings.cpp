@@ -186,7 +186,6 @@ namespace WPEFramework {
             class Job : public Core::IDispatch {
 #endif /* USE_THUNDER_R4 */
             public:
-                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for work parameter
                 Job(std::function<void()> work)
                     : _work(std::move(work))
                 {
@@ -537,7 +536,6 @@ namespace WPEFramework {
                              else {
 
                                  LOGINFO("Starting the timer to recheck audio device connection state after : %d ms\n", AUDIO_DEVICE_CONNECTION_CHECK_TIME_IN_MILLISECONDS);
-				 //coverity fix: MISSING_LOCK - acquire lock before accessing m_AudioDeviceDetectTimer
                                  std::lock_guard<mutex> lock(m_callMutex);
                                  m_AudioDeviceDetectTimer.start(AUDIO_DEVICE_CONNECTION_CHECK_TIME_IN_MILLISECONDS);
                              }
@@ -800,7 +798,6 @@ namespace WPEFramework {
                 for (size_t i = 0; i < aPorts.size(); i++)
                 {
                     device::AudioOutputPort &aPort = aPorts.at(i);
-                    //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for portName
                     string portName = std::move(aPort.getName());
                     if (aPort.isConnected())
                     {
@@ -811,7 +808,6 @@ namespace WPEFramework {
                     }
 		            else if (portName == "HDMI_ARC0")
 		            {
-                        //coverity fix: LOCK_EVASION - acquire lock before reading m_hdmiInAudioDeviceConnected and m_arcEarcAudioEnabled
                         bool shouldResetArc = false;
                         {
                             std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
@@ -883,7 +879,6 @@ namespace WPEFramework {
                 for (size_t i = 0; i < vPorts.size(); i++)
                 {
                     device::VideoOutputPort &vPort = vPorts.at(i);
-                    //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for videoDisplay
                     string videoDisplay = (vPort.getName());
                     vectorSet(supportedVideoDisplays, videoDisplay);
                 }
@@ -1135,7 +1130,6 @@ namespace WPEFramework {
 
                 // TODO: why is this always the first one in the list?
                 device::VideoDevice &decoder = device::Host::getInstance().getVideoDevices().at(0);
-                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for zoomSetting
                 decoder.setDFC(std::move(zoomSetting));
             }
             catch(const device::Exception& err)
@@ -1269,7 +1263,6 @@ namespace WPEFramework {
         uint32_t DisplaySettings::getSoundMode(const JsonObject& parameters, JsonObject& response)
         {   //sample servicemanager response:{"success":true,"soundMode":"AUTO (Dolby Digital 5.1)"}
             LOGINFOMETHOD();
-            //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for audioPort
             string audioPort = std::move(parameters["audioPort"].String());//empty value will browse all ports
 
             if (!checkPortName(audioPort))
@@ -1692,7 +1685,6 @@ namespace WPEFramework {
             }
             catch(const device::Exception& err)
             {
-                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for videoDisplay in LOG
                 LOG_DEVICE_EXCEPTION1(std::move(videoDisplay));
                 response["activeInput"] = JsonValue(false);
                 returnResponse(false);
@@ -2175,7 +2167,6 @@ namespace WPEFramework {
             }
             catch(const device::Exception& err)
             {
-                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for audioPort
                 LOG_DEVICE_EXCEPTION1(std::move(audioPort));
                 success = false;
             }
@@ -2880,7 +2871,6 @@ namespace WPEFramework {
             try {
                 intelligentEqualizerMode = stoi(sIntelligentEqualizerMode);
             }catch (const std::exception &err) {
-               //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for error message
                LOGERR("Failed to parse intelligentEqualizerMode '%s'", std::move(sIntelligentEqualizerMode.c_str()));
                           returnResponse(false);
             }
@@ -3046,7 +3036,6 @@ namespace WPEFramework {
             try
             {
                 device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for audioProfileName
                 audioProfileName = std::move(aPort.getMS12AudioProfile());
                 response["ms12AudioProfile"] = audioProfileName;
             }
@@ -3366,7 +3355,6 @@ namespace WPEFramework {
             }
             catch (const device::Exception& err)
             {
-                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for audioPort
                 LOG_DEVICE_EXCEPTION1(std::move(audioPort));
                 success = false;
             }
@@ -3436,7 +3424,6 @@ namespace WPEFramework {
             }
             catch (const device::Exception& err)
             {
-                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for parameters
                 LOG_DEVICE_EXCEPTION2(std::move(audioPort), std::move(sAudioDelayMs));
                 success = false;
             }
@@ -4173,7 +4160,6 @@ namespace WPEFramework {
            try {
                device::Host::getInstance().getMS12ConfigDetails(type);
                LOGINFO("Platform supports MS12 Config Z\n");
-               //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for type
                response["ms12config"] = std::move(type);
            }
            catch(const device::Exception& err)
@@ -5601,7 +5587,6 @@ void DisplaySettings::sendMsgThread()
 		           LOGINFO("Arc connection notification is already sent m_arcEarcConnectionNotifiedToUI = %d", m_arcEarcConnectionNotifiedToUI);
 		       }
             } else {
-                //coverity fix: LOCK_EVASION - capture read under lock to check before entering locked block
                 bool isArcNotConnected = false;
                 {
                     std::lock_guard<std::mutex> arcLock(m_AudioDeviceStatesUpdateMutex);
@@ -5978,7 +5963,6 @@ void DisplaySettings::sendMsgThread()
                         JsonObject params;
                         params["width"] = width;
                         params["height"] = height;
-                        //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for display and resolution
                         params["videoDisplayType"] = std::move(display);
                         params["resolution"] = std::move(resolution);
                         sendNotify("resolutionChanged", params);
@@ -5998,7 +5982,6 @@ void DisplaySettings::sendMsgThread()
                 JsonObject params;
                 params["width"] = width;
                 params["height"] = height;
-                //coverity fix: COPY_INSTEAD_OF_MOVE - use std::move for firstDisplay and firstResolution
                 params["videoDisplayType"] = std::move(firstDisplay);
                 params["resolution"] = std::move(firstResolution);
                 sendNotify("resolutionChanged", params);
