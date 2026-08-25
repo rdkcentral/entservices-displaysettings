@@ -801,7 +801,12 @@ namespace WPEFramework {
                     string portName = std::move(aPort.getName());
                     if (aPort.isConnected())
                     {
-                        if((portName == "HDMI_ARC0") && (m_hdmiInAudioDeviceConnected != true)) {
+                        bool hdmiArcConnected;
+                        {
+                            std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                            hdmiArcConnected = m_hdmiInAudioDeviceConnected;
+                        }
+                        if((portName == "HDMI_ARC0") && (hdmiArcConnected != true)) {
                             continue;
                         }
                         vectorSet(connectedAudioPorts, portName);
@@ -4665,11 +4670,19 @@ namespace WPEFramework {
 		LOGINFO("Inside checkSADUpdate\n");
 		std::lock_guard<std::mutex> lock(m_SadMutex);
 		device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort("HDMI_ARC0");
-		LOGINFO("m_AudioDeviceSADState = %d, m_arcEarcAudioEnabled = %d, m_hdmiInAudioDeviceConnected = %d\n",m_AudioDeviceSADState, m_arcEarcAudioEnabled, m_hdmiInAudioDeviceConnected);
+		bool arcEarcAudioEnabled;
+		bool hdmiInAudioDeviceConnected;
+		{
+			std::lock_guard<std::mutex> arcLock(m_AudioDeviceStatesUpdateMutex);
+			arcEarcAudioEnabled = m_arcEarcAudioEnabled;
+			hdmiInAudioDeviceConnected = m_hdmiInAudioDeviceConnected;
+		}
+		LOGINFO("m_AudioDeviceSADState = %d, m_arcEarcAudioEnabled = %d, m_hdmiInAudioDeviceConnected = %d\n",m_AudioDeviceSADState, arcEarcAudioEnabled, hdmiInAudioDeviceConnected);
+		
 		if (m_SADDetectionTimer.isActive()) {
 			m_SADDetectionTimer.stop();
 		}
-		if (m_arcEarcAudioEnabled == false && m_hdmiInAudioDeviceConnected == true){
+		if (arcEarcAudioEnabled == false && hdmiInAudioDeviceConnected == true){
 			if (m_AudioDeviceSADState == AUDIO_DEVICE_SAD_RECEIVED)
 			{
                            m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UPDATED;
@@ -5300,11 +5313,13 @@ void DisplaySettings::sendMsgThread()
 			      }
 			}else {
 				int arcState;
+				bool arcEarcEnabled;
 				{
 					std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
 					arcState = m_currentArcRoutingState;
+					arcEarcEnabled = m_arcEarcAudioEnabled;
 				}
-				LOGINFO("%s: m_currentArcRoutingState = %d, m_arcEarcAudioEnabled = %d", __FUNCTION__, arcState, m_arcEarcAudioEnabled);
+				LOGINFO("%s: m_currentArcRoutingState = %d, m_arcEarcAudioEnabled = %d", __FUNCTION__, arcState, arcEarcEnabled);
 			}/*End of m_currentArcRoutingState check */
                     }
                     catch (const device::Exception& err)
@@ -5428,14 +5443,16 @@ void DisplaySettings::sendMsgThread()
 	        m_hdmiCecAudioDeviceDetected = true;
             } else{
 	            m_hdmiCecAudioDeviceDetected = false;
-		        if (m_hdmiInAudioDeviceConnected == true) {
-					int arcState;
-					{
-						std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-						arcState = m_currentArcRoutingState;
-					}
+				bool hdmiAudioConnected;
+	            int arcState;
+	            {
+	                std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+	                hdmiAudioConnected = m_hdmiInAudioDeviceConnected;
+	                arcState = m_currentArcRoutingState;
+	            }
+			    if (hdmiAudioConnected == true) {
 					LOGINFO("Audio device removed event Handler, clearing the states m_hdmiInAudioDeviceConnected =%d, m_currentArcRoutingState =%d", \
-                    m_hdmiInAudioDeviceConnected, arcState);
+                    hdmiAudioConnected, arcState);
 					{
 						std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
 						m_hdmiInAudioDeviceConnected = false;	
@@ -5530,7 +5547,12 @@ void DisplaySettings::sendMsgThread()
 			}
                     } else {
 			std::lock_guard<std::mutex> lock(m_callMutex);			
-			if ((m_hdmiInAudioDeviceConnected == false) && !(m_ArcDetectionTimer.isActive())) {
+			bool hdmiAudioDeviceConnected;
+			{
+			    std::lock_guard<std::mutex> arcLock(m_AudioDeviceStatesUpdateMutex);
+			    hdmiAudioDeviceConnected = m_hdmiInAudioDeviceConnected;
+			}
+			if ((hdmiAudioDeviceConnected == false) && !(m_ArcDetectionTimer.isActive())) {
 			    // tinymix commad to detect eArc is failed, start the timer for 3 seconds
 			    LOGINFO("Starting timer to detect eArc for %d milli seconds", ARC_DETECTION_CHECK_TIME_IN_MILLISECONDS);
 		            m_ArcDetectionTimer.start(ARC_DETECTION_CHECK_TIME_IN_MILLISECONDS);
