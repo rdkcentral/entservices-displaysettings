@@ -6514,6 +6514,7 @@ void DisplaySettings::sendMsgThread()
         void DisplaySettings::OnResolutionPostChange(const int width, const int height)
         {
             LOGINFO("Received OnResolutionPostChange callback");
+            LOGINFO("LOG ADDED HERE");
             if(DisplaySettings::_instance) {
                 DisplaySettings::_instance->resolutionChanged(width, height);
             }

@@ -1,9 +1,9 @@
 name: PR - Backport to Release Branch
 
 # Runs when a PR is MERGED into dummy_develop / support/** / release/**
-# Reads release_version from PR description:
-#   release_version: none     → skip
-#   release_version: 8.3.4.0  → backport to support/8.3.4.0
+# Reads backport_to from PR description:
+#   backport_to: none     → skip
+#   backport_to: 8.3.4.0  → backport to support/8.3.4.0
 #
 # If cherry-pick has conflicts → resolves them inline (diff3 / take incoming)
 # No second workflow needed. No workflow_run dependency. Self-contained.
@@ -39,8 +39,8 @@ jobs:
           git config user.name  "GitHub Actions [Backport]"
           git config user.email "github-actions@users.noreply.github.com"
 
-      # ── 1. Extract and validate release_version + ticket ─────────────────────
-      - name: Extract PR info and validate release_version
+      # ── 1. Extract and validate backport_to + ticket ────────────────────────
+      - name: Extract PR info and validate backport_to
         id: info
         env:
           PR_BODY:     ${{ github.event.pull_request.body }}
@@ -64,13 +64,13 @@ jobs:
             exit 1
           fi
           
-          # ── Extract release_version (same logic as pr-validate-release.yml) ──
+          # ── Extract backport_to (same logic as pr-validate-release.yml) ────────
           # Handle case insensitive, flexible colon spacing, trailing comments, multi-line YAML
-          RAW_LINE=$(echo "$PR_BODY" | grep -iE '^\s*release[_-]?version\s*:' | head -1 || true)
+          RAW_LINE=$(echo "$PR_BODY" | grep -iE '^\s*backport_to\s*:' | head -1 || true)
           
           if [ -z "$RAW_LINE" ]; then
-            echo "❌ 'release_version:' field missing from PR description"
-            echo "   Add: release_version: none  OR  release_version: 8.3.4.0"
+            echo "❌ 'backport_to:' field missing from PR description"
+            echo "   Add: backport_to: none  OR  backport_to: 8.3.4.0"
             exit 1
           fi
           
@@ -79,23 +79,23 @@ jobs:
           
           if [ -z "$VALUE_ON_SAME_LINE" ]; then
             # Multi-line YAML: check next non-empty line
-            LINE_NUM=$(echo "$PR_BODY" | grep -inE '^\s*release[_-]?version\s*:' | head -1 | cut -d: -f1)
+            LINE_NUM=$(echo "$PR_BODY" | grep -inE '^\s*backport_to\s*:' | head -1 | cut -d: -f1)
             VALUE_ON_SAME_LINE=$(echo "$PR_BODY" | tail -n +$((LINE_NUM + 1)) | grep -v '^[[:space:]]*$' | head -1 | sed 's/#.*//' | xargs || true)
           fi
           
           VERSION=$(echo "$VALUE_ON_SAME_LINE" | sed 's/#.*//' | tr -d '\n\r' | xargs || true)
           
-          echo "release_version : '$VERSION'"
+          echo "backport_to : '$VERSION'"
           
           # ── Validate: Field must have value ───────────────────────────────
           if [ -z "$VERSION" ]; then
-            echo "❌ release_version field is empty"
+            echo "❌ backport_to field is empty"
             exit 1
           fi
           
           # ── Validate: Handle 'none' (no backport) ─────────────────────────
           if echo "$VERSION" | grep -qiE '^none$'; then
-            echo "ℹ️  release_version: none — no backport needed"
+            echo "ℹ️  backport_to: none — no backport needed"
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -105,7 +105,7 @@ jobs:
           # to avoid accidental removal of existing functionality.
           if echo "$VERSION" | grep -qiE '^develop$'; then
             SUPPORT_BRANCH="develop"
-            echo "✅ Target mapped: release_version 'develop' → branch: $SUPPORT_BRANCH"
+            echo "✅ Target mapped: backport_to 'develop' → branch: $SUPPORT_BRANCH"
           elif echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
             # Map 3-part versions to support/X.Y.Z.0 for compatibility
             IFS='.' read -ra PARTS <<< "$VERSION"
@@ -116,7 +116,7 @@ jobs:
             fi
             echo "✅ Numeric version accepted → branch: $SUPPORT_BRANCH"
           else
-            echo "❌ Invalid release_version: '$VERSION'"
+            echo "❌ Invalid backport_to: '$VERSION'"
             echo "   Allowed values: 'none', 'develop', or semantic numeric like 8.3.4 or 8.3.4.0"
             exit 1
           fi
@@ -1783,8 +1783,8 @@ jobs:
           # Use the original merged PR title for the backport PR
           TITLE="${PR_TITLE}"
 
-          # Strip release_version line from original PR body and append none
-          ORIGINAL_BODY_CLEAN=$(printf '%s' "$ORIGINAL_PR_BODY" | grep -viE '^\s*release[_-]?version\s*:' || true)
+          # Strip backport_to line from original PR body
+          ORIGINAL_BODY_CLEAN=$(printf '%s' "$ORIGINAL_PR_BODY" | grep -viE '^\s*backport_to\s*:' || true)
 
           if [ "$CONFLICT_RESOLVED" = "true" ]; then
             BODY="${ORIGINAL_BODY_CLEAN}
