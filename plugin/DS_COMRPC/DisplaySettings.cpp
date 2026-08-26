@@ -728,7 +728,7 @@ namespace Plugin {
         {
             auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
             if (vp != nullptr) {
-                vp->Register(&_DSVideoPortNotification);
+                vp->Register("DisplaySettings", &_DSVideoPortNotification);
                 vp->Release();
             }
             else {
@@ -740,7 +740,7 @@ namespace Plugin {
         {
             auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
             if (audio != nullptr) {
-                audio->Register(&_DSAudioNotification);
+                audio->Register("DisplaySettings", &_DSAudioNotification);
                 audio->Release();
             }
             else {
@@ -752,8 +752,8 @@ namespace Plugin {
         {
             auto* disp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
             if (disp != nullptr) {
-                disp->Register(&_DSDisplayHotPlugNotification);
-                disp->Register(&_DSDisplayNotification);
+                disp->Register("DisplaySettings", &_DSDisplayHotPlugNotification);
+                disp->Register("DisplaySettings", &_DSDisplayNotification);
                 disp->Release();
             }
             else {
@@ -765,7 +765,7 @@ namespace Plugin {
         {
             auto* vd = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
             if (vd != nullptr) {
-                vd->Register(&_DSVideoDeviceNotification);
+                vd->Register("DisplaySettings", &_DSVideoDeviceNotification);
                 vd->Release();
             }
             else {
@@ -780,7 +780,7 @@ namespace Plugin {
         {
             auto* hdmiIn = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsHDMIIn>();
             if (hdmiIn != nullptr) {
-                hdmiIn->Register(&_DSHDMIInNotification);
+                hdmiIn->Register("DisplaySettings", &_DSHDMIInNotification);
                 hdmiIn->Release();
             }
             else {
@@ -836,6 +836,29 @@ namespace Plugin {
         LOGINFO("Received COM-RPC OnVideoFormatUpdate hdr=%u", videoFormatHDR);
         if (DisplaySettings::_instance) {
             DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
+        }
+    }
+
+    void DisplaySettings::dispatchEvent(Event ev, ParamsType params)
+    {
+        Core::IWorkerPool::Instance().Submit(DispatchJob::Create(this, ev, std::move(params)));
+    }
+
+    void DisplaySettings::Dispatch(Event ev, const ParamsType params)
+    {
+        if (!DisplaySettings::_instance) return;
+        if (ev == EV_RESOLUTION_POST_CHANGE) {
+            auto t = boost::get<std::tuple<uint32_t, uint32_t>>(params);
+            DisplaySettings::_instance->OnDSResolutionPostChange(std::get<0>(t), std::get<1>(t));
+        } else if (ev == EV_VIDEO_FORMAT_UPDATE) {
+            auto t = boost::get<std::tuple<uint32_t>>(params);
+            DisplaySettings::_instance->OnDSVideoFormatUpdate(std::get<0>(t));
+        } else if (ev == EV_AUDIO_PORT_STATE_CHANGED) {
+            auto t = boost::get<std::tuple<uint32_t>>(params);
+            DisplaySettings::_instance->OnDSAudioPortStateChanged(std::get<0>(t));
+        } else if (ev == EV_DISPLAY_HDMI_HOTPLUG) {
+            auto t = boost::get<std::tuple<uint32_t>>(params);
+            DisplaySettings::_instance->OnDSDisplayHDMIHotPlug(std::get<0>(t));
         }
     }
 

@@ -37,6 +37,8 @@
 // sub-interface headers.
 #include "DeviceSettingsInterface.h"
 
+#include <boost/variant.hpp>
+
 using PowerState = WPEFramework::Exchange::IPowerManager::PowerState;
 using ThermalTemperature = WPEFramework::Exchange::IPowerManager::ThermalTemperature;
 namespace WPEFramework {
@@ -99,6 +101,31 @@ namespace WPEFramework {
             DisplaySettings(const DisplaySettings&) = delete;
             DisplaySettings& operator=(const DisplaySettings&) = delete;
 
+        public:
+            using ParamsType = boost::variant<std::tuple<uint32_t, uint32_t>, std::tuple<uint32_t>>;
+            enum Event { EV_RESOLUTION_POST_CHANGE = 0, EV_VIDEO_FORMAT_UPDATE = 1, EV_AUDIO_PORT_STATE_CHANGED = 2, EV_DISPLAY_HDMI_HOTPLUG = 3 };
+
+            // Worker-pool job: carries (impl*, Event, ParamsType); calls impl->Dispatch() on worker thread.
+            class EXTERNAL DispatchJob : public Core::IDispatch {
+            protected:
+                DispatchJob(DisplaySettings* ds, Event ev, ParamsType params)
+                    : _ds(ds), _ev(ev), _params(std::move(params))
+                { if (_ds != nullptr) _ds->AddRef(); }
+            public:
+                DispatchJob() = delete;
+                DispatchJob(const DispatchJob&) = delete;
+                DispatchJob& operator=(const DispatchJob&) = delete;
+                ~DispatchJob() { if (_ds != nullptr) _ds->Release(); }
+                static Core::ProxyType<Core::IDispatch> Create(DisplaySettings* ds, Event ev, ParamsType params) {
+                    return Core::ProxyType<Core::IDispatch>(Core::ProxyType<DispatchJob>::Create(ds, ev, std::move(params)));
+                }
+                void Dispatch() override { _ds->Dispatch(_ev, _params); }
+            private:
+                DisplaySettings* _ds;
+                Event _ev;
+                const ParamsType _params;
+            };
+
 
             // ----------------------------------------------------------------
             // COM-RPC notification delegate: IDeviceSettingsVideoPort::INotification
@@ -115,11 +142,11 @@ namespace WPEFramework {
                     _parent.OnDSResolutionPreChange();
                 }
                 void OnResolutionPostChange(const Exchange::IDeviceSettingsVideoPort::ResolutionChange& res) override {
-                    _parent.OnDSResolutionPostChange(res.width, res.height);
+                    _parent.dispatchEvent(EV_RESOLUTION_POST_CHANGE, std::make_tuple(res.width, res.height));
                 }
                 void OnHDCPStatusChange(const Exchange::IDeviceSettingsVideoPort::HDCPStatus /*hdcpStatus*/) override {}
                 void OnVideoFormatUpdate(const Exchange::IDeviceSettingsVideoPort::HDRStandard videoFormatHDR) override {
-                    _parent.OnDSVideoFormatUpdate(static_cast<uint32_t>(videoFormatHDR));
+                    _parent.dispatchEvent(EV_VIDEO_FORMAT_UPDATE, std::make_tuple(static_cast<uint32_t>(videoFormatHDR)));
                 }
 
                 BEGIN_INTERFACE_MAP(DSVideoPortNotification)
@@ -152,7 +179,7 @@ namespace WPEFramework {
                     _parent.OnDSDolbyAtmosCapabilitiesChanged(static_cast<uint32_t>(atmosCapability), status);
                 }
                 void OnAudioPortStateChanged(Exchange::IDeviceSettingsAudio::AudioPortState audioPortState) override {
-                    _parent.OnDSAudioPortStateChanged(static_cast<uint32_t>(audioPortState));
+                    _parent.dispatchEvent(EV_AUDIO_PORT_STATE_CHANGED, std::make_tuple(static_cast<uint32_t>(audioPortState)));
                 }
                 void OnAssociatedAudioMixingChanged(bool mixing) override {
                     _parent.OnDSAssociatedAudioMixingChanged(mixing);
@@ -186,7 +213,7 @@ namespace WPEFramework {
                 DSDisplayHotPlugNotification& operator=(const DSDisplayHotPlugNotification&) = delete;
 
                 void OnDisplayHDMIHotPlug(const Exchange::IDeviceSettingsDisplay::DisplayEvent displayEvent) override {
-                    _parent.OnDSDisplayHDMIHotPlug(static_cast<uint32_t>(displayEvent));
+                    _parent.dispatchEvent(EV_DISPLAY_HDMI_HOTPLUG, std::make_tuple(static_cast<uint32_t>(displayEvent)));
                 }
 
                 BEGIN_INTERFACE_MAP(DSDisplayHotPlugNotification)
@@ -282,6 +309,8 @@ namespace WPEFramework {
             void OnDSResolutionPreChange();
             void OnDSResolutionPostChange(uint32_t width, uint32_t height);
             void OnDSVideoFormatUpdate(uint32_t videoFormatHDR);
+            void dispatchEvent(Event ev, ParamsType params);
+            void Dispatch(Event ev, const ParamsType params);
             void OnDSAudioOutHotPlug(int portType, uint32_t portNumber, bool isPortConnected);
             void OnDSAudioFormatUpdate(uint32_t audioFormat);
             void OnDSDolbyAtmosCapabilitiesChanged(uint32_t atmosCapability, bool status);
