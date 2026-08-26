@@ -53,17 +53,21 @@ jobs:
           # ────────────────────────────────────────────────────────────────────
           echo "▶ Rule 1: Checking for multiple 'backport_to' fields..."
           
-          # Count all lines containing backport_to (case-insensitive)
-          OCCURRENCE_COUNT=$(echo "$PR_BODY" | grep -iE '^\s*backport_to\s*:' | wc -l | tr -d ' ')
-          
+          # grep -c exits 1 on zero matches; || true prevents pipefail from killing the script
+          OCCURRENCE_COUNT=$(echo "$PR_BODY" | grep -ciE '^\s*backport_to\s*:' || true)
+
           if [ "$OCCURRENCE_COUNT" -eq 0 ]; then
-            echo "  ❌ VALIDATION FAILED: 'backport_to:' field is MISSING from PR description."
+            echo "  ❌ VALIDATION FAILED: 'backport_to:' field not found in PR description."
             echo ""
-            echo "  ┌─ REQUIRED FORMAT ────────────────────────────────────────────┐"
-            echo "  │  Add ONE of these lines to your PR description:              │"
-            echo "  │                                                               │"
-            echo "  │  backport_to: none      → no backport needed                 │"
-            echo "  │  backport_to: 8.3.4.0   → backport to support/8.3.4.0        │"
+            echo "  ┌─ RULES ───────────────────────────────────────────────────────┐"
+            echo "  │  1. Field 'backport_to:' is REQUIRED in every PR description. │"
+            echo "  │  2. Only ONE occurrence is allowed.                           │"
+            echo "  │  3. Value must be 'none' or a version like 8.3.4.0            │"
+            echo "  │  4. The target branch must exist on remote.                   │"
+            echo "  ├───────────────────────────────────────────────────────────────┤"
+            echo "  │  VALID FORMAT:                                                │"
+            echo "  │    backport_to: none      → no backport needed                │"
+            echo "  │    backport_to: 8.3.4.0   → backport to support/8.3.4.0       │"
             echo "  └───────────────────────────────────────────────────────────────┘"
             echo ""
             git fetch origin --quiet || true
@@ -77,9 +81,18 @@ jobs:
             echo "  ❌ VALIDATION FAILED: Multiple 'backport_to' fields found ($OCCURRENCE_COUNT occurrences)."
             echo ""
             echo "  Found entries:"
-            echo "$PR_BODY" | grep -inE '^\s*backport_to\s*:' | sed 's/^/    │ Line /'
+            echo "$PR_BODY" | grep -inE '^\s*backport_to\s*:' | sed 's/^/    │ Line /' || true
             echo ""
-            echo "  Only ONE 'backport_to:' field is allowed. Remove duplicates."
+            echo "  ┌─ RULES ───────────────────────────────────────────────────┐"
+            echo "  │  1. Field 'backport_to:' is REQUIRED in every PR description. │"
+            echo "  │  2. Only ONE occurrence is allowed.                           │"
+            echo "  │  3. Value must be 'none' or a version like 8.3.4.0            │"
+            echo "  │  4. The target branch must exist on remote.                   │"
+            echo "  ├───────────────────────────────────────────────────┤"
+            echo "  │  VALID FORMAT:                                                │"
+            echo "  │    backport_to: none      → no backport needed                │"
+            echo "  │    backport_to: 8.3.4.0   → backport to support/8.3.4.0       │"
+            echo "  └───────────────────────────────────────────────────┘"
             exit 1
           fi
           
@@ -142,12 +155,18 @@ jobs:
           else
             # Accept numeric semantic versions: X.Y.Z or X.Y.Z.W
             if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
-              echo "  ❌ VALIDATION FAILED: Invalid value '$VERSION'"
+              echo "  ❌ VALIDATION FAILED: Invalid version value '$VERSION'"
               echo ""
-              echo "  ┌─ VALID FORMAT ───────────────────────────────────────────────┐"
-              echo "  │  backport_to: none      → no backport needed                 │"
-              echo "  │  backport_to: 8.3.4.0   → backport to support/8.3.4.0        │"
-              echo "  └───────────────────────────────────────────────────────────────┘"
+              echo "  ┌─ RULES ───────────────────────────────────────────────────┐"
+              echo "  │  1. Field 'backport_to:' is REQUIRED in every PR description. │"
+              echo "  │  2. Only ONE occurrence is allowed.                           │"
+              echo "  │  3. Value must be 'none' or a version like 8.3.4.0            │"
+              echo "  │  4. The target branch must exist on remote.                   │"
+              echo "  ├───────────────────────────────────────────────────┤"
+              echo "  │  VALID FORMAT:                                                │"
+              echo "  │    backport_to: none      → no backport needed                │"
+              echo "  │    backport_to: 8.3.4.0   → backport to support/8.3.4.0       │"
+              echo "  └───────────────────────────────────────────────────┘"
               exit 1
             fi
 
@@ -155,12 +174,18 @@ jobs:
             IFS='.' read -ra PARTS <<< "$VERSION"
             for PART in "${PARTS[@]}"; do
               if [[ "$PART" =~ ^0[0-9]+ ]]; then
-                echo "  ❌ VALIDATION FAILED: Part has leading zero: '$PART'"
+                echo "  ❌ VALIDATION FAILED: Version part has leading zero: '$PART'"
                 echo ""
-                echo "  ┌─ VALID FORMAT ───────────────────────────────────────────────┐"
-                echo "  │  backport_to: none      → no backport needed                 │"
-                echo "  │  backport_to: 8.3.4.0   → backport to support/8.3.4.0        │"
-                echo "  └───────────────────────────────────────────────────────────────┘"
+                echo "  ┌─ RULES ───────────────────────────────────────────────────┐"
+                echo "  │  1. Field 'backport_to:' is REQUIRED in every PR description. │"
+                echo "  │  2. Only ONE occurrence is allowed.                           │"
+                echo "  │  3. Value must be 'none' or a version like 8.3.4.0            │"
+                echo "  │  4. The target branch must exist on remote.                   │"
+                echo "  ├───────────────────────────────────────────────────┤"
+                echo "  │  VALID FORMAT:                                                │"
+                echo "  │    backport_to: none      → no backport needed                │"
+                echo "  │    backport_to: 8.3.4.0   → backport to support/8.3.4.0       │"
+                echo "  └───────────────────────────────────────────────────┘"
                 exit 1
               fi
             done
