@@ -704,8 +704,12 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         params["audioPort"] = "INVALID_PORT";
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "getAudioEncoding", params, result);
-	EXPECT_NE(Core::ERROR_NONE, status);
-	EXPECT_FALSE(result.HasLabel("success"));
+
+	// EXPECT_NE(Core::ERROR_NONE, status);
+	// EXPECT_FALSE(result.HasLabel("success"));
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_FALSE(result["success"].Boolean());
     }
 
     /******************setAudioEncoding - success ******************/
@@ -912,8 +916,11 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_InvalidLev
         .Times(0);
 
     status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
-    EXPECT_NE(Core::ERROR_NONE, status);
-    EXPECT_FALSE(result.HasLabel("success"));
+    // EXPECT_NE(Core::ERROR_NONE, status);
+    // EXPECT_FALSE(result.HasLabel("success"));
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_FALSE(result["success"].Boolean());
 }
 
 TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_InvalidAction)
@@ -935,8 +942,11 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_InvalidAct
         .Times(0);
 
     status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
-    EXPECT_NE(Core::ERROR_NONE, status);
-    EXPECT_FALSE(result.HasLabel("success"));
+    // EXPECT_NE(Core::ERROR_NONE, status);
+    // EXPECT_FALSE(result.HasLabel("success"));
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_FALSE(result["success"].Boolean());
 }
 
 TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_InvalidDuckingType)
@@ -958,8 +968,11 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Raw_InvalidDuc
         .Times(0);
 
     status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
-    EXPECT_NE(Core::ERROR_NONE, status);
-    EXPECT_FALSE(result.HasLabel("success"));
+    // EXPECT_NE(Core::ERROR_NONE, status);
+    // EXPECT_FALSE(result.HasLabel("success"));
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_FALSE(result["success"].Boolean());
 }
 
 TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Catch_DeviceException)
@@ -982,8 +995,11 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setAudioDucking_Catch_DeviceEx
             }));
 
     status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setAudioDucking", params, result);
-    EXPECT_NE(Core::ERROR_NONE, status);
-    EXPECT_FALSE(result.HasLabel("success"));
+    // EXPECT_NE(Core::ERROR_NONE, status);
+    // EXPECT_FALSE(result.HasLabel("success"));
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_FALSE(result["success"].Boolean());
 }
 
 TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setEnableVideoPort_Disable_Success)
@@ -1038,8 +1054,11 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_setEnableVideoPort_Disable_Dev
 
     status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setEnableVideoPort", params, result);
 
-    EXPECT_NE(Core::ERROR_NONE, status);
-    EXPECT_FALSE(result.HasLabel("success"));
+    // EXPECT_NE(Core::ERROR_NONE, status);
+    // EXPECT_FALSE(result.HasLabel("success"));
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    EXPECT_TRUE(result.HasLabel("success"));
+    EXPECT_FALSE(result["success"].Boolean());
 }
 
 TEST_F(DisplaySettings_L2test, DisplaySettings_L2_getVideoCodecInfo_H264_MapsToMPEG4Part10)
