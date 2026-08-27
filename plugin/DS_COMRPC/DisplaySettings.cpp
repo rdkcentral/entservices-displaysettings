@@ -1684,7 +1684,7 @@ namespace Plugin {
                 Exchange::IDeviceSettingsAudio::StereoMode stereoMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
                 int32_t stereoAuto = 0;
                 if (INVALID_DS_HANDLE != audioHandle) {
-                    auto hr = audio->GetStereoMode(audioHandle, stereoMode);
+                    auto hr = audio->GetStereoMode(audioHandle, stereoMode, false);
                     if (hr != Core::ERROR_NONE) {
                         LOGERR("GetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(hr));
                     }
@@ -5675,7 +5675,7 @@ namespace Plugin {
                                         // Get stereo mode to decide if SAD is needed
                                         Exchange::IDeviceSettingsAudio::StereoMode comRpcMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
                                         int32_t comRpcStereoAuto = 0;
-                                        comResult = audio->GetStereoMode(audioHandle, comRpcMode);
+                                        comResult = audio->GetStereoMode(audioHandle, comRpcMode, false);
                                         if (comResult != Core::ERROR_NONE) {
                                             LOGWARN("GetStereoMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                                         }
@@ -5862,7 +5862,7 @@ namespace Plugin {
                             }
                         } else {
                             Exchange::IDeviceSettingsAudio::StereoMode mode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
-                            comResult = audio->GetStereoMode(audioHandle, mode);
+                            comResult = audio->GetStereoMode(audioHandle, mode, false);
                             if (comResult == Core::ERROR_NONE) {
                                 comResult = audio->SetStereoMode(audioHandle, mode, true);
                                 if (comResult != Core::ERROR_NONE) {
@@ -6296,7 +6296,7 @@ namespace Plugin {
                     const int32_t arcAHandle = DSHelper::getCachedAudioPortHandle("HDMI_ARC0");
                     auto* arcAAudio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                     if (arcAAudio != nullptr && INVALID_DS_HANDLE != arcAHandle) {
-                        Core::hresult comResult = arcAAudio->GetStereoMode(arcAHandle, comRpcMode);
+                        Core::hresult comResult = arcAAudio->GetStereoMode(arcAHandle, comRpcMode, false);
                         if (comResult != Core::ERROR_NONE) {
                             LOGWARN("GetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
                         }
@@ -6475,7 +6475,7 @@ namespace Plugin {
                                 }
                             } else {
                                 Exchange::IDeviceSettingsAudio::StereoMode sMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
-                                comResult = arcAudio->GetStereoMode(arcHandle, sMode);
+                                comResult = arcAudio->GetStereoMode(arcHandle, sMode, false);
                                 if (comResult != Core::ERROR_NONE) {
                                     LOGWARN("GetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
                                 }
@@ -6517,7 +6517,7 @@ namespace Plugin {
                                 }
                             } else {
                                 Exchange::IDeviceSettingsAudio::StereoMode sMode2 = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
-                                comResult = arcAudio->GetStereoMode(arcHandle, sMode2);
+                                comResult = arcAudio->GetStereoMode(arcHandle, sMode2, false);
                                 if (comResult != Core::ERROR_NONE) {
                                     LOGWARN("GetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
                                 }
