@@ -808,6 +808,29 @@ namespace Plugin {
         isStbHDRcapabilitiesCache = false;
     }
 
+    void DisplaySettings::dispatchEvent(Event ev, ParamsType params)
+    {
+        Core::IWorkerPool::Instance().Submit(DispatchJob::Create(this, ev, std::move(params)));
+    }
+
+    void DisplaySettings::Dispatch(Event ev, const ParamsType params)
+    {
+        if (!DisplaySettings::_instance) return;
+        if (ev == EV_RESOLUTION_POST_CHANGE) {
+            auto t = boost::get<std::tuple<uint32_t, uint32_t>>(params);
+            DisplaySettings::_instance->OnDSResolutionPostChange(std::get<0>(t), std::get<1>(t));
+        } else if (ev == EV_VIDEO_FORMAT_UPDATE) {
+            auto t = boost::get<std::tuple<uint32_t>>(params);
+            DisplaySettings::_instance->OnDSVideoFormatUpdate(std::get<0>(t));
+        } else if (ev == EV_AUDIO_PORT_STATE_CHANGED) {
+            auto t = boost::get<std::tuple<uint32_t>>(params);
+            DisplaySettings::_instance->OnDSAudioPortStateChanged(std::get<0>(t));
+        } else if (ev == EV_DISPLAY_HDMI_HOTPLUG) {
+            auto t = boost::get<std::tuple<uint32_t>>(params);
+            DisplaySettings::_instance->OnDSDisplayHDMIHotPlug(std::get<0>(t));
+        }
+    }
+
     // ====================================================================
     // COM-RPC: private event forwarders called from notification delegates
     // These bridge COM-RPC notification calls to the existing notification
@@ -836,29 +859,6 @@ namespace Plugin {
         LOGINFO("Received COM-RPC OnVideoFormatUpdate hdr=%u", videoFormatHDR);
         if (DisplaySettings::_instance) {
             DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
-        }
-    }
-
-    void DisplaySettings::dispatchEvent(Event ev, ParamsType params)
-    {
-        Core::IWorkerPool::Instance().Submit(DispatchJob::Create(this, ev, std::move(params)));
-    }
-
-    void DisplaySettings::Dispatch(Event ev, const ParamsType params)
-    {
-        if (!DisplaySettings::_instance) return;
-        if (ev == EV_RESOLUTION_POST_CHANGE) {
-            auto t = boost::get<std::tuple<uint32_t, uint32_t>>(params);
-            DisplaySettings::_instance->OnDSResolutionPostChange(std::get<0>(t), std::get<1>(t));
-        } else if (ev == EV_VIDEO_FORMAT_UPDATE) {
-            auto t = boost::get<std::tuple<uint32_t>>(params);
-            DisplaySettings::_instance->OnDSVideoFormatUpdate(std::get<0>(t));
-        } else if (ev == EV_AUDIO_PORT_STATE_CHANGED) {
-            auto t = boost::get<std::tuple<uint32_t>>(params);
-            DisplaySettings::_instance->OnDSAudioPortStateChanged(std::get<0>(t));
-        } else if (ev == EV_DISPLAY_HDMI_HOTPLUG) {
-            auto t = boost::get<std::tuple<uint32_t>>(params);
-            DisplaySettings::_instance->OnDSDisplayHDMIHotPlug(std::get<0>(t));
         }
     }
 
