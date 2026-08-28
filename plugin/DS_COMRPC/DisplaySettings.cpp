@@ -539,8 +539,7 @@ namespace Plugin {
         // COM-RPC path: open the DeviceSettings plugin COM-RPC link.
         // Sub-interface acquisition and notification registration happen in
         // OnDeviceSettingsActivated() when the DeviceSettings plugin is ready.
-        DSHelper::Open(service);
-        LOGINFO("DisplaySettings: DSHelper::Open() called — awaiting OnDeviceSettingsActivated()");
+        DSHelper::Open(service, "DisplaySettings");
 
         // On success return empty, to indicate there is no error text.
         return (string());
