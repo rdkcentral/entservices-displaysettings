@@ -94,7 +94,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           path: entservices-displaysettings
-          ref : develop
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Checkout entservices-displaysettings-testframework
         if: ${{ inputs.caller_source == 'testframework' }}
