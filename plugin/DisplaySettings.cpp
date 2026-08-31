@@ -1508,7 +1508,15 @@ namespace WPEFramework {
 		            if(((mode == device::AudioStereoMode::kSurround) || (mode == device::AudioStereoMode::kPassThru) || (mode == device::AudioStereoMode::kStereo)) && (stereoAuto == false)) {
 				    aPort.setStereoAuto(false, persist);
 
-				    if((m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_ARC) && (m_hdmiInAudioDeviceConnected == true)) {
+				    // Capture shared state under lock to avoid TOCTOU race
+				    bool deviceConnected = false;
+				    dsAudioARCTypes_t deviceType = dsAUDIOARCSUPPORT_NONE;
+				    {
+					std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+					deviceConnected = m_hdmiInAudioDeviceConnected;
+					deviceType = m_hdmiInAudioDeviceType;
+				    }
+				    if((deviceType == dsAUDIOARCSUPPORT_ARC) && (deviceConnected == true)) {
 					if (mode == device::AudioStereoMode::kPassThru) {
 					    if (m_AudioDeviceSADState  == AUDIO_DEVICE_SAD_CLEARED || \
 							    m_AudioDeviceSADState  == AUDIO_DEVICE_SAD_UNKNOWN) {
@@ -1531,10 +1539,18 @@ namespace WPEFramework {
 		            }
 			    else { //Auto Mode
 
-				if(m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_eARC) {
+				// Capture shared state under lock to avoid TOCTOU race
+				bool deviceConnected = false;
+				dsAudioARCTypes_t deviceType = dsAUDIOARCSUPPORT_NONE;
+				{
+				    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+				    deviceConnected = m_hdmiInAudioDeviceConnected;
+				    deviceType = m_hdmiInAudioDeviceType;
+				}
+				if(deviceType == dsAUDIOARCSUPPORT_eARC) {
 				    aPort.setStereoAuto(stereoAuto, persist); //setStereoAuto true
 				}
-				else if ((m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_ARC) && (m_hdmiInAudioDeviceConnected == true)) {
+				else if ((deviceType == dsAUDIOARCSUPPORT_ARC) && (deviceConnected == true)) {
 				    if (m_AudioDeviceSADState  == AUDIO_DEVICE_SAD_CLEARED ||\
 						    m_AudioDeviceSADState  == AUDIO_DEVICE_SAD_UNKNOWN) {
 					LOGINFO("%s: sending SAD request\n", __FUNCTION__);
@@ -4503,16 +4519,24 @@ namespace WPEFramework {
                 }
                 else /* for HDMI_ARC0 audio port */ 
 		{
-			LOGINFO(" %s: m_hdmiInAudioDeviceConnected: %d , pEnable: %d \n",__FUNCTION__,m_hdmiInAudioDeviceConnected, pEnable);
+			// Capture shared state under lock to avoid TOCTOU race
+			bool deviceConnected = false;
+			dsAudioARCTypes_t deviceType = dsAUDIOARCSUPPORT_NONE;
+			{
+			    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+			    deviceConnected = m_hdmiInAudioDeviceConnected;
+			    deviceType = m_hdmiInAudioDeviceType;
+			}
+			LOGINFO(" %s: m_hdmiInAudioDeviceConnected: %d , pEnable: %d \n",__FUNCTION__,deviceConnected, pEnable);
 
 			device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
 			device::AudioStereoMode mode = device::AudioStereoMode::kStereo;  //default to stereo
                     	mode = aPort.getStereoMode(); //get Last User set stereo mode and set
 			if(pEnable) 
 			{
-                            if(m_hdmiInAudioDeviceConnected == true)
+                            if(deviceConnected == true)
 			    {
-			       if(m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_eARC)
+			       if(deviceType == dsAUDIOARCSUPPORT_eARC)
 			       {  // EARC case
 				  if(m_arcEarcAudioEnabled == false) 
 				  {
@@ -4523,7 +4547,7 @@ namespace WPEFramework {
 				     LOGINFO("eARC is already enabled. Value of m_arcEarcAudioEnabled is %d: \n", m_arcEarcAudioEnabled);
 				  }
 			       }/* EARC case end */
-			       else if (m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_ARC) 
+			       else if (deviceType == dsAUDIOARCSUPPORT_ARC) 
 			       {
 				   if(m_arcEarcAudioEnabled == false ) 
 			 	   {
@@ -4606,7 +4630,7 @@ namespace WPEFramework {
 			    }
 			    else /*m_hdmiInAudioDeviceConnected == false */
 			    {
-				LOGWARN("Audio device may be unplugged, not routing returning failure, m_hdmiInAudioDeviceConnected is %d: \n", m_hdmiInAudioDeviceConnected);
+				LOGWARN("Audio device may be unplugged, not routing returning failure, m_hdmiInAudioDeviceConnected is %d: \n", deviceConnected);
                                 success = false; /* Returning failure since m_hdmiInAudioDeviceConnected=flase (HPD unplug case), but received call to enable audio*/
 			    }/* End of (m_hdmiInAudioDeviceConnected == true) */
 
@@ -4616,24 +4640,32 @@ namespace WPEFramework {
 			    if(m_arcEarcAudioEnabled == true ) 
 			    {
 				/* stop ARC/eARC */
-				if(m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_eARC)
+				if(deviceType == dsAUDIOARCSUPPORT_eARC)
 				{
 					aPort.enableARC(dsAUDIOARCSUPPORT_eARC, false);
 					m_arcEarcAudioEnabled = false;
 					LOGINFO("Disable eARC \n");
-	                                if (m_hdmiInAudioDeviceConnected == false) {
-					   /* Update Arctype only when device is disconneced */
-					   m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
-					}
+	                {
+	                	// Read shared state under lock to avoid TOCTOU race
+	                    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+	                    if (m_hdmiInAudioDeviceConnected == false) {
+							/* Update Arctype only when device is disconneced */
+						   	m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
+						}
+	                }
 				}
-				else if (m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_ARC)
+				else if (deviceType == dsAUDIOARCSUPPORT_ARC)
 				{				   
 					aPort.enableARC(dsAUDIOARCSUPPORT_ARC, false);
 					m_arcEarcAudioEnabled = false;  
 					LOGINFO("Disable ARC \n");
-	                                if (m_hdmiInAudioDeviceConnected == false) {
-					   /* Update Arctype only when device is disconnected */
-					   m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
+	                {
+	                	// Read shared state under lock to avoid TOCTOU race
+	                	std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+	                	if (m_hdmiInAudioDeviceConnected == false) {
+							/* Update Arctype only when device is disconnected */
+							m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
+						}
 					}
 				}else {
 					LOGWARN("DisplaySettings::setEnableAudioPort Connected device doesn't have ARC/eARC capability to Disable \n");
@@ -5676,6 +5708,7 @@ void DisplaySettings::sendMsgThread()
 		isCecEnabled = false;
 		try
                     {
+                        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
                         //if m_arcEarcAudioEnabled == true(case where arc/earc is already routed) we will not reset device type because it will be done from setEnableAudioPort during disable from the connectedAudioPort update
                         if (m_arcEarcAudioEnabled == false && m_hdmiInAudioDeviceType != dsAUDIOARCSUPPORT_NONE) {
                            LOGINFO("Reset m_hdmiInAudioDeviceType since m_arcEarcAudioEnabled = %d", m_arcEarcAudioEnabled);
