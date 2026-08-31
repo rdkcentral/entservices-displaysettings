@@ -1510,7 +1510,7 @@ namespace WPEFramework {
 
 				    // Capture shared state under lock to avoid TOCTOU race
 				    bool deviceConnected = false;
-				    int deviceType = dsAUDIOARCSUPPORT_NONE;
+				    dsAudioARCTypes_t deviceType = dsAUDIOARCSUPPORT_NONE;
 				    {
 					std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
 					deviceConnected = m_hdmiInAudioDeviceConnected;
@@ -1541,7 +1541,7 @@ namespace WPEFramework {
 
 				// Capture shared state under lock to avoid TOCTOU race
 				bool deviceConnected = false;
-				int deviceType = dsAUDIOARCSUPPORT_NONE;
+				dsAudioARCTypes_t deviceType = dsAUDIOARCSUPPORT_NONE;
 				{
 				    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
 				    deviceConnected = m_hdmiInAudioDeviceConnected;
@@ -4521,7 +4521,7 @@ namespace WPEFramework {
 		{
 			// Capture shared state under lock to avoid TOCTOU race
 			bool deviceConnected = false;
-			int deviceType = dsAUDIOARCSUPPORT_NONE;
+			dsAudioARCTypes_t deviceType = dsAUDIOARCSUPPORT_NONE;
 			{
 			    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
 			    deviceConnected = m_hdmiInAudioDeviceConnected;
