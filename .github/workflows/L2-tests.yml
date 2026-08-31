@@ -94,7 +94,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           path: entservices-displaysettings
-          ref: ${{ github.head_ref || github.ref_name }}
+          ref: feature/RDKEMW-21990
 
       - name: Checkout entservices-displaysettings-testframework
         if: ${{ inputs.caller_source == 'testframework' }}
