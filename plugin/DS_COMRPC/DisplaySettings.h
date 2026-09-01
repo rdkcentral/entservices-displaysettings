@@ -102,8 +102,16 @@ namespace WPEFramework {
             DisplaySettings& operator=(const DisplaySettings&) = delete;
 
         public:
-            using ParamsType = boost::variant<std::tuple<uint32_t, uint32_t>, std::tuple<uint32_t>>;
-            enum Event { EV_RESOLUTION_POST_CHANGE = 0, EV_VIDEO_FORMAT_UPDATE = 1, EV_AUDIO_PORT_STATE_CHANGED = 2, EV_DISPLAY_HDMI_HOTPLUG = 3 };
+            using ParamsType = boost::variant<std::tuple<uint32_t, uint32_t>, std::tuple<uint32_t>, std::tuple<JsonObject>>;
+            enum Event {
+                EV_RESOLUTION_POST_CHANGE = 0,
+                EV_VIDEO_FORMAT_UPDATE,
+                EV_AUDIO_PORT_STATE_CHANGED,
+                EV_DISPLAY_HDMI_HOTPLUG,
+                EV_ARC_INITIATION,
+                EV_SHORT_AUDIO_DESCRIPTOR,
+                EV_AUDIO_DEVICE_POWER_STATUS
+            };
 
             // Worker-pool job: carries (impl*, Event, ParamsType); calls impl->Dispatch() on worker thread.
             class EXTERNAL DispatchJob : public Core::IDispatch {
@@ -452,13 +460,16 @@ namespace WPEFramework {
                 uint32_t videoFormat
                 );
 	    void onARCInitiationEventHandler(const JsonObject& parameters);
+            void processARCInitiationEvent(const JsonObject& parameters);
             void onARCTerminationEventHandler(const JsonObject& parameters);
 	    void onShortAudioDescriptorEventHandler(const JsonObject& parameters);
+            void processShortAudioDescriptorEvent(const JsonObject& parameters);
 	    void onSystemAudioModeEventHandler(const JsonObject& parameters);
             void onArcAudioStatusEventHandler(const JsonObject& parameters);
 	    void onAudioDeviceConnectedStatusEventHandler(const JsonObject& parameters);
 	    void onCecEnabledEventHandler(const JsonObject& parameters);
             void onAudioDevicePowerStatusEventHandler(const JsonObject& parameters);
+            void processAudioDevicePowerStatusEvent(const JsonObject& parameters);
 	    bool isDisplayConnected (std::string port);
             //End events
         public:

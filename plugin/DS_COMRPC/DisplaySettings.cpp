@@ -827,6 +827,15 @@ namespace Plugin {
         } else if (ev == EV_DISPLAY_HDMI_HOTPLUG) {
             auto t = boost::get<std::tuple<uint32_t>>(params);
             DisplaySettings::_instance->OnDSDisplayHDMIHotPlug(std::get<0>(t));
+        } else if (ev == EV_ARC_INITIATION) {
+            auto t = boost::get<std::tuple<JsonObject>>(params);
+            DisplaySettings::_instance->processARCInitiationEvent(std::get<0>(t));
+        } else if (ev == EV_SHORT_AUDIO_DESCRIPTOR) {
+            auto t = boost::get<std::tuple<JsonObject>>(params);
+            DisplaySettings::_instance->processShortAudioDescriptorEvent(std::get<0>(t));
+        } else if (ev == EV_AUDIO_DEVICE_POWER_STATUS) {
+            auto t = boost::get<std::tuple<JsonObject>>(params);
+            DisplaySettings::_instance->processAudioDevicePowerStatusEvent(std::get<0>(t));
         }
     }
 
@@ -6264,6 +6273,11 @@ namespace Plugin {
     // --- onARCInitiationEventHandler ---
     void DisplaySettings::onARCInitiationEventHandler(const JsonObject& parameters)
     {
+        dispatchEvent(EV_ARC_INITIATION, std::make_tuple(parameters));
+    }
+
+    void DisplaySettings::processARCInitiationEvent(const JsonObject& parameters)
+    {
         string message;
         string value;
 
@@ -6409,6 +6423,11 @@ namespace Plugin {
 
     // --- onShortAudioDescriptorEventHandler ---
     void DisplaySettings::onShortAudioDescriptorEventHandler(const JsonObject& parameters)
+    {
+        dispatchEvent(EV_SHORT_AUDIO_DESCRIPTOR, std::make_tuple(parameters));
+    }
+
+    void DisplaySettings::processShortAudioDescriptorEvent(const JsonObject& parameters)
     {
         string message;
 
@@ -6690,6 +6709,11 @@ namespace Plugin {
 
     // --- onAudioDevicePowerStatusEventHandler ---
     void DisplaySettings::onAudioDevicePowerStatusEventHandler(const JsonObject& parameters)
+    {
+        dispatchEvent(EV_AUDIO_DEVICE_POWER_STATUS, std::make_tuple(parameters));
+    }
+
+    void DisplaySettings::processAudioDevicePowerStatusEvent(const JsonObject& parameters)
     {
         string value;
         if (parameters.HasLabel("powerStatus"))
