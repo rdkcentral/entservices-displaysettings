@@ -405,6 +405,9 @@ namespace WPEFramework {
 	    std::queue<SendMsgInfo> m_sendMsgQueue;
             std::condition_variable m_sendMsgCV;
 
+            std::mutex m_audioPortInitMutex;
+            std::condition_variable m_audioPortInitCV;
+
             int m_hdmiInAudioDevicePowerState;
             int m_currentArcRoutingState;
             int m_AudioDeviceSADState;

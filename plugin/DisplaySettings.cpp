@@ -601,11 +601,12 @@ namespace WPEFramework {
         }
 	    m_timer.connect(std::bind(&DisplaySettings::onTimer, this));
 	    {
-	    std::lock_guard<std::mutex> lock(m_callMutex);
+	        std::lock_guard<std::mutex> lock(m_callMutex);
             m_AudioDeviceDetectTimer.connect(std::bind(&DisplaySettings::checkAudioDeviceDetectionTimer, this));
             m_ArcDetectionTimer.connect(std::bind(&DisplaySettings::checkArcDeviceConnected, this));
             m_SADDetectionTimer.connect(std::bind(&DisplaySettings::checkSADUpdate, this));
-	    m_AudioDevicePowerOnStatusTimer.connect(std::bind(&DisplaySettings::checkAudioDevicePowerStatusTimer, this));
+	        m_AudioDevicePowerOnStatusTimer.connect(std::bind(&DisplaySettings::checkAudioDevicePowerStatusTimer, this));
+        }
 	    m_WarmupTimer.connect(std::bind(&DisplaySettings::onWarmupTimerExpired, this));
 
             InitializePowerManager();
@@ -653,10 +654,11 @@ namespace WPEFramework {
                     DisplaySettings::_instance->m_sendMsgThreadRun = true;
                     DisplaySettings::_instance->m_sendMsgCV.notify_one();
             }
-            int count = 0;
-            while(audioPortInitActive.load() && count < 20){
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                count++;
+            {
+                std::unique_lock<std::mutex> lock(m_audioPortInitMutex);
+                if (!m_audioPortInitCV.wait_for(lock, std::chrono::milliseconds(2000), [](){ return !audioPortInitActive.load(); })) {
+                    LOGWARN("Timed out waiting for InitAudioPorts worker thread to finish; proceeding with Deinitialize");
+                }
             }
             try
             {
@@ -4847,9 +4849,12 @@ namespace WPEFramework {
 
         void DisplaySettings::initAudioPortsWorker(void)
         {
-            audioPortInitActive.store(true);
             DisplaySettings::_instance->InitAudioPorts();
-            audioPortInitActive.store(false);
+            {
+                std::lock_guard<std::mutex> lock(DisplaySettings::_instance->m_audioPortInitMutex);
+                audioPortInitActive.store(false);
+            }
+            DisplaySettings::_instance->m_audioPortInitCV.notify_all();
         }
 
         void DisplaySettings::onPowerModeChanged(const PowerState currentState, const PowerState newState)
@@ -4864,6 +4869,8 @@ namespace WPEFramework {
             try
                 {
             LOGWARN("creating worker thread for initAudioPortsWorker ");
+            // Set before spawning so Deinitialize() can never observe a false-"done" race with thread start-up
+            audioPortInitActive.store(true);
             std::thread audioPortInitThread = std::thread(initAudioPortsWorker);
         audioPortInitThread.detach();
                 }
