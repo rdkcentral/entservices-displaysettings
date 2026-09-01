@@ -6663,3 +6663,4 @@ void DisplaySettings::sendMsgThread()
 
     } // namespace Plugin
 } // namespace WPEFramework
+
