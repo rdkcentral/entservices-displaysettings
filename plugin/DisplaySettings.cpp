@@ -654,7 +654,7 @@ namespace WPEFramework {
                     DisplaySettings::_instance->m_sendMsgCV.notify_one();
             }
             int count = 0;
-            while(audioPortInitActive && count < 20){
+            while(audioPortInitActive.load() && count < 20){
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 count++;
             }
@@ -721,7 +721,7 @@ namespace WPEFramework {
                 }
                 if (Core::ERROR_NONE == retStatus)
                 {
-                    m_powerState = pwrStateCur;
+                    m_powerState.store(pwrStateCur);
                     LOGINFO("DisplaySettings::m_powerState:%d", m_powerState.load());
                 }
             }
@@ -4833,7 +4833,7 @@ namespace WPEFramework {
             }
             if (Core::ERROR_NONE == retStatus)
             {
-                m_powerState = pwrStateCur;
+                m_powerState.store(pwrStateCur);
                 LOGWARN("DisplaySettings::m_powerState: %d", m_powerState.load());
             }
 
@@ -4842,21 +4842,21 @@ namespace WPEFramework {
                 LOGWARN("GetPowerState failed");
             }
 
-            return m_powerState;
+            return m_powerState.load();
         }
 
         void DisplaySettings::initAudioPortsWorker(void)
         {
-            audioPortInitActive = true;
+            audioPortInitActive.store(true);
             DisplaySettings::_instance->InitAudioPorts();
-            audioPortInitActive = false;
+            audioPortInitActive.store(false);
         }
 
         void DisplaySettings::onPowerModeChanged(const PowerState currentState, const PowerState newState)
         {
             LOGWARN("onPowerModeChanged: State Changed %d --> %d\r",
                          currentState, newState);
-            m_powerState = newState;
+            m_powerState.store(newState);
             if (newState == WPEFramework::Exchange::IPowerManager::POWER_STATE_ON){
                 isResCacheUpdated = false;
                 isDisplayConnectedCacheUpdated = false;
