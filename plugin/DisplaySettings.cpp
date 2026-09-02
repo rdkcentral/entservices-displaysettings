@@ -6499,7 +6499,7 @@ void DisplaySettings::sendMsgThread()
             }
         }
 
-        void DisplaySettings::OnVideoFormatUpdate(dsHDRStandard_t videoFormatHDR)
+        void DisplaySettings::OnVideoFormatUpdated1(dsHDRStandard_t videoFormatHDR)
         {
             LOGINFO("Received OnVideoFormatUpdate callback. Video format: %d", videoFormatHDR);
             if(DisplaySettings::_instance) {
