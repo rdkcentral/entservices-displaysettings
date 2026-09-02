@@ -75,6 +75,8 @@ using namespace std;
 
 #define RFC_PWRMGR2 "Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.Power.PwrMgr2.Enable"
 
+
+
 #define ZOOM_SETTINGS_FILE      "/opt/persistent/rdkservices/zoomSettings.json"
 #define ZOOM_SETTINGS_DIRECTORY "/opt/persistent/rdkservices"
 
@@ -125,6 +127,8 @@ namespace
         // { <IARM_NAME>, <SVC_MANAGER_API_NAME> },
         { 0,  0 }
     };
+
+
 
     string svc2iarm(const string &name)
     {
@@ -265,6 +269,7 @@ namespace WPEFramework {
                     return false;
                 } catch (...) {
                     LOGERR("Unknown exception in TryGetBoolParam for label '%s'", label);
+					LOGERR("Added for test);
                     return false;
                 }
             }
@@ -6522,7 +6527,8 @@ void DisplaySettings::sendMsgThread()
 
         int DisplaySettings::OnVideoFormatUpdate(dsHDRStandard_t videoFormatHDR,int colorDepth)
         {
-            LOGINFO("Received OnVideoFormatUpdate callback. Video format: %d, Color depth: %d", videoFormatHDR, colorDepth);
+            LOGINFO("Received OnVideoFormatUpdate callback. Video format: %d", videoFormatHDR);
+			LOGINFO("ADDING LOG");
             if(DisplaySettings::_instance) {
                 DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
             }
