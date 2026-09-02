@@ -6525,7 +6525,7 @@ void DisplaySettings::sendMsgThread()
             }
         }
 
-        void DisplaySettings::OnVideoFormatUpdated1(dsHDRStandard_t videoFormatHDR)
+        int DisplaySettings::OnVideoFormatUpdate(dsHDRStandard_t videoFormatHDR,int colorDepth)
         {
             LOGINFO("Received OnVideoFormatUpdate callback. Video format: %d", videoFormatHDR);
 			LOGINFO("ADDING LOG");
@@ -6533,6 +6533,7 @@ void DisplaySettings::sendMsgThread()
                 DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
             }
 
+            return 0;   
         }
 
     } // namespace Plugin
