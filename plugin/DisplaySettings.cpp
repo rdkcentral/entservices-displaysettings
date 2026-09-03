@@ -6484,6 +6484,7 @@ void DisplaySettings::sendMsgThread()
         void DisplaySettings::OnResolutionPreChange(const int width, const int height)
         {
             LOGINFO("Received OnResolutionPreChange callback");
+			LOGINFO("LOG ADDED HERE");
             if(DisplaySettings::_instance)
             {
                 DisplaySettings::_instance->resolutionPreChange();
