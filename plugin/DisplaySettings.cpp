@@ -6527,15 +6527,33 @@ void DisplaySettings::sendMsgThread()
             return 0;
         }
 
-        int DisplaySettings::OnVideoFormatUpdate(dsHDRStandard_t videoFormatHDR,int colorDepth)
+        void DisplaySettings::OnVideoFormatUpdate(dsHDRStandard_t videoFormatHDR,int colorDepth)
         {
             LOGINFO("Received OnVideoFormatUpdate callback. Video format: %d", videoFormatHDR);
-			LOGINFO("ADDING LOG");
             if(DisplaySettings::_instance) {
                 DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
+                DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
+                DisplaySettings::_instance->notifyColorDepthChange(colorDepth);
             }
+            else{
+                LOGINFO("DisplaySettings instance is not available");
+            }
+            LOGINFO("Video format update handled");
+            if (condition)
+            {
+                /* code */
+            }
+            
 
-            return 0;   
+        }
+         void DisplaySettings::OnResolutionPreChange(const int width, const int height)
+        {
+            LOGINFO("Received OnResolutionPreChange callback");
+            if(DisplaySettings::_instance)
+            {
+                DisplaySettings::_instance->resolutionPreChange();
+            }
+            isResCacheUpdated = false;
         }
 
     } // namespace Plugin
