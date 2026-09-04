@@ -779,7 +779,7 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
     vde_listener->OnZoomSettingsChanged(dsVideoZoom_t::dsVIDEO_ZOOM_FULL);
 
     /* IVideoOutputPortEvents */
-    vope_listener->OnResolutionPreChange(1,1);
+    vope_listener->myresprechnage(1,1,0);
     vope_listener->OnResolutionPostChange(1,1);
     vope_listener->OnVideoFormatUpdate(dsHDRStandard_t::dsHDRSTANDARD_HDR10);
 
