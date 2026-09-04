@@ -6266,6 +6266,7 @@ void DisplaySettings::sendMsgThread()
 			catch (const device::Exception& err)
 			{
 				LOG_DEVICE_EXCEPTION0();
+				LOGERR("Device exception while getting HDR capabilities");
 			}
 		}
 		if( 0 == (int)connectedDisplays.size())
