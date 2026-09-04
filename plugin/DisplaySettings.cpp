@@ -6258,7 +6258,7 @@ void DisplaySettings::sendMsgThread()
 
 	    return mode;
         }
-    Core::hresult DisplaySettings::Request(const string& newState, const JsonObject& parameters)
+    void  DisplaySettings::tested(const string& newState, const JsonObject& parameters)
 	{
 		vector<string> connectedDisplays;
 		getConnectedVideoDisplaysHelper(connectedDisplays);
@@ -6287,18 +6287,20 @@ void DisplaySettings::sendMsgThread()
 				}
 			}
 			catch (const device::Exception& err)
-			{
-				LOG_DEVICE_EXCEPTION0();
-                LOGERR("Device exception while getting HDR capabilities");
-                return videoFormats; //Error conditions
-			}
+            {
+                LOG_DEVICE_EXCEPTION0();
+                LOGERR("Failed to get HDR capabilities. Retrying...");
+
+                // Retry / reinitialize device if appropriate
+                return getVideoFormats();
+            }
+
 		}
 		if( 0 == (int)connectedDisplays.size())
 		{
 			LOGWARN("No display connected to device (or)device's powerstate is not ON");
             return Core::ERROR_NONE;
 		}
-        return Core::ERROR_NONE;
 	}
         void DisplaySettings::registerDsEventHandlers()
         {
