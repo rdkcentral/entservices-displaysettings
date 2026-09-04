@@ -5938,7 +5938,7 @@ void DisplaySettings::sendMsgThread()
             Utils::String::getSystemModePropertyValue("DEVICE_OPTIMIZE" ,"currentstate" , currentAllmState);
             if(currentAllmState == "VIDEO" || currentAllmState == "GAME")
             {
-                    Request(currentAllmState);
+                    Request(currentAllmState, JsonObject());
             }
         }
 
@@ -6236,7 +6236,7 @@ void DisplaySettings::sendMsgThread()
 
 	    return mode;
         }
-    Core::hresult DisplaySettings::Request(const string& newState)
+    Core::hresult DisplaySettings::Request(const string& newState,const JsonObject& response)
 	{
 		vector<string> connectedDisplays;
 		getConnectedVideoDisplaysHelper(connectedDisplays);
@@ -6258,6 +6258,10 @@ void DisplaySettings::sendMsgThread()
 					}
 					vPort.getDisplay().setAllmEnabled(enable);
 				}
+				else if(!isDisplayConnected(strVideoPort))
+				{
+					LOGWARN("failure: %s is not connected!",strVideoPort.c_str());
+				}
 				else
 				{
 					LOGWARN("failure: %s is not connected!",strVideoPort.c_str());
@@ -6265,7 +6269,7 @@ void DisplaySettings::sendMsgThread()
 			}
 			catch (const device::Exception& err)
 			{
-				LOG_DEVICE_EXCEPTION0();
+				LOGERR("Device exception while getting HDR capabilities");
 			}
 		}
 		if( 0 == (int)connectedDisplays.size())
