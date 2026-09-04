@@ -305,7 +305,7 @@ namespace WPEFramework {
         PowerManagerInterfaceRef _powerManagerPlugin;
         Core::Sink<PowerManagerNotification> _pwrMgrNotification;
         bool _registeredEventHandlers;
-        void InitializePowerManager();
+        void InitializePowerManager(int a);
             JsonObject getAudioOutputPortConfig() { return m_audioOutputPortConfig; }
             static PowerState m_powerState;
 
