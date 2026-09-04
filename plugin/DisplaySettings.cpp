@@ -6545,14 +6545,20 @@ void DisplaySettings::sendMsgThread()
             
 
         }
-         void DisplaySettings::OnResolutionPreChange(const int width, const int height)
+         int DisplaySettings::myresprechnage(const int width, const int height,int depth)
         {
-            LOGINFO("Received OnResolutionPreChange callback");
+            LOGINFO("Received myresprechnage callback");
             if(DisplaySettings::_instance)
             {
                 DisplaySettings::_instance->resolutionPreChange();
             }
+            else {
+                LOGINFO("DisplaySettings instance is not available");
+                cout << "DisplaySettings instance is not available" << endl;
+            }
             isResCacheUpdated = false;
+
+            return 0;
         }
 
     } // namespace Plugin
