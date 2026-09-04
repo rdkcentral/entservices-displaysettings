@@ -6504,7 +6504,10 @@ void DisplaySettings::sendMsgThread()
             LOGINFO("Received OnVideoFormatUpdate callback. Video format: %d", videoFormatHDR);
             if(DisplaySettings::_instance) {
                 DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
+            } else {
+                LOGINFO("DisplaySettings instance is not available");
             }
+            LOGINFO("Video format update handled");
 
         }
 
