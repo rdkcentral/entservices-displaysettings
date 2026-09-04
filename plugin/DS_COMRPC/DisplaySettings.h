@@ -19,10 +19,10 @@
 
 #pragma once
 
+#include <map>
 #include <mutex>
 #include <condition_variable>
 #include "Module.h"
-#include "dsTypes.h"
 #include "tptimer.h"
 #include "rfcapi.h"
 #include <interfaces/ISystemMode.h>
@@ -31,7 +31,13 @@
 #include <fstream>
 #include <interfaces/IPowerManager.h>
 #include "PowerManagerInterface.h"
-#include "host.hpp"
+
+// COM-RPC path: DeviceSettingsInterface.h brings in DSHelper
+// (which inherits PluginSmartInterfaceType<IDeviceSettings>) plus all DS
+// sub-interface headers.
+#include "DeviceSettingsInterface.h"
+
+#include <boost/variant.hpp>
 
 using PowerState = WPEFramework::Exchange::IPowerManager::PowerState;
 using ThermalTemperature = WPEFramework::Exchange::IPowerManager::ThermalTemperature;
@@ -50,10 +56,10 @@ namespace WPEFramework {
 		// As the registration/unregistration of notifications is realized by the class PluginHost::JSONRPC,
 		// this class exposes a public method called, Notify(), using this methods, all subscribed clients
 		// will receive a JSONRPC message as a notification, in case this method is called.
-        class DisplaySettings : public PluginHost::IPlugin, public PluginHost::JSONRPC,Exchange::IDeviceOptimizeStateActivator,
-                                public device::Host::IDisplayEvents, public device::Host::IAudioOutputPortEvents,
-                                public device::Host::IDisplayDeviceEvents, public device::Host::IHdmiInEvents,
-                                public device::Host::IVideoDeviceEvents, public device::Host::IVideoOutputPortEvents {
+        class DisplaySettings : public PluginHost::IPlugin, public PluginHost::JSONRPC, Exchange::IDeviceOptimizeStateActivator
+                                // COM-RPC: single root IDeviceSettings link; sub-interfaces via AcquireSubInterface<T>()
+                                , public DSHelper
+        {
         private:
             typedef Core::JSON::String JString;
             typedef Core::JSON::ArrayType<JString> JStringArray;
@@ -95,12 +101,236 @@ namespace WPEFramework {
             DisplaySettings(const DisplaySettings&) = delete;
             DisplaySettings& operator=(const DisplaySettings&) = delete;
 
-            template <typename T>
-            T* baseInterface()
-            {
-                static_assert(std::is_base_of<T, DisplaySettings>(), "base type mismatch");
-                return static_cast<T*>(this);
-            }
+        public:
+            using ParamsType = boost::variant<std::tuple<uint32_t, uint32_t>, std::tuple<uint32_t>, std::tuple<JsonObject>>;
+            enum Event {
+                EV_RESOLUTION_POST_CHANGE = 0,
+                EV_VIDEO_FORMAT_UPDATE,
+                EV_AUDIO_PORT_STATE_CHANGED,
+                EV_DISPLAY_HDMI_HOTPLUG,
+                EV_ARC_INITIATION,
+                EV_SHORT_AUDIO_DESCRIPTOR,
+                EV_AUDIO_DEVICE_POWER_STATUS
+            };
+
+            // Worker-pool job: carries (impl*, Event, ParamsType); calls impl->Dispatch() on worker thread.
+            class EXTERNAL DispatchJob : public Core::IDispatch {
+            protected:
+                DispatchJob(DisplaySettings* ds, Event ev, ParamsType params)
+                    : _ds(ds), _ev(ev), _params(std::move(params))
+                { if (_ds != nullptr) _ds->AddRef(); }
+            public:
+                DispatchJob() = delete;
+                DispatchJob(const DispatchJob&) = delete;
+                DispatchJob& operator=(const DispatchJob&) = delete;
+                ~DispatchJob() { if (_ds != nullptr) _ds->Release(); }
+                static Core::ProxyType<Core::IDispatch> Create(DisplaySettings* ds, Event ev, ParamsType params) {
+                    return Core::ProxyType<Core::IDispatch>(Core::ProxyType<DispatchJob>::Create(ds, ev, std::move(params)));
+                }
+                void Dispatch() override { _ds->Dispatch(_ev, _params); }
+            private:
+                DisplaySettings* _ds;
+                Event _ev;
+                const ParamsType _params;
+            };
+
+
+            // ----------------------------------------------------------------
+            // COM-RPC notification delegate: IDeviceSettingsVideoPort::INotification
+            // Bridges COM-RPC resolution/HDCP/video-format events to DisplaySettings.
+            // ----------------------------------------------------------------
+            class DSVideoPortNotification
+                : public Exchange::IDeviceSettingsVideoPort::INotification {
+            public:
+                explicit DSVideoPortNotification(DisplaySettings& parent) : _parent(parent) {}
+                DSVideoPortNotification(const DSVideoPortNotification&) = delete;
+                DSVideoPortNotification& operator=(const DSVideoPortNotification&) = delete;
+
+                void OnResolutionPreChange(const Exchange::IDeviceSettingsVideoPort::ResolutionChange& /*res*/) override {
+                    _parent.OnDSResolutionPreChange();
+                }
+                void OnResolutionPostChange(const Exchange::IDeviceSettingsVideoPort::ResolutionChange& res) override {
+                    _parent.dispatchEvent(EV_RESOLUTION_POST_CHANGE, std::make_tuple(res.width, res.height));
+                }
+                void OnHDCPStatusChange(const Exchange::IDeviceSettingsVideoPort::HDCPStatus /*hdcpStatus*/) override {}
+                void OnVideoFormatUpdate(const Exchange::IDeviceSettingsVideoPort::HDRStandard videoFormatHDR) override {
+                    _parent.dispatchEvent(EV_VIDEO_FORMAT_UPDATE, std::make_tuple(static_cast<uint32_t>(videoFormatHDR)));
+                }
+
+                BEGIN_INTERFACE_MAP(DSVideoPortNotification)
+                    INTERFACE_ENTRY(Exchange::IDeviceSettingsVideoPort::INotification)
+                END_INTERFACE_MAP
+            private:
+                DisplaySettings& _parent;
+            };
+
+            // ----------------------------------------------------------------
+            // COM-RPC notification delegate: IDeviceSettingsAudio::INotification
+            // Bridges COM-RPC audio events to DisplaySettings.
+            // ----------------------------------------------------------------
+            class DSAudioNotification
+                : public Exchange::IDeviceSettingsAudio::INotification {
+            public:
+                explicit DSAudioNotification(DisplaySettings& parent) : _parent(parent) {}
+                DSAudioNotification(const DSAudioNotification&) = delete;
+                DSAudioNotification& operator=(const DSAudioNotification&) = delete;
+
+                void OnAudioOutHotPlug(Exchange::IDeviceSettingsAudio::AudioPortType portType,
+                                       uint32_t uiPortNumber, bool isPortConnected) override {
+                    _parent.OnDSAudioOutHotPlug(static_cast<int>(portType), uiPortNumber, isPortConnected);
+                }
+                void OnAudioFormatUpdate(Exchange::IDeviceSettingsAudio::AudioFormat audioFormat) override {
+                    _parent.OnDSAudioFormatUpdate(static_cast<uint32_t>(audioFormat));
+                }
+                void OnDolbyAtmosCapabilitiesChanged(Exchange::IDeviceSettingsAudio::DolbyAtmosCapability atmosCapability,
+                                                     bool status) override {
+                    _parent.OnDSDolbyAtmosCapabilitiesChanged(static_cast<uint32_t>(atmosCapability), status);
+                }
+                void OnAudioPortStateChanged(Exchange::IDeviceSettingsAudio::AudioPortState audioPortState) override {
+                    _parent.dispatchEvent(EV_AUDIO_PORT_STATE_CHANGED, std::make_tuple(static_cast<uint32_t>(audioPortState)));
+                }
+                void OnAssociatedAudioMixingChanged(bool mixing) override {
+                    _parent.OnDSAssociatedAudioMixingChanged(mixing);
+                }
+                void OnAudioFaderControlChanged(int32_t mixerBalance) override {
+                    _parent.OnDSAudioFaderControlChanged(mixerBalance);
+                }
+                void OnAudioPrimaryLanguageChanged(const string& primaryLanguage) override {
+                    _parent.OnDSAudioPrimaryLanguageChanged(primaryLanguage);
+                }
+                void OnAudioSecondaryLanguageChanged(const string& secondaryLanguage) override {
+                    _parent.OnDSAudioSecondaryLanguageChanged(secondaryLanguage);
+                }
+
+                BEGIN_INTERFACE_MAP(DSAudioNotification)
+                    INTERFACE_ENTRY(Exchange::IDeviceSettingsAudio::INotification)
+                END_INTERFACE_MAP
+            private:
+                DisplaySettings& _parent;
+            };
+
+            // ----------------------------------------------------------------
+            // COM-RPC notification delegate: IDeviceSettingsDisplay::IDisplayHDMIHotPlugNotification
+            // Bridges COM-RPC HDMI hot-plug events to DisplaySettings.
+            // ----------------------------------------------------------------
+            class DSDisplayHotPlugNotification
+                : public Exchange::IDeviceSettingsDisplay::IDisplayHDMIHotPlugNotification {
+            public:
+                explicit DSDisplayHotPlugNotification(DisplaySettings& parent) : _parent(parent) {}
+                DSDisplayHotPlugNotification(const DSDisplayHotPlugNotification&) = delete;
+                DSDisplayHotPlugNotification& operator=(const DSDisplayHotPlugNotification&) = delete;
+
+                void OnDisplayHDMIHotPlug(const Exchange::IDeviceSettingsDisplay::DisplayEvent displayEvent) override {
+                    _parent.dispatchEvent(EV_DISPLAY_HDMI_HOTPLUG, std::make_tuple(static_cast<uint32_t>(displayEvent)));
+                }
+
+                BEGIN_INTERFACE_MAP(DSDisplayHotPlugNotification)
+                    INTERFACE_ENTRY(Exchange::IDeviceSettingsDisplay::IDisplayHDMIHotPlugNotification)
+                END_INTERFACE_MAP
+            private:
+                DisplaySettings& _parent;
+            };
+
+            // ----------------------------------------------------------------
+            // COM-RPC notification delegate: IDeviceSettingsDisplay::INotification
+            // Bridges COM-RPC RxSense / HDCP status events to DisplaySettings.
+            // ----------------------------------------------------------------
+            class DSDisplayNotification
+                : public Exchange::IDeviceSettingsDisplay::INotification {
+            public:
+                explicit DSDisplayNotification(DisplaySettings& parent) : _parent(parent) {}
+                DSDisplayNotification(const DSDisplayNotification&) = delete;
+                DSDisplayNotification& operator=(const DSDisplayNotification&) = delete;
+
+                void OnDisplayRxSense(const Exchange::IDeviceSettingsDisplay::DisplayEvent displayEvent) override {
+                    _parent.OnDSDisplayRxSense(static_cast<uint32_t>(displayEvent));
+                }
+
+                BEGIN_INTERFACE_MAP(DSDisplayNotification)
+                    INTERFACE_ENTRY(Exchange::IDeviceSettingsDisplay::INotification)
+                END_INTERFACE_MAP
+            private:
+                DisplaySettings& _parent;
+            };
+
+            // ----------------------------------------------------------------
+            // COM-RPC notification delegate: IDeviceSettingsVideoDevice::INotification
+            // Bridges COM-RPC video-device zoom events to DisplaySettings.
+            // ----------------------------------------------------------------
+            class DSVideoDeviceNotification
+                : public Exchange::IDeviceSettingsVideoDevice::INotification {
+            public:
+                explicit DSVideoDeviceNotification(DisplaySettings& parent) : _parent(parent) {}
+                DSVideoDeviceNotification(const DSVideoDeviceNotification&) = delete;
+                DSVideoDeviceNotification& operator=(const DSVideoDeviceNotification&) = delete;
+
+                void OnDisplayFrameratePreChange(const string& /*frameRate*/) override {}
+                void OnDisplayFrameratePostChange(const string& /*frameRate*/) override {}
+                void OnZoomSettingsChanged(const Exchange::IDeviceSettingsVideoDevice::VideoZoom zoomSetting) override {
+                    _parent.OnDSZoomSettingChanged(static_cast<int32_t>(zoomSetting));
+                }
+
+                BEGIN_INTERFACE_MAP(DSVideoDeviceNotification)
+                    INTERFACE_ENTRY(Exchange::IDeviceSettingsVideoDevice::INotification)
+                END_INTERFACE_MAP
+            private:
+                DisplaySettings& _parent;
+            };
+
+            // ----------------------------------------------------------------
+            // COM-RPC notification delegate: IDeviceSettingsHDMIIn::INotification
+            // Bridges COM-RPC HDMI-In hotplug events to DisplaySettings.
+            // DS_IARM equivalent: IHdmiInEvents::OnHdmiInEventHotPlug
+            //   (registered for IARM_BUS_DSMGR_EVENT_HDMI_IN_HOTPLUG in IarmImpl.cpp).
+            // ----------------------------------------------------------------
+            class DSHDMIInNotification
+                : public Exchange::IDeviceSettingsHDMIIn::INotification {
+            public:
+                explicit DSHDMIInNotification(DisplaySettings& parent) : _parent(parent) {}
+                DSHDMIInNotification(const DSHDMIInNotification&) = delete;
+                DSHDMIInNotification& operator=(const DSHDMIInNotification&) = delete;
+
+                void OnHDMIInEventHotPlug(const Exchange::IDeviceSettingsHDMIIn::HDMIInPort port,
+                                          const bool isConnected) override {
+                    _parent.OnDSHDMIInEventHotPlug(static_cast<int>(port), isConnected);
+                }
+
+                BEGIN_INTERFACE_MAP(DSHDMIInNotification)
+                    INTERFACE_ENTRY(Exchange::IDeviceSettingsHDMIIn::INotification)
+                END_INTERFACE_MAP
+            private:
+                DisplaySettings& _parent;
+            };
+
+            // COM-RPC: notification delegate instance members (initialized with *this in ctor)
+            Core::Sink<DSVideoPortNotification>      _DSVideoPortNotification;
+            Core::Sink<DSAudioNotification>          _DSAudioNotification;
+            Core::Sink<DSDisplayHotPlugNotification> _DSDisplayHotPlugNotification;
+            Core::Sink<DSDisplayNotification>        _DSDisplayNotification;
+            Core::Sink<DSVideoDeviceNotification>    _DSVideoDeviceNotification;
+            Core::Sink<DSHDMIInNotification>         _DSHDMIInNotification;
+
+            void OnDeviceSettingsActivated() override;
+            void OnDeviceSettingsDeactivated() override;
+
+            // COM-RPC: private forwarders called from notification delegates
+            void OnDSResolutionPreChange();
+            void OnDSResolutionPostChange(uint32_t width, uint32_t height);
+            void OnDSVideoFormatUpdate(uint32_t videoFormatHDR);
+            void dispatchEvent(Event ev, ParamsType params);
+            void Dispatch(Event ev, const ParamsType params);
+            void OnDSAudioOutHotPlug(int portType, uint32_t portNumber, bool isPortConnected);
+            void OnDSAudioFormatUpdate(uint32_t audioFormat);
+            void OnDSDolbyAtmosCapabilitiesChanged(uint32_t atmosCapability, bool status);
+            void OnDSAudioPortStateChanged(uint32_t audioPortState);
+            void OnDSAssociatedAudioMixingChanged(bool mixing);
+            void OnDSAudioFaderControlChanged(int32_t mixerBalance);
+            void OnDSAudioPrimaryLanguageChanged(const string& primaryLanguage);
+            void OnDSAudioSecondaryLanguageChanged(const string& secondaryLanguage);
+            void OnDSDisplayHDMIHotPlug(uint32_t displayEvent);
+            void OnDSDisplayRxSense(uint32_t displayEvent);
+            void OnDSZoomSettingChanged(int32_t zoomSetting);
+            void OnDSHDMIInEventHotPlug(int port, bool isConnected);
 
             //Begin methods
             uint32_t getConnectedVideoDisplays(const JsonObject& parameters, JsonObject& response);
@@ -216,21 +446,30 @@ namespace WPEFramework {
             void activeInputChanged(bool activeInput);
             void connectedVideoDisplaysUpdated(int hdmiHotPlugEvent);
             void connectedAudioPortUpdated (int iAudioPortType, bool isPortConnected);
-	    void notifyAudioFormatChange(dsAudioFormat_t audioFormat);
-		void notifyAtmosCapabilityChange(dsATMOSCapability_t atmoCaps);
+	    void notifyAudioFormatChange(
+                uint32_t audioFormat
+                );
+		void notifyAtmosCapabilityChange(
+                uint32_t atmoCaps
+                );
             void notifyAssociatedAudioMixingChange(bool mixing);
             void notifyFaderControlChange(bool mixerbalance);
             void notifyPrimaryLanguageChange(std::string pLang);
             void notifySecondaryLanguageChange(std::string sLang);
-	    void notifyVideoFormatChange(dsHDRStandard_t videoFormat);
+	    void notifyVideoFormatChange(
+                uint32_t videoFormat
+                );
 	    void onARCInitiationEventHandler(const JsonObject& parameters);
+            void processARCInitiationEvent(const JsonObject& parameters);
             void onARCTerminationEventHandler(const JsonObject& parameters);
 	    void onShortAudioDescriptorEventHandler(const JsonObject& parameters);
+            void processShortAudioDescriptorEvent(const JsonObject& parameters);
 	    void onSystemAudioModeEventHandler(const JsonObject& parameters);
             void onArcAudioStatusEventHandler(const JsonObject& parameters);
 	    void onAudioDeviceConnectedStatusEventHandler(const JsonObject& parameters);
 	    void onCecEnabledEventHandler(const JsonObject& parameters);
             void onAudioDevicePowerStatusEventHandler(const JsonObject& parameters);
+            void processAudioDevicePowerStatusEvent(const JsonObject& parameters);
 	    bool isDisplayConnected (std::string port);
             //End events
         public:
@@ -252,9 +491,9 @@ namespace WPEFramework {
 
         private:
             void getConnectedVideoDisplaysHelper(std::vector<string>& connectedDisplays);
-	    void audioFormatToString(dsAudioFormat_t audioFormat, JsonObject &response);
-            const char *getVideoFormatTypeToString(dsHDRStandard_t format);
-            dsHDRStandard_t getVideoFormatTypeFromString(const char *mode);
+            void audioFormatToString(uint32_t audioFormat, JsonObject &response);
+            const char *getVideoFormatTypeToString(uint32_t format);
+            uint32_t getVideoFormatTypeFromString(const char *mode);
             JsonArray getSupportedVideoFormats();
             bool checkPortName(std::string& name) const;
             PowerState getSystemPowerState();
@@ -300,7 +539,7 @@ namespace WPEFramework {
             bool m_arcPendingSADRequest;   
 	    bool m_hdmiCecAudioDeviceDetected;
 	    bool m_systemAudioMode_Power_RequestedAndReceived;
-	    dsAudioARCTypes_t m_hdmiInAudioDeviceType;
+            int32_t m_hdmiInAudioDeviceType { 0 };  ///< maps to dsAudioARCTypes_t, 0 = NONE
 	    JsonObject m_audioOutputPortConfig;
         PowerManagerInterfaceRef _powerManagerPlugin;
         Core::Sink<PowerManagerNotification> _pwrMgrNotification;
@@ -313,34 +552,8 @@ namespace WPEFramework {
         bool _registeredDsEventHandlers;
 
     public:
-        void registerDsEventHandlers();
-
-        /* IDisplayEvents */
-        void OnDisplayRxSense(dsDisplayEvent_t displayEvent) override;
-
-        /* IAudioOutputPortEvents*/
-        void OnAudioOutHotPlug(dsAudioPortType_t portType, uint32_t uiPortNumber, bool isPortConnected) override;
-        void OnAudioFormatUpdate(dsAudioFormat_t audioFormat) override;
-        void OnDolbyAtmosCapabilitiesChanged(dsATMOSCapability_t atmosCapability, bool status) override;
-        void OnAudioPortStateChanged(dsAudioPortState_t audioPortState) override;
-        void OnAssociatedAudioMixingChanged(bool mixing) override;
-        void OnAudioFaderControlChanged(int mixerBalance) override;
-        void OnAudioPrimaryLanguageChanged(const std::string& primaryLanguage) override;
-        void OnAudioSecondaryLanguageChanged(const std::string& secondaryLanguage) override;
-
-        /* IDisplayDeviceEvents */
-        void OnDisplayHDMIHotPlug(dsDisplayEvent_t displayEvent) override;
-
-        /* IHdmiInEvents*/
-        void OnHdmiInEventHotPlug(dsHdmiInPort_t port, bool isConnected) override;
-
-        /* IVideoDeviceEvents */
-        void OnZoomSettingsChanged(dsVideoZoom_t zoomSetting) override;
-
-        /* IVideoOutputPortEvents */
-        void OnResolutionPreChange(const int width, const int height) override;
-        void OnResolutionPostChange(const int width, const int height) override;
-        void OnVideoFormatUpdate(dsHDRStandard_t videoFormatHDR) override;
+        // COM-RPC path: DS events arrive via delegates above; register them in OnDeviceSettingsActivated()
+        void registerDsEventHandlers();  // no-op stub — actual registration done in OnDeviceSettingsActivated()
 
             enum {
                 ARC_STATE_REQUEST_ARC_INITIATION,
@@ -417,3 +630,4 @@ namespace WPEFramework {
         };
 	} // namespace Plugin
 } // namespace WPEFramework
+
