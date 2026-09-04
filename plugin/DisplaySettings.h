@@ -338,9 +338,9 @@ namespace WPEFramework {
         void OnZoomSettingsChanged(dsVideoZoom_t zoomSetting) override;
 
         /* IVideoOutputPortEvents */
+        void OnResolutionPreChange(const int width, const int height) override;
         void OnResolutionPostChange(const int width, const int height) override;
         void OnVideoFormatUpdate(dsHDRStandard_t videoFormatHDR) override;
-        int myresprechnage(const int width, const int height,int depth) override;
 
             enum {
                 ARC_STATE_REQUEST_ARC_INITIATION,
