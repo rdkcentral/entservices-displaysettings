@@ -6258,7 +6258,7 @@ void DisplaySettings::sendMsgThread()
 
 	    return mode;
         }
-    Core::hresult DisplaySettings::Request(const string& newState, const JsonObject& parameters)
+    Core::hresult DisplaySettings::Request(const string& newState,const JsonObject& response)
 	{
 		vector<string> connectedDisplays;
 		getConnectedVideoDisplaysHelper(connectedDisplays);
@@ -6281,6 +6281,10 @@ void DisplaySettings::sendMsgThread()
 					vPort.getDisplay().setAllmEnabled(enable);
                     vPort.getDisplay().setAllmEnabled(enable);//duplicate api
 				}
+                else if(!isDisplayConnected(strVideoPort))
+                {
+                    LOGWARN("failure: %s is not connected!",strVideoPort.c_str());
+                }
 				else
 				{
                     LOGWARN("failure: %s is not connected!",strVideoPort.c_str());
@@ -6288,7 +6292,6 @@ void DisplaySettings::sendMsgThread()
 			}
 			catch (const device::Exception& err)
 			{
-				LOG_DEVICE_EXCEPTION0();
                 LOGERR("Device exception while getting HDR capabilities");
                 return videoFormats; //Error conditions
 			}
@@ -6298,7 +6301,6 @@ void DisplaySettings::sendMsgThread()
 			LOGWARN("No display connected to device (or)device's powerstate is not ON");
             return Core::ERROR_NONE;
 		}
-        return Core::ERROR_NONE;
 	}
         void DisplaySettings::registerDsEventHandlers()
         {
@@ -6517,14 +6519,12 @@ void DisplaySettings::sendMsgThread()
             isResCacheUpdated = false;
         }
 
-        int DisplaySettings::myresolutionupdate(const int width, const int height, bool isResCacheUpdated)
+         void DisplaySettings::OnResolutionPostChange(const int width, const int height)
         {
             LOGINFO("Received OnResolutionPostChange callback");
-            LOGINFO("LOG ADDED HERE");
             if(DisplaySettings::_instance) {
-                DisplaySettings::_instance->resolutionChanged(width, height, isResCacheUpdated);
+                DisplaySettings::_instance->resolutionChanged(width, height);
             }
-            return 0;
         }
 
         void DisplaySettings::OnVideoFormatUpdate(dsHDRStandard_t videoFormatHDR)
