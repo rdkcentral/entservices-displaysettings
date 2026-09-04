@@ -738,8 +738,8 @@ namespace WPEFramework {
                     string portName = aPort.getName();
                     if (aPort.isConnected())
                     {
-                        if((portName == "HDMI_ARC0") && (m_hdmiInAudioDeviceConnected != true)) {
-                            continue;
+                       if((portName == "HDMI_ARC0") && (m_hdmiInAudioDeviceConnected != true) && (m_arcEarcAudioEnabled != true)) {
++                            continue;
                         }
                         vectorSet(connectedAudioPorts, portName);
                     }
