@@ -607,7 +607,7 @@ namespace WPEFramework {
             m_SADDetectionTimer.connect(std::bind(&DisplaySettings::checkSADUpdate, this));
 	    m_AudioDevicePowerOnStatusTimer.connect(std::bind(&DisplaySettings::checkAudioDevicePowerStatusTimer, this));
 
-            InitializePowerManager();
+            InitializePowerManager(10);
             try
             {
                 device::Manager::Initialize();
@@ -700,9 +700,10 @@ namespace WPEFramework {
             m_service = nullptr;
         }
 
-        void DisplaySettings::InitializePowerManager()
+        void DisplaySettings::InitializePowerManager(int result)
         {
-            LOGINFO("Connect the COM-RPC socket\n");
+			
+            LOGINFO("Connect the COM-RPC socket = %d\n",result);
             PowerState pwrStateCur = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
             PowerState pwrStatePrev = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
             Core::hresult retStatus = Core::ERROR_GENERAL;
