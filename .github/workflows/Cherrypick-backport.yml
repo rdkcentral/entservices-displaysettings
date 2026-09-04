@@ -957,7 +957,7 @@ jobs:
 
           set +e
 
-          git cherry-pick --no-commit "$MERGE_SHA" 2>&1
+          git cherry-pick --no-commit -m 1 "$MERGE_SHA" 2>&1
 
           CP_EXIT=$?
 
