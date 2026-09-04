@@ -6526,39 +6526,12 @@ void DisplaySettings::sendMsgThread()
             return 0;
         }
 
-        void DisplaySettings::OnVideoFormatUpdate(dsHDRStandard_t videoFormatHDR,int colorDepth)
+        void DisplaySettings::OnVideoFormatUpdate(dsHDRStandard_t videoFormatHDR)
         {
             LOGINFO("Received OnVideoFormatUpdate callback. Video format: %d", videoFormatHDR);
             if(DisplaySettings::_instance) {
                 DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
-                DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
-                DisplaySettings::_instance->notifyColorDepthChange(colorDepth);
             }
-            else{
-                LOGINFO("DisplaySettings instance is not available");
-            }
-            LOGINFO("Video format update handled");
-            if (condition)
-            {
-                /* code */
-            }
-            
-
-        }
-         int DisplaySettings::myresprechnage(const int width, const int height,int depth)
-        {
-            LOGINFO("Received myresprechnage callback");
-            if(DisplaySettings::_instance)
-            {
-                DisplaySettings::_instance->resolutionPreChange();
-            }
-            else {
-                LOGINFO("DisplaySettings instance is not available");
-                cout << "DisplaySettings instance is not available" << endl;
-            }
-            isResCacheUpdated = false;
-
-            return 0;
         }
 
     } // namespace Plugin
