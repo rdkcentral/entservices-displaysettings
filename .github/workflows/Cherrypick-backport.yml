@@ -550,6 +550,9 @@ jobs:
               #         conflict → falls through to normal patch logic
               # ==========================================================
 
+              IS_RENAME=false
+              NEW_BASENAME="$(basename "$SRC_FILE")"
+
               RENAME_SOURCE=$(
                 printf '%s\n' "$RENAME_MAP" |
                 awk -v dst="$SRC_FILE" 'NF==3 && $3==dst {print $2}' || true
@@ -557,45 +560,83 @@ jobs:
 
               if [ -n "$RENAME_SOURCE" ]; then
 
+                IS_RENAME=true
+
                 RENAME_SCORE=$(
                   printf '%s\n' "$RENAME_MAP" |
                   awk -v dst="$SRC_FILE" 'NF==3 && $3==dst {gsub(/^R/,"",$1); print $1}' || true
                 )
 
-                if [ "$RENAME_SCORE" = "100" ]; then
+                echo ""
+                echo "   ╔══════════════════════════════════════════════════════════╗"
+                echo "   ║   🔄 RENAME DETECTED (R${RENAME_SCORE})                          ║"
+                echo "   ╚══════════════════════════════════════════════════════════╝"
+                echo "   Old name : $RENAME_SOURCE"
+                echo "   New name : $SRC_FILE"
 
-                  # ── Case 1: pure rename — nothing to backport ────────
-                  echo ""
-                  echo "   ╔══════════════════════════════════════════════════════════╗"
-                  echo "   ║    ℹ️  PURE RENAME — NO CONTENT CHANGE (R100)           ║"
-                  echo "   ╚══════════════════════════════════════════════════════════╝"
-                  echo "   Old name : $RENAME_SOURCE"
-                  echo "   New name : $SRC_FILE"
-                  echo "   Nothing to backport. Support branch keeps its existing path."
-                  echo "   Skipping."
-                  continue
-
-                else
-
-                  # ── Case 2 / Case 3: rename + content change ─────────
-                  echo ""
-                  echo "   ╔══════════════════════════════════════════════════════════╗"
-                  echo "   ║   🔄 RENAME + CONTENT CHANGE (R${RENAME_SCORE})                  ║"
-                  echo "   ╚══════════════════════════════════════════════════════════╝"
-                  echo "   Old name : $RENAME_SOURCE"
-                  echo "   New name : $SRC_FILE"
-                  echo "   Backporting content diff only to old path on support branch."
-                  echo "   Structural rename is NOT applied to support branch."
-                  SRC_FILE="$RENAME_SOURCE"
-
+                # Resolve where the OLD name currently lives on the target
+                # branch, so we know what to rename FROM.
+                if ! TARGET_OLD_FILE="$(resolve_target_file "$RENAME_SOURCE")"; then
+                  echo "❌ Cannot resolve target file for renamed source: $RENAME_SOURCE"
+                  echo "🛑 Refusing to guess."
+                  exit 1
                 fi
+                TARGET_OLD_FILE="${TARGET_OLD_FILE//$'\r'/}"
+                TARGET_OLD_FILE="${TARGET_OLD_FILE//$'\n'/}"
+
+                # New target path = same directory as the resolved old file,
+                # new basename taken from the source-side rename.
+                TARGET_DIR="$(dirname "$TARGET_OLD_FILE")"
+                if [ "$TARGET_DIR" = "." ]; then
+                  TARGET_NEW_FILE="$NEW_BASENAME"
+                else
+                  TARGET_NEW_FILE="$TARGET_DIR/$NEW_BASENAME"
+                fi
+
+                echo "   Target old path : $TARGET_OLD_FILE"
+                echo "   Target new path : $TARGET_NEW_FILE"
+
+                # Real conflict: destination name already exists on target.
+                if [ "$TARGET_OLD_FILE" != "$TARGET_NEW_FILE" ] && \
+                   git cat-file -e "HEAD:$TARGET_NEW_FILE" 2>/dev/null; then
+
+                  echo ""
+                  echo "   ╔══════════════════════════════════════════════════════════╗"
+                  echo "   ║       ❌ REAL CONFLICT (rename destination collision)   ║"
+                  echo "   ╚══════════════════════════════════════════════════════════╝"
+                  echo "   Target already has a file at: $TARGET_NEW_FILE"
+                  echo "   ➡️ Sending to Phase 4b."
+
+                  HAS_CONFLICTS=true
+                  CONFLICT_COUNT_NUM=$((CONFLICT_COUNT_NUM + 1))
+                  CONFLICT_LIST="${CONFLICT_LIST}${TARGET_NEW_FILE}"$'\n'
+                  continue
+                fi
+
+                # Apply the rename on the target branch too (staged now;
+                # committed later alongside any content diff).
+                if [ "$TARGET_OLD_FILE" != "$TARGET_NEW_FILE" ]; then
+                  git mv "$TARGET_OLD_FILE" "$TARGET_NEW_FILE"
+                  echo "   ✅ Renamed on target: $TARGET_OLD_FILE → $TARGET_NEW_FILE"
+                fi
+
+                if [ "$RENAME_SCORE" = "100" ]; then
+                  echo "   ℹ️ Pure rename — no content change to apply."
+                  continue
+                fi
+
+                echo "   ▶ Content also changed — applying diff on the renamed file."
+                SRC_FILE="$RENAME_SOURCE"
+
               fi
 
               # ==========================================================
               # RESOLVE TARGET FILE BY FILE NAME
               # ==========================================================
 
-              if ! DST_FILE="$(resolve_target_file "$SRC_FILE")"; then
+              if [ "$IS_RENAME" = true ]; then
+                DST_FILE="$TARGET_NEW_FILE"
+              elif ! DST_FILE="$(resolve_target_file "$SRC_FILE")"; then
                 echo ""
                 echo "❌ Cannot safely resolve target file:"
                 echo "   $SRC_FILE"
