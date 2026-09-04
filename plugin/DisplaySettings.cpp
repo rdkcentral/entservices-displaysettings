@@ -422,7 +422,7 @@ namespace WPEFramework {
 
         DisplaySettings::~DisplaySettings()
         {
-            LOGINFO ("dtor");
+            LOGINFO ("dtor2");
             isResCacheUpdated = false;
             isDisplayConnectedCacheUpdated = false;
             isStbHDRcapabilitiesCache = false;
