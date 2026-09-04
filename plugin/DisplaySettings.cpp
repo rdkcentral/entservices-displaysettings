@@ -385,7 +385,7 @@ namespace WPEFramework {
             }
         }
      
-        void DisplaySettings::InitAudioPorts() 
+        int DisplaySettings::InitAudioPorts() 
         {   //sample servicemanager response: {"success":true,"supportedAudioPorts":["HDMI0"]}
             //LOGINFOMETHOD();
             LOGINFO("Entering DisplaySettings::InitAudioPorts");
@@ -522,6 +522,7 @@ namespace WPEFramework {
                 LOGWARN("Audio Port : InitAudioPorts failed\n");
                 LOG_DEVICE_EXCEPTION0();
             }
+				return 0;
         }
 
         const string DisplaySettings::Initialize(PluginHost::IShell* service)
