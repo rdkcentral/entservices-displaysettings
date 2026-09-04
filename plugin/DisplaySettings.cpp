@@ -424,7 +424,7 @@ namespace WPEFramework {
 	    audioPortEnableStatusMap.clear();
         }
 
-        void DisplaySettings::AudioPortsReInitialize()
+        void DisplaySettings::AudioPortsReInitialize3()
         {
             LOGINFO("Entering DisplaySettings::AudioPortsReInitialize");
             try
