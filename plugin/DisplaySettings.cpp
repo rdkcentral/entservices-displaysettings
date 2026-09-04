@@ -6532,7 +6532,7 @@ void DisplaySettings::sendMsgThread()
         void DisplaySettings::OnVideoFormatUpdate(dsHDRStandard_t videoFormatHDR)
         {
             LOGINFO("Received OnVideoFormatUpdate callback. Video format: %d", videoFormatHDR);
-			LOGINFO("First LOG Added");
+	    LOGINFO("This is my second log added ");
             if(DisplaySettings::_instance) {
                 DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
             }
