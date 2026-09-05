@@ -359,14 +359,14 @@ namespace WPEFramework {
 
         DisplaySettings::~DisplaySettings()
         {
-            LOGINFO ("dtor");
+            LOGINFO ("dtor2");
             isResCacheUpdated = false;
             isDisplayConnectedCacheUpdated = false;
             isStbHDRcapabilitiesCache = false;
 	    audioPortEnableStatusMap.clear();
         }
 
-        void DisplaySettings::AudioPortsReInitialize()
+        void DisplaySettings::AudioPortsReInitialize1()
         {
             LOGINFO("Entering DisplaySettings::AudioPortsReInitialize");
             try
@@ -6491,17 +6491,19 @@ void DisplaySettings::sendMsgThread()
             isResCacheUpdated = false;
         }
 
-        void DisplaySettings::OnResolutionPostChange(const int width, const int height)
+        float DisplaySettings::OnResolutionPostChange(const int width, const int height)
         {
             LOGINFO("Received OnResolutionPostChange callback");
             if(DisplaySettings::_instance) {
                 DisplaySettings::_instance->resolutionChanged(width, height);
             }
+	   return 0.0f;
         }
 
-        void DisplaySettings::OnVideoFormatUpdate(dsHDRStandard_t videoFormatHDR)
+        void DisplaySettings::OnVideoFormatUpdatetest13(dsHDRStandard_t videoFormatHDR)
         {
             LOGINFO("Received OnVideoFormatUpdate callback. Video format: %d", videoFormatHDR);
+	    LOGINFO("This is thid log adding here");
             if(DisplaySettings::_instance) {
                 DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
             }
