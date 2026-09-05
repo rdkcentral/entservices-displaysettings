@@ -6520,12 +6520,13 @@ void DisplaySettings::sendMsgThread()
             isResCacheUpdated = false;
         }
 
-         void DisplaySettings::OnResolutionPostChange(const int width, const int height)
+         float DisplaySettings::OnResolutionPostChange(const int width, const int height)
         {
             LOGINFO("Received OnResolutionPostChange callback");
             if(DisplaySettings::_instance) {
                 DisplaySettings::_instance->resolutionChanged(width, height);
             }
+	   return 0.0f;
         }
 
         void DisplaySettings::OnVideoFormatUpdatetest13(dsHDRStandard_t videoFormatHDR)

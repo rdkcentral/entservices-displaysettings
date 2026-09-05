@@ -339,7 +339,7 @@ namespace WPEFramework {
 
         /* IVideoOutputPortEvents */
         void OnResolutionPreChange(const int width, const int height) override;
-        void OnResolutionPostChange(const int width, const int height) override;
+        float OnResolutionPostChange(const int width, const int height) override;
         void OnVideoFormatUpdate(dsHDRStandard_t videoFormatHDR) override;
 
             enum {
