@@ -6513,10 +6513,12 @@ void DisplaySettings::sendMsgThread()
 		 void DisplaySettings::OnResolutionPreChange(const int width, const int height)
         {
             LOGINFO("Received OnResolutionPreChange callback");
+			LOGINFO("Added Log");
             if(DisplaySettings::_instance)
             {
                 DisplaySettings::_instance->resolutionPreChange();
             }
+			LOGINFO("Received OnResolutionPreChange callback");
             isResCacheUpdated = false;
         }
 
