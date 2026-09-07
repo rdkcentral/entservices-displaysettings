@@ -324,7 +324,7 @@ namespace WPEFramework {
         void OnDolbyAtmosCapabilitiesChanged(dsATMOSCapability_t atmosCapability, bool status) override;
         void OnAudioPortStateChanged(dsAudioPortState_t audioPortState) override;
         void OnAssociatedAudioMixingChanged(bool mixing) override;
-        void OnAudioFaderControlChanged(int mixerBalance) override;
+        void OnAudioFaderControlChanged(int mixerBalance,int a,int c) override;
         void OnAudioPrimaryLanguageChanged(const std::string& primaryLanguage) override;
         void OnAudioSecondaryLanguageChanged(const std::string& secondaryLanguage) override;
 
