@@ -6509,7 +6509,17 @@ void DisplaySettings::sendMsgThread()
                     DisplaySettings::_instance->zoomSettingUpdated("FULL");
             }
         }
-			
+
+		 void DisplaySettings::OnResolutionPreChange(const int width, const int height)
+        {
+            LOGINFO("Received OnResolutionPreChange callback");
+            if(DisplaySettings::_instance)
+            {
+                DisplaySettings::_instance->resolutionPreChange();
+            }
+            isResCacheUpdated = false;
+        }
+
         float DisplaySettings::OnResolutionPostChange(const int width, const int height)
         {
             LOGINFO("Received OnResolutionPostChange callback");
