@@ -423,10 +423,10 @@ namespace WPEFramework {
         DisplaySettings::~DisplaySettings()
         {
             LOGINFO ("dtor3");
+			isDisplayConnectedCacheUpdated = false;
             isResCacheUpdated = false;
-            isDisplayConnectedCacheUpdated = false;
+			audioPortEnableStatusMap.clear();
             isStbHDRcapabilitiesCache = false;
-	    audioPortEnableStatusMap.clear();
         }
 
         void DisplaySettings::AudioPortsReInitialize4()
