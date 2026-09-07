@@ -6400,9 +6400,9 @@ void DisplaySettings::sendMsgThread()
             }
         }
 
-        void DisplaySettings::OnAudioFaderControlChanged(int mixerBalance,int a)
+        void DisplaySettings::OnAudioFaderControlChanged(int mixerBalance)
         {
-            LOGINFO("Received OnAudioFaderControlChanged. Fader Control: %d and %d", mixerBalance,a);
+            LOGINFO("Received OnAudioFaderControlChanged. Fader Control: %d", mixerBalance);
             if(DisplaySettings::_instance)
             {
                 DisplaySettings::_instance->notifyFaderControlChange(mixerBalance);
