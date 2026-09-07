@@ -1105,7 +1105,7 @@ namespace Plugin {
                                 m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UNKNOWN;
                                 m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
                             }
-                            DisplaySettings::_instance->connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, false);
+                            DisplaySettings::_instance->connectedAudioPortUpdated(static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HDMIARC), false);
                             LOGINFO("[HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n");
                             sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
                         }
