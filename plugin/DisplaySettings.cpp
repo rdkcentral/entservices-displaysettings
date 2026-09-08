@@ -6531,7 +6531,15 @@ void DisplaySettings::sendMsgThread()
             }
 	   return 0.0f;
         }
-		//deleted function OnVideoFormatUpdatetest13
+
+        void DisplaySettings::OnVideoFormatUpdatetest13(dsHDRStandard_t videoFormatHDR)
+        {
+            LOGINFO("Received OnVideoFormatUpdate callback. Video format: %d", videoFormatHDR);
+	    LOGINFO("This is thid log adding here");
+            if(DisplaySettings::_instance) {
+                DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
+            }
+        }
 
     } // namespace Plugin
 } // namespace WPEFramework
