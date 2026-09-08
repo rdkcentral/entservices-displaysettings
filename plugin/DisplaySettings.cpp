@@ -529,11 +529,14 @@ namespace Plugin {
         } catch (const std::system_error& e) {
             LOGERR("Failed to start m_sendMsgThread: %s", e.what());
         }
-        m_timer.connect(std::bind(&DisplaySettings::onTimer, this));
-        m_AudioDeviceDetectTimer.connect(std::bind(&DisplaySettings::checkAudioDeviceDetectionTimer, this));
-        m_ArcDetectionTimer.connect(std::bind(&DisplaySettings::checkArcDeviceConnected, this));
-        m_SADDetectionTimer.connect(std::bind(&DisplaySettings::checkSADUpdate, this));
-        m_AudioDevicePowerOnStatusTimer.connect(std::bind(&DisplaySettings::checkAudioDevicePowerStatusTimer, this));
+        {
+            std::lock_guard<std::mutex> lock(m_callMutex);
+            m_timer.connect(std::bind(&DisplaySettings::onTimer, this));
+            m_AudioDeviceDetectTimer.connect(std::bind(&DisplaySettings::checkAudioDeviceDetectionTimer, this));
+            m_ArcDetectionTimer.connect(std::bind(&DisplaySettings::checkArcDeviceConnected, this));
+            m_SADDetectionTimer.connect(std::bind(&DisplaySettings::checkSADUpdate, this));
+            m_AudioDevicePowerOnStatusTimer.connect(std::bind(&DisplaySettings::checkAudioDevicePowerStatusTimer, this));
+        }
 
         InitializePowerManager();
         // COM-RPC path: open the DeviceSettings plugin COM-RPC link.
