@@ -6503,6 +6503,7 @@ void DisplaySettings::sendMsgThread()
         {
             LOGINFO("Received OnVideoFormatUpdate callback. Video format: %d", videoFormatHDR);
 	    LOGINFO("This is thid log adding here");
+			LOGINFO("Support specific behavior");
             if(DisplaySettings::_instance) {
                 DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
             }
