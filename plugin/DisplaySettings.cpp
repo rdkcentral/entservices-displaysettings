@@ -451,7 +451,7 @@ namespace WPEFramework {
         int DisplaySettings::InitAudioPorts() 
         {   //sample servicemanager response: {"success":true,"supportedAudioPorts":["HDMI0"]}
             //LOGINFOMETHOD();
-            LOGINFO("predebug Entering DisplaySettings::InitAudioPorts");
+            LOGINFO("predebug1 Entering DisplaySettings::InitAudioPorts");
             uint32_t ret = Core::ERROR_NONE;
 	    m_systemAudioMode_Power_RequestedAndReceived = true; //resetting this variable for bootup for AVR case
             try
