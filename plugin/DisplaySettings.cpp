@@ -1,61 +1,46 @@
 /**
-* If not stated otherwise in this file or this component's LICENSE
-* file the following copyright and licenses apply:
-*
-* Copyright 2019 RDK Management
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-* http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-**/
+ * If not stated otherwise in this file or this component's LICENSE
+ * file the following copyright and licenses apply:
+ *
+ * Copyright 2019 RDK Management
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ **/
 
-//I have put several "TODO(MROLLINS)" in the code below to mark areas of concern I encountered
-//  when refactoring the servicemanager's version of displaysettings into this new thunder plugin format
+// I have put several "TODO(MROLLINS)" in the code below to mark areas of concern I encountered
+//   when refactoring the servicemanager's version of displaysettings into this new thunder plugin format
 
 #include "DisplaySettings.h"
+#include "UtilsSynchro.hpp"
+#include "tr181api.h"
 #include <algorithm>
 #include <cmath>
-#include "exception.hpp"
-#include "videoOutputPort.hpp"
-#include "videoOutputPortType.hpp"
-#include "videoOutputPortConfig.hpp"
-#include "videoResolution.hpp"
-#include "audioOutputPort.hpp"
-#include "audioOutputPortType.hpp"
-#include "audioOutputPortConfig.hpp"
-#include "manager.hpp"
-#include "dsUtl.h"
-#include "dsError.h"
-#include "list.hpp"
-#include "dsDisplay.h"
-#include "UtilsSynchro.hpp"
 #include <map>
-#include "tr181api.h"
+#include <set>
 
-#include "tracing/Logging.h"
-#include <syscall.h>
 #include "UtilsCStr.h"
 #include "UtilsJsonRpc.h"
 #include "UtilsString.h"
 #include "UtilsisValidInt.h"
-#include <cerrno>
-#include <climits>
-#include <cstdlib>
+#include "tracing/Logging.h"
+#include <syscall.h>
 
 using namespace std;
 
 #define HDMI_HOT_PLUG_EVENT_CONNECTED 0
 
 #define HDMICECSINK_CALLSIGN "org.rdk.HdmiCecSink"
-#define HDMICECSINK_CALLSIGN_VER HDMICECSINK_CALLSIGN".1"
+#define HDMICECSINK_CALLSIGN_VER HDMICECSINK_CALLSIGN ".1"
 #define HDMICECSINK_ARC_INITIATION_EVENT "arcInitiationEvent"
 #define HDMICECSINK_ARC_TERMINATION_EVENT "arcTerminationEvent"
 #define HDMICECSINK_ARC_AUDIO_STATUS_EVENT "reportAudioStatusEvent"
@@ -64,7 +49,7 @@ using namespace std;
 #define HDMICECSINK_AUDIO_DEVICE_CONNECTED_STATUS_EVENT "reportAudioDeviceConnectedStatus"
 #define HDMICECSINK_CEC_ENABLED_EVENT "reportCecEnabledEvent"
 #define HDMICECSINK_AUDIO_DEVICE_POWER_STATUS_EVENT "reportAudioDevicePowerStatus"
-#define SERVER_DETAILS  "127.0.0.1:9998"
+#define SERVER_DETAILS "127.0.0.1:9998"
 #define WARMING_UP_TIME_IN_SECONDS 5
 #define HDMICECSINK_PLUGIN_ACTIVATION_TIME 2
 #define RECONNECTION_TIME_IN_MILLISECONDS 5500
@@ -75,7 +60,7 @@ using namespace std;
 
 #define RFC_PWRMGR2 "Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.Power.PwrMgr2.Enable"
 
-#define ZOOM_SETTINGS_FILE      "/opt/persistent/rdkservices/zoomSettings.json"
+#define ZOOM_SETTINGS_FILE "/opt/persistent/rdkservices/zoomSettings.json"
 #define ZOOM_SETTINGS_DIRECTORY "/opt/persistent/rdkservices"
 
 #define API_VERSION_NUMBER_MAJOR 2
@@ -89,9 +74,9 @@ static bool isDisplayConnectedCacheUpdated = false;
 static bool isHdmiDisplayConnected = false;
 int stbHDRcapabilitiesCache = 0;
 bool isStbHDRcapabilitiesCache = false;
-static int  hdmiArcPortId = -1;
+static int hdmiArcPortId = -1;
 static int retryPowerRequestCount = 0;
-static int  hdmiArcVolumeLevel = 0;
+static int hdmiArcVolumeLevel = 0;
 static bool hdmiArcMuteStatus = false;
 bool audioPortInitActive = false;
 std::vector<int> sad_list;
@@ -100,6566 +85,7673 @@ static std::map<std::string, bool> audioPortEnableStatusMap;
 
 using PowerState = WPEFramework::Exchange::IPowerManager::PowerState;
 using ThermalTemperature = WPEFramework::Exchange::IPowerManager::ThermalTemperature;
-#ifdef USE_IARM
-namespace
-{
-    /**
-     * @struct Mapping
-     * @brief Structure that defines members for the display setting service.
-     * @ingroup SERVMGR_DISPSETTINGS
-     */
-    struct Mapping
-    {
-        const char *IArmBusName;
-        const char *SvcManagerName;
-    };
-
-    static struct Mapping name_mappings[] = {
-        { "Full", "FULL" },
-        { "None", "NONE" },
-        { "mono", "MONO" },
-        { "stereo", "STEREO" },
-        { "surround", "SURROUND" },
-        { "unknown", "UNKNOWN" },
-        // TODO: add your mappings here
-        // { <IARM_NAME>, <SVC_MANAGER_API_NAME> },
-        { 0,  0 }
-    };
-
-    string svc2iarm(const string &name)
-    {
-        const char *s = name.c_str();
-
-        int i = 0;
-        while (name_mappings[i].SvcManagerName)
-        {
-            if (strcmp(s, name_mappings[i].SvcManagerName) == 0)
-                return name_mappings[i].IArmBusName;
-            i++;
-        }
-        return name;
-    }
-
-    string iarm2svc(const string &name)
-    {
-        const char *s = name.c_str();
-
-        int i = 0;
-        while (name_mappings[i].IArmBusName)
-        {
-            if (strcmp(s, name_mappings[i].IArmBusName) == 0)
-                return name_mappings[i].SvcManagerName;
-            i++;
-        }
-        return name;
-    }
-}
-#endif
 
 // TODO: remove this
-#define registerMethod(...) for (uint8_t i = 1; GetHandler(i); i++) GetHandler(i)->Register<JsonObject, JsonObject>(__VA_ARGS__)
-#define registerMethodLockedApi(...) for (uint8_t i = 1; GetHandler(i); i++) Utils::Synchro::RegisterLockedApiForHandler(GetHandler(i), __VA_ARGS__)
+#define registerMethod(...)                 \
+    for (uint8_t i = 1; GetHandler(i); i++) \
+    GetHandler(i)->Register<JsonObject, JsonObject>(__VA_ARGS__)
+#define registerMethodLockedApi(...)        \
+    for (uint8_t i = 1; GetHandler(i); i++) \
+    Utils::Synchro::RegisterLockedApiForHandler(GetHandler(i), __VA_ARGS__)
 
 namespace WPEFramework {
 
-    namespace {
+namespace {
 
-        static Plugin::Metadata<Plugin::DisplaySettings> metadata(
-            // Version (Major, Minor, Patch)
-            API_VERSION_NUMBER_MAJOR, API_VERSION_NUMBER_MINOR, API_VERSION_NUMBER_PATCH,
-            // Preconditions
-            {},
-            // Terminations
-            {},
-            // Controls
-            {}
-        );
+    static Plugin::Metadata<Plugin::DisplaySettings> metadata(
+        // Version (Major, Minor, Patch)
+        API_VERSION_NUMBER_MAJOR, API_VERSION_NUMBER_MINOR, API_VERSION_NUMBER_PATCH,
+        // Preconditions
+        {},
+        // Terminations
+        {},
+        // Controls
+        {});
+}
+
+namespace Plugin {
+
+    namespace {
+        // Display Settings should use inter faces
+#ifndef USE_THUNDER_R4
+        class Job : public Core::IDispatchType<void> {
+#else
+        class Job : public Core::IDispatch {
+#endif /* USE_THUNDER_R4 */
+        public:
+            Job(std::function<void()> work)
+                : _work(std::move(work))
+            {
+            }
+            void Dispatch() override
+            {
+                _work();
+            }
+
+        private:
+            std::function<void()> _work;
+        };
+        uint32_t getServiceState(PluginHost::IShell* shell, const string& callsign, PluginHost::IShell::state& state)
+        {
+            uint32_t result;
+            auto interface = shell->QueryInterfaceByCallsign<PluginHost::IShell>(callsign);
+            if (interface == nullptr) {
+                result = Core::ERROR_UNAVAILABLE;
+                std::cout << "no IShell for " << callsign << std::endl;
+            } else {
+                result = Core::ERROR_NONE;
+                state = interface->State();
+                std::cout << "IShell state " << state << " for " << callsign << std::endl;
+                interface->Release();
+            }
+            return result;
+        }
+
+        bool TryParseIntInRange(const string& value, const int minValue, const int maxValue, int& parsedValue)
+        {
+            try {
+                if (value.empty()) {
+                    return false;
+                }
+
+                char* endPtr = nullptr;
+                errno = 0;
+                const long longValue = strtol(value.c_str(), &endPtr, 10);
+                if ((errno == ERANGE) || (endPtr == value.c_str()) || (*endPtr != '\0')) {
+                    return false;
+                }
+                if ((longValue < minValue) || (longValue > maxValue)) {
+                    return false;
+                }
+
+                parsedValue = static_cast<int>(longValue);
+                return true;
+            } catch (const std::exception& err) {
+                LOGERR("Exception in TryParseIntInRange: %s", err.what());
+                return false;
+            } catch (...) {
+                LOGERR("Unknown exception in TryParseIntInRange");
+                return false;
+            }
+        }
+
+        // DS_IARM-compatible bool parameter parser: accepts true/false/TRUE/FALSE/True/False/1/0
+        bool TryGetBoolParam(const JsonObject& parameters, const char* label, bool& value)
+        {
+            try {
+                if (!parameters.HasLabel(label)) {
+                    return false;
+                }
+
+                const string rawValue = parameters[label].String();
+                if ((rawValue == "true") || (rawValue == "TRUE") || (rawValue == "True") || (rawValue == "1")) {
+                    value = true;
+                    return true;
+                }
+                if ((rawValue == "false") || (rawValue == "FALSE") || (rawValue == "False") || (rawValue == "0")) {
+                    value = false;
+                    return true;
+                }
+
+                return false;
+            } catch (const std::exception& err) {
+                LOGERR("Exception in TryGetBoolParam for label '%s': %s", label, err.what());
+                return false;
+            } catch (...) {
+                LOGERR("Unknown exception in TryGetBoolParam for label '%s'", label);
+                return false;
+            }
+        }
     }
 
-    namespace Plugin {
+    SERVICE_REGISTRATION(DisplaySettings, API_VERSION_NUMBER_MAJOR, API_VERSION_NUMBER_MINOR, API_VERSION_NUMBER_PATCH);
 
-        namespace {
-            // Display Settings should use inter faces
-#ifndef USE_THUNDER_R4
-            class Job : public Core::IDispatchType<void> {
+    DisplaySettings* DisplaySettings::_instance = nullptr;
+    WPEFramework::Exchange::IPowerManager::PowerState DisplaySettings::m_powerState = WPEFramework::Exchange::IPowerManager::POWER_STATE_STANDBY;
+
+    DisplaySettings::DisplaySettings()
+        : PluginHost::JSONRPC()
+        , _DSVideoPortNotification(*this)
+        , _DSAudioNotification(*this)
+        , _DSDisplayHotPlugNotification(*this)
+        , _DSDisplayNotification(*this)
+        , _DSVideoDeviceNotification(*this)
+        , _DSHDMIInNotification(*this)
+        , _pwrMgrNotification(*this)
+        , _registeredEventHandlers(false)
+        , _registeredDsEventHandlers(false)
+    {
+        LOGINFO("constructor");
+        DisplaySettings::_instance = this;
+        m_client = nullptr;
+
+        CreateHandler({ 2 });
+
+        registerMethodLockedApi("getConnectedVideoDisplays", &DisplaySettings::getConnectedVideoDisplays, this);
+        registerMethodLockedApi("getConnectedAudioPorts", &DisplaySettings::getConnectedAudioPorts, this);
+        registerMethodLockedApi("setEnableAudioPort", &DisplaySettings::setEnableAudioPort, this);
+        registerMethodLockedApi("getEnableAudioPort", &DisplaySettings::getEnableAudioPort, this);
+        registerMethodLockedApi("getSupportedResolutions", &DisplaySettings::getSupportedResolutions, this);
+        registerMethodLockedApi("getSupportedVideoDisplays", &DisplaySettings::getSupportedVideoDisplays, this);
+        registerMethodLockedApi("getSupportedTvResolutions", &DisplaySettings::getSupportedTvResolutions, this);
+        registerMethodLockedApi("getSupportedSettopResolutions", &DisplaySettings::getSupportedSettopResolutions, this);
+        registerMethodLockedApi("getSupportedAudioPorts", &DisplaySettings::getSupportedAudioPorts, this);
+        registerMethodLockedApi("getSupportedAudioModes", &DisplaySettings::getSupportedAudioModes, this);
+        registerMethodLockedApi("getAudioFormat", &DisplaySettings::getAudioFormat, this);
+        registerMethodLockedApi("getZoomSetting", &DisplaySettings::getZoomSetting, this);
+        registerMethodLockedApi("setZoomSetting", &DisplaySettings::setZoomSetting, this);
+        registerMethodLockedApi("getCurrentResolution", &DisplaySettings::getCurrentResolution, this);
+        registerMethodLockedApi("setCurrentResolution", &DisplaySettings::setCurrentResolution, this);
+        registerMethodLockedApi("getSoundMode", &DisplaySettings::getSoundMode, this);
+        registerMethodLockedApi("setSoundMode", &DisplaySettings::setSoundMode, this);
+        registerMethodLockedApi("readEDID", &DisplaySettings::readEDID, this);
+        registerMethodLockedApi("readHostEDID", &DisplaySettings::readHostEDID, this);
+        registerMethodLockedApi("getActiveInput", &DisplaySettings::getActiveInput, this);
+        registerMethodLockedApi("getTvHDRSupport", &DisplaySettings::getTvHDRSupport, this);
+        registerMethodLockedApi("getSettopHDRSupport", &DisplaySettings::getSettopHDRSupport, this);
+        registerMethodLockedApi("getCurrentOutputSettings", &DisplaySettings::getCurrentOutputSettings, this);
+
+        Utils::Synchro::RegisterLockedApi("getVolumeLeveller", &DisplaySettings::getVolumeLeveller, this);
+        registerMethodLockedApi("getBassEnhancer", &DisplaySettings::getBassEnhancer, this);
+        registerMethodLockedApi("isSurroundDecoderEnabled", &DisplaySettings::isSurroundDecoderEnabled, this);
+        registerMethodLockedApi("getDRCMode", &DisplaySettings::getDRCMode, this);
+        Utils::Synchro::RegisterLockedApi("getSurroundVirtualizer", &DisplaySettings::getSurroundVirtualizer, this);
+        Utils::Synchro::RegisterLockedApi("setVolumeLeveller", &DisplaySettings::setVolumeLeveller, this);
+        registerMethodLockedApi("setBassEnhancer", &DisplaySettings::setBassEnhancer, this);
+        registerMethodLockedApi("enableSurroundDecoder", &DisplaySettings::enableSurroundDecoder, this);
+        Utils::Synchro::RegisterLockedApi("setSurroundVirtualizer", &DisplaySettings::setSurroundVirtualizer, this);
+        registerMethodLockedApi("setMISteering", &DisplaySettings::setMISteering, this);
+        registerMethodLockedApi("setGain", &DisplaySettings::setGain, this);
+        registerMethodLockedApi("getGain", &DisplaySettings::getGain, this);
+        registerMethodLockedApi("setMuted", &DisplaySettings::setMuted, this);
+        registerMethodLockedApi("getMuted", &DisplaySettings::getMuted, this);
+        registerMethodLockedApi("setVolumeLevel", &DisplaySettings::setVolumeLevel, this);
+        registerMethodLockedApi("getVolumeLevel", &DisplaySettings::getVolumeLevel, this);
+        registerMethodLockedApi("setDRCMode", &DisplaySettings::setDRCMode, this);
+        registerMethodLockedApi("getMISteering", &DisplaySettings::getMISteering, this);
+        registerMethodLockedApi("setMS12AudioCompression", &DisplaySettings::setMS12AudioCompression, this);
+        registerMethodLockedApi("getMS12AudioCompression", &DisplaySettings::getMS12AudioCompression, this);
+        registerMethodLockedApi("setDolbyVolumeMode", &DisplaySettings::setDolbyVolumeMode, this);
+        registerMethodLockedApi("getDolbyVolumeMode", &DisplaySettings::getDolbyVolumeMode, this);
+        registerMethodLockedApi("setDialogEnhancement", &DisplaySettings::setDialogEnhancement, this);
+        registerMethodLockedApi("getDialogEnhancement", &DisplaySettings::getDialogEnhancement, this);
+        registerMethodLockedApi("setIntelligentEqualizerMode", &DisplaySettings::setIntelligentEqualizerMode, this);
+        registerMethodLockedApi("getIntelligentEqualizerMode", &DisplaySettings::getIntelligentEqualizerMode, this);
+        registerMethodLockedApi("setGraphicEqualizerMode", &DisplaySettings::setGraphicEqualizerMode, this);
+        registerMethodLockedApi("getGraphicEqualizerMode", &DisplaySettings::getGraphicEqualizerMode, this);
+        registerMethodLockedApi("setMS12AudioProfile", &DisplaySettings::setMS12AudioProfile, this);
+        registerMethodLockedApi("getMS12AudioProfile", &DisplaySettings::getMS12AudioProfile, this);
+        registerMethodLockedApi("getSupportedMS12AudioProfiles", &DisplaySettings::getSupportedMS12AudioProfiles, this);
+        registerMethodLockedApi("resetDialogEnhancement", &DisplaySettings::resetDialogEnhancement, this);
+        registerMethodLockedApi("resetBassEnhancer", &DisplaySettings::resetBassEnhancer, this);
+        registerMethodLockedApi("resetSurroundVirtualizer", &DisplaySettings::resetSurroundVirtualizer, this);
+        registerMethodLockedApi("resetVolumeLeveller", &DisplaySettings::resetVolumeLeveller, this);
+
+        registerMethodLockedApi("setAssociatedAudioMixing", &DisplaySettings::setAssociatedAudioMixing, this);
+        registerMethodLockedApi("getAssociatedAudioMixing", &DisplaySettings::getAssociatedAudioMixing, this);
+        registerMethodLockedApi("setFaderControl", &DisplaySettings::setFaderControl, this);
+        registerMethodLockedApi("getFaderControl", &DisplaySettings::getFaderControl, this);
+        registerMethodLockedApi("setPrimaryLanguage", &DisplaySettings::setPrimaryLanguage, this);
+        registerMethodLockedApi("getPrimaryLanguage", &DisplaySettings::getPrimaryLanguage, this);
+        registerMethodLockedApi("setSecondaryLanguage", &DisplaySettings::setSecondaryLanguage, this);
+        registerMethodLockedApi("getSecondaryLanguage", &DisplaySettings::getSecondaryLanguage, this);
+
+        registerMethodLockedApi("getAudioDelay", &DisplaySettings::getAudioDelay, this);
+        registerMethodLockedApi("setAudioDelay", &DisplaySettings::setAudioDelay, this);
+        registerMethodLockedApi("getSinkAtmosCapability", &DisplaySettings::getSinkAtmosCapability, this);
+        registerMethodLockedApi("setAudioAtmosOutputMode", &DisplaySettings::setAudioAtmosOutputMode, this);
+        registerMethodLockedApi("setForceHDRMode", &DisplaySettings::setForceHDRMode, this);
+        registerMethodLockedApi("getTVHDRCapabilities", &DisplaySettings::getTVHDRCapabilities, this);
+        registerMethodLockedApi("isConnectedDeviceRepeater", &DisplaySettings::isConnectedDeviceRepeater, this);
+        registerMethodLockedApi("getDefaultResolution", &DisplaySettings::getDefaultResolution, this);
+        registerMethodLockedApi("setScartParameter", &DisplaySettings::setScartParameter, this);
+        registerMethodLockedApi("getSettopMS12Capabilities", &DisplaySettings::getSettopMS12Capabilities, this);
+        registerMethodLockedApi("getSettopAudioCapabilities", &DisplaySettings::getSettopAudioCapabilities, this);
+        registerMethodLockedApi("setMS12ProfileSettingsOverride", &DisplaySettings::setMS12ProfileSettingsOverride, this);
+
+        Utils::Synchro::RegisterLockedApiForHandler(GetHandler(2), "getVolumeLeveller", &DisplaySettings::getVolumeLeveller2, this);
+        Utils::Synchro::RegisterLockedApiForHandler(GetHandler(2), "setVolumeLeveller", &DisplaySettings::setVolumeLeveller2, this);
+        Utils::Synchro::RegisterLockedApiForHandler(GetHandler(2), "getSurroundVirtualizer", &DisplaySettings::getSurroundVirtualizer2, this);
+        Utils::Synchro::RegisterLockedApiForHandler(GetHandler(2), "setSurroundVirtualizer", &DisplaySettings::setSurroundVirtualizer2, this);
+
+        registerMethodLockedApi("getVideoFormat", &DisplaySettings::getVideoFormat, this);
+
+        registerMethodLockedApi("setPreferredColorDepth", &DisplaySettings::setPreferredColorDepth, this);
+        registerMethodLockedApi("getPreferredColorDepth", &DisplaySettings::getPreferredColorDepth, this);
+        registerMethodLockedApi("getColorDepthCapabilities", &DisplaySettings::getColorDepthCapabilities, this);
+        registerMethodLockedApi("getSupportedMS12Config", &DisplaySettings::getSupportedMS12Config, this);
+
+        registerMethodLockedApi("setAudioDucking", &DisplaySettings::setAudioDucking, this);
+        registerMethodLockedApi("setEnableVideoPort", &DisplaySettings::setEnableVideoPort, this);
+        registerMethodLockedApi("getEnableVideoPort", &DisplaySettings::getEnableVideoPort, this);
+        registerMethodLockedApi("getSupportedVideoCodingFormats", &DisplaySettings::getSupportedVideoCodingFormats, this);
+        registerMethodLockedApi("getVideoCodecInfo", &DisplaySettings::getVideoCodecInfo, this);
+        registerMethodLockedApi("getAudioEncoding", &DisplaySettings::getAudioEncoding, this);
+        registerMethodLockedApi("setAudioEncoding", &DisplaySettings::setAudioEncoding, this);
+        registerMethodLockedApi("getDisplayAspectRatio", &DisplaySettings::getDisplayAspectRatio, this);
+
+        m_subscribed = false; // HdmiCecSink event subscription
+        m_hdmiInAudioDeviceConnected = false; // Tells about the device connection state, for eArc will be updated on audio device power status event handler after tinymix command and incase of ARC will be true after ARC Initiation
+        m_arcEarcAudioEnabled = false; // Arc routing enabled/disabled
+        m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED; // Arc connection/disconnection UI notified flag
+        m_hdmiCecAudioDeviceDetected = false; // Audio device detected through cec ping
+        m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN; // Power state of AVR
+        m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED; // Maintains the ARC state
+        m_requestSadRetrigger = false;
+        m_hdmiInAudioDeviceType = 0; // dsAUDIOARCSUPPORT_NONE// Maintains the Audio device type whether Arc/eArc ocnnected
+        m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UNKNOWN; // maintains the SAD state
+        m_sendMsgThreadExit = false;
+        isResCacheUpdated = false;
+        isDisplayConnectedCacheUpdated = false;
+        isStbHDRcapabilitiesCache = false;
+        audioPortEnableStatusMap["IDLR0"] = false;
+        audioPortEnableStatusMap["HDMI0"] = false;
+        audioPortEnableStatusMap["SPDIF0"] = false;
+        audioPortEnableStatusMap["SPEAKER0"] = false;
+        audioPortEnableStatusMap["HDMI_ARC0"] = false;
+        audioPortEnableStatusMap["HEADPHONE0"] = false;
+
+        // m_AudioSentPoweronmsg = false;
+    }
+
+    DisplaySettings::~DisplaySettings()
+    {
+        LOGINFO("dtor");
+        isResCacheUpdated = false;
+        isDisplayConnectedCacheUpdated = false;
+        isStbHDRcapabilitiesCache = false;
+        audioPortEnableStatusMap.clear();
+    }
+
+    void DisplaySettings::AudioPortsReInitialize()
+    {
+        LOGINFO("Entering DisplaySettings::AudioPortsReInitialize");
+        // Refresh only audio port config and handles — video/FPD/VD config unchanged
+        DSHelper::ReloadAudioConfigs();
+    }
+
+    void DisplaySettings::InitAudioPorts()
+    { // sample servicemanager response: {"success":true,"supportedAudioPorts":["HDMI0"]}
+        // LOGINFOMETHOD();
+        LOGINFO("Entering DisplaySettings::InitAudioPorts");
+        uint32_t ret = Core::ERROR_NONE;
+        m_systemAudioMode_Power_RequestedAndReceived = true; // resetting this variable for bootup for AVR case
+
+        // COM-RPC: acquire audio interface once for the entire per-port loop
+        // (replaces device::Host::getInstance().getAudioOutputPorts())
+        auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+        if (audio == nullptr) {
+            LOGWARN("DisplaySettings::InitAudioPorts: failed to acquire IDeviceSettingsAudio interface");
+            return;
+        }
+
+        for (const auto& kv : DSHelper::getAudioPortHandleEntries()) {
+            const std::string& portName = kv.first;
+            int32_t portHandle = kv.second;
+            if (INVALID_DS_HANDLE == portHandle) {
+                LOGWARN("Invalid handle for port '%s'", portName.c_str());
+                continue;
+            }
+
+            // By default all the ports enabled.
+            bool isPortPersistenceValEnabled = true;
+            LOGINFO("DisplaySettings::InitAudioPorts getting port persistance");
+            // COM-RPC: replaces libds vPort.getEnablePersist()
+            if (audio != nullptr) {
+                std::string unused;
+                auto comRc = audio->GetAudioEnablePersist(portHandle, isPortPersistenceValEnabled, unused);
+                if (comRc != Core::ERROR_NONE){
+                    LOGWARN("Audio Port : [%s] Getting enable persist value failed. Proceeding with true\n", portName.c_str());
+                }
+            }
+            LOGWARN("Audio Port : [%s] InitAudioPorts isPortPersistenceValEnabled:%d\n", portName.c_str(), isPortPersistenceValEnabled);
+
+            // Query CEC status per-port — same position as DS_IARM (inside the loop)
+            try {
+                m_hdmiCecAudioDeviceDetected = getHdmiCecSinkAudioDeviceConnectedStatus();
+            } catch (const std::exception& err) {
+                LOGWARN("InitAudioPorts: CEC audio device status query failed: %s", err.what());
+            }
+
+            if (portName == "HDMI_ARC0") {
+                // COM-RPC: replaces libds vPort.getHdmiArcPortId(&portId)
+                if (audio != nullptr) {
+                    int32_t portId = -1;
+                    auto comRc = audio->GetAudioHDMIARCPortId(portHandle, portId);
+                    if (comRc == Core::ERROR_NONE && portId >= 0){
+                        hdmiArcPortId = portId;
+                        LOGWARN("HDMI ARC port ID hdmiArcPortId=%d\n", hdmiArcPortId);
+                    }
+                }
+
+                // Set audio port config. ARC will be set up by onTimer()
+#ifdef APP_CONTROL_AUDIOPORT_INIT
+                if (isPortPersistenceValEnabled) {
+                    LOGWARN("Audio Port : APP_CONTROL_AUDIOPORT_INIT Enabled\n");
 #else
-            class Job : public Core::IDispatch {
-#endif /* USE_THUNDER_R4 */
-            public:
-                Job(std::function<void()> work)
-                    : _work(std::move(work))
-                {
-                }
-                void Dispatch() override
-                {
-                    _work();
-                }
-
-            private:
-                std::function<void()> _work;
-            };
-            uint32_t getServiceState(PluginHost::IShell* shell, const string& callsign, PluginHost::IShell::state& state)
-            {
-                uint32_t result;
-                auto interface = shell->QueryInterfaceByCallsign<PluginHost::IShell>(callsign);
-                if (interface == nullptr) {
-                    result = Core::ERROR_UNAVAILABLE;
-                    std::cout << "no IShell for " << callsign << std::endl;
+                if (isPortPersistenceValEnabled && m_hdmiCecAudioDeviceDetected) {
+                    LOGWARN("Audio Port : APP_CONTROL_AUDIOPORT_INIT Disabled\n");
+#endif
+                    m_audioOutputPortConfig["HDMI_ARC"] = true;
                 } else {
-                    result = Core::ERROR_NONE;
-                    state = interface->State();
-                    std::cout << "IShell state " << state << " for " << callsign << std::endl;
-                    interface->Release();
+                    m_audioOutputPortConfig["HDMI_ARC"] = false;
                 }
-                return result;
-            }
 
-            bool TryParseIntInRange(const string& value, const int minValue, const int maxValue, int& parsedValue)
-            {
+                // Stop timer if its already running
+                if (m_timer.isActive()) {
+                    m_timer.stop();
+                }
+
                 try {
-                    if (value.empty()) {
-                        return false;
-                    }
-
-                    char* endPtr = nullptr;
-                    errno = 0;
-                    const long longValue = strtol(value.c_str(), &endPtr, 10);
-                    if ((errno == ERANGE) || (endPtr == value.c_str()) || (*endPtr != '\0')) {
-                        return false;
-                    }
-                    if ((longValue < minValue) || (longValue > maxValue)) {
-                        return false;
-                    }
-
-                    parsedValue = static_cast<int>(longValue);
-                    return true;
+                    isCecEnabled = getHdmiCecSinkCecEnableStatus();
                 } catch (const std::exception& err) {
-                    LOGERR("Exception in TryParseIntInRange: %s", err.what());
-                    return false;
-                } catch (...) {
-                    LOGERR("Unknown exception in TryParseIntInRange");
-                    return false;
+                    LOGWARN("InitAudioPorts: CEC enabled status query failed: %s", err.what());
+                }
+
+                PluginHost::IShell::state state;
+                if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
+                    LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
+
+                    if (!m_subscribed) {
+                        if ((subscribeForHdmiCecSinkEvent(HDMICECSINK_ARC_INITIATION_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_ARC_TERMINATION_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_SHORT_AUDIO_DESCRIPTOR_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_SYSTEM_AUDIO_MODE_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_AUDIO_DEVICE_CONNECTED_STATUS_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_CEC_ENABLED_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_AUDIO_DEVICE_POWER_STATUS_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_ARC_AUDIO_STATUS_EVENT) == Core::ERROR_NONE)) {
+                            m_subscribed = true;
+                            LOGINFO("%s: HdmiCecSink event subscription completed.\n", __FUNCTION__);
+                        }
+                    }
+
+                    if (m_subscribed) {
+                        LOGINFO("m_hdmiCecAudioDeviceDetected status [%d] ... \n", m_hdmiCecAudioDeviceDetected);
+
+                        if (m_hdmiCecAudioDeviceDetected) {
+                            m_systemAudioMode_Power_RequestedAndReceived = false; // Means we have not received system audio mode ON or power ON msg from AVR.
+                            LOGINFO("Audio Port : send SEND_DEVICE_AUDIO_STATUS message to update volume and mute status !!! \n");
+                            sendMsgToQueue(SEND_DEVICE_AUDIO_STATUS, NULL);
+                            sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
+                            LOGINFO("Audio Port : [HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n");
+                            // Some AVR's and SB are not sending response for power on message even though it is in ON state
+                            // Send power request immediately to query power status of the AVR
+                            LOGINFO("[HDMI_ARC0] Starting the timer to check audio device power status after power on msg!!!\n");
+                            m_AudioDevicePowerOnStatusTimer.start(AUDIO_DEVICE_POWER_TRANSITION_TIME_IN_MILLISECONDS);
+                        } /*m_hdmiCecAudioDeviceDetected */
+                        else {
+                            LOGINFO("Starting the timer to recheck audio device connection state after : %d ms\n", AUDIO_DEVICE_CONNECTION_CHECK_TIME_IN_MILLISECONDS);
+                            std::lock_guard<std::mutex> lock(m_callMutex);
+                            m_AudioDeviceDetectTimer.start(AUDIO_DEVICE_CONNECTION_CHECK_TIME_IN_MILLISECONDS);
+                        }
+                    }
+                } else {
+                    // Start the timer only if the device supports HDMI_ARC
+                    LOGINFO("Starting the timer");
+                    m_timer.start(RECONNECTION_TIME_IN_MILLISECONDS);
+                }
+            } else {
+                JsonObject aPortHdmiEnableResult;
+                JsonObject aPortHdmiEnableParam;
+
+                aPortHdmiEnableParam.Set(_T("audioPort"), portName);
+                // Get value from ds srv persistence
+#ifdef APP_CONTROL_AUDIOPORT_INIT
+                if (isPortPersistenceValEnabled) {
+                    LOGWARN("Audio Port : APP_CONTROL_AUDIOPORT_INIT Enabled\n");
+#else
+                if (isPortPersistenceValEnabled || !m_hdmiCecAudioDeviceDetected) {
+                    LOGWARN("Audio Port : APP_CONTROL_AUDIOPORT_INIT Disabled\n");
+#endif
+                    aPortHdmiEnableParam.Set(_T("enable"), true);
+                } else {
+                    aPortHdmiEnableParam.Set(_T("enable"), false);
+                }
+
+                ret = setEnableAudioPort(aPortHdmiEnableParam, aPortHdmiEnableResult);
+
+                if (ret != Core::ERROR_NONE) {
+                    LOGWARN("Audio Port : [%s] enable: %d failed ! error code%d\n", portName.c_str(), isPortPersistenceValEnabled, ret);
+                } else {
+                    LOGINFO("Audio Port : [%s] initialized successfully, enable: %d\n", portName.c_str(), isPortPersistenceValEnabled);
                 }
             }
-
-            bool TryGetBoolParam(const JsonObject& parameters, const char* label, bool& value)
-            {
-                try {
-                    if (!parameters.HasLabel(label)) {
-                        return false;
-                    }
-
-                    const string rawValue = parameters[label].String();
-                    if ((rawValue == "true") || (rawValue == "TRUE") || (rawValue == "True") || (rawValue == "1")) {
-                        value = true;
-                        return true;
-                    }
-                    if ((rawValue == "false") || (rawValue == "FALSE") || (rawValue == "False") || (rawValue == "0")) {
-                        value = false;
-                        return true;
-                    }
-
-                    return false;
-                } catch (const std::exception& err) {
-                    LOGERR("Exception in TryGetBoolParam for label '%s': %s", label, err.what());
-                    return false;
-                } catch (...) {
-                    LOGERR("Unknown exception in TryGetBoolParam for label '%s'", label);
-                    return false;
-                }
-            }
         }
 
-        SERVICE_REGISTRATION(DisplaySettings, API_VERSION_NUMBER_MAJOR, API_VERSION_NUMBER_MINOR, API_VERSION_NUMBER_PATCH);
-
-        DisplaySettings* DisplaySettings::_instance = nullptr;
-        WPEFramework::Exchange::IPowerManager::PowerState DisplaySettings::m_powerState = WPEFramework::Exchange::IPowerManager::POWER_STATE_STANDBY;
-
-        DisplaySettings::DisplaySettings()
-            : PluginHost::JSONRPC()
-            , _pwrMgrNotification(*this)
-            , _registeredEventHandlers(false)
-            , _registeredDsEventHandlers(false)
-        {
-            LOGINFO("constructor");
-            DisplaySettings::_instance = this;
-            m_client = nullptr;
-
-            CreateHandler({ 2 });
-
-            registerMethodLockedApi("getConnectedVideoDisplays", &DisplaySettings::getConnectedVideoDisplays, this);
-            registerMethodLockedApi("getConnectedAudioPorts", &DisplaySettings::getConnectedAudioPorts, this);
-            registerMethodLockedApi("setEnableAudioPort", &DisplaySettings::setEnableAudioPort, this);
-            registerMethodLockedApi("getEnableAudioPort", &DisplaySettings::getEnableAudioPort, this);
-            registerMethodLockedApi("getSupportedResolutions", &DisplaySettings::getSupportedResolutions, this);
-            registerMethodLockedApi("getSupportedVideoDisplays", &DisplaySettings::getSupportedVideoDisplays, this);
-            registerMethodLockedApi("getSupportedTvResolutions", &DisplaySettings::getSupportedTvResolutions, this);
-            registerMethodLockedApi("getSupportedSettopResolutions", &DisplaySettings::getSupportedSettopResolutions, this);
-            registerMethodLockedApi("getSupportedAudioPorts", &DisplaySettings::getSupportedAudioPorts, this);
-            registerMethodLockedApi("getSupportedAudioModes", &DisplaySettings::getSupportedAudioModes, this);
-            registerMethodLockedApi("getAudioFormat", &DisplaySettings::getAudioFormat, this);
-            registerMethodLockedApi("getZoomSetting", &DisplaySettings::getZoomSetting, this);
-            registerMethodLockedApi("setZoomSetting", &DisplaySettings::setZoomSetting, this);
-            registerMethodLockedApi("getCurrentResolution", &DisplaySettings::getCurrentResolution, this);
-            registerMethodLockedApi("setCurrentResolution", &DisplaySettings::setCurrentResolution, this);
-            registerMethodLockedApi("getSoundMode", &DisplaySettings::getSoundMode, this);
-            registerMethodLockedApi("setSoundMode", &DisplaySettings::setSoundMode, this);
-            registerMethodLockedApi("readEDID", &DisplaySettings::readEDID, this);
-            registerMethodLockedApi("readHostEDID", &DisplaySettings::readHostEDID, this);
-            registerMethodLockedApi("getActiveInput", &DisplaySettings::getActiveInput, this);
-            registerMethodLockedApi("getTvHDRSupport", &DisplaySettings::getTvHDRSupport, this);
-            registerMethodLockedApi("getSettopHDRSupport", &DisplaySettings::getSettopHDRSupport, this);
-            registerMethodLockedApi("getCurrentOutputSettings", &DisplaySettings::getCurrentOutputSettings, this);
-
-            Utils::Synchro::RegisterLockedApi("getVolumeLeveller", &DisplaySettings::getVolumeLeveller, this);
-            registerMethodLockedApi("getBassEnhancer", &DisplaySettings::getBassEnhancer, this);
-            registerMethodLockedApi("isSurroundDecoderEnabled", &DisplaySettings::isSurroundDecoderEnabled, this);
-            registerMethodLockedApi("getDRCMode", &DisplaySettings::getDRCMode, this);
-            Utils::Synchro::RegisterLockedApi("getSurroundVirtualizer", &DisplaySettings::getSurroundVirtualizer, this);
-            Utils::Synchro::RegisterLockedApi("setVolumeLeveller", &DisplaySettings::setVolumeLeveller, this);
-            registerMethodLockedApi("setBassEnhancer", &DisplaySettings::setBassEnhancer, this);
-            registerMethodLockedApi("enableSurroundDecoder", &DisplaySettings::enableSurroundDecoder, this);
-            Utils::Synchro::RegisterLockedApi("setSurroundVirtualizer", &DisplaySettings::setSurroundVirtualizer, this);
-            registerMethodLockedApi("setMISteering", &DisplaySettings::setMISteering, this);
-            registerMethodLockedApi("setGain", &DisplaySettings::setGain, this);
-            registerMethodLockedApi("getGain", &DisplaySettings::getGain, this);
-            registerMethodLockedApi("setMuted", &DisplaySettings::setMuted, this);
-            registerMethodLockedApi("getMuted", &DisplaySettings::getMuted, this);
-            registerMethodLockedApi("setVolumeLevel", &DisplaySettings::setVolumeLevel, this);
-            registerMethodLockedApi("getVolumeLevel", &DisplaySettings::getVolumeLevel, this);
-            registerMethodLockedApi("setDRCMode", &DisplaySettings::setDRCMode, this);
-            registerMethodLockedApi("getMISteering", &DisplaySettings::getMISteering, this);
-            registerMethodLockedApi("setMS12AudioCompression", &DisplaySettings::setMS12AudioCompression, this);
-            registerMethodLockedApi("getMS12AudioCompression", &DisplaySettings::getMS12AudioCompression, this);
-            registerMethodLockedApi("setDolbyVolumeMode", &DisplaySettings::setDolbyVolumeMode, this);
-            registerMethodLockedApi("getDolbyVolumeMode", &DisplaySettings::getDolbyVolumeMode, this);
-            registerMethodLockedApi("setDialogEnhancement", &DisplaySettings::setDialogEnhancement, this);
-            registerMethodLockedApi("getDialogEnhancement", &DisplaySettings::getDialogEnhancement, this);
-            registerMethodLockedApi("setIntelligentEqualizerMode", &DisplaySettings::setIntelligentEqualizerMode, this);
-            registerMethodLockedApi("getIntelligentEqualizerMode", &DisplaySettings::getIntelligentEqualizerMode, this);
-            registerMethodLockedApi("setGraphicEqualizerMode", &DisplaySettings::setGraphicEqualizerMode, this);
-            registerMethodLockedApi("getGraphicEqualizerMode", &DisplaySettings::getGraphicEqualizerMode, this);
-            registerMethodLockedApi("setMS12AudioProfile", &DisplaySettings::setMS12AudioProfile, this);
-            registerMethodLockedApi("getMS12AudioProfile", &DisplaySettings::getMS12AudioProfile, this);
-            registerMethodLockedApi("getSupportedMS12AudioProfiles", &DisplaySettings::getSupportedMS12AudioProfiles, this);
-            registerMethodLockedApi("resetDialogEnhancement", &DisplaySettings::resetDialogEnhancement, this);
-            registerMethodLockedApi("resetBassEnhancer", &DisplaySettings::resetBassEnhancer, this);
-            registerMethodLockedApi("resetSurroundVirtualizer", &DisplaySettings::resetSurroundVirtualizer, this);
-            registerMethodLockedApi("resetVolumeLeveller", &DisplaySettings::resetVolumeLeveller, this);
-
-            registerMethodLockedApi("setAssociatedAudioMixing", &DisplaySettings::setAssociatedAudioMixing, this);
-            registerMethodLockedApi("getAssociatedAudioMixing", &DisplaySettings::getAssociatedAudioMixing, this);
-            registerMethodLockedApi("setFaderControl", &DisplaySettings::setFaderControl, this);
-            registerMethodLockedApi("getFaderControl", &DisplaySettings::getFaderControl, this);
-            registerMethodLockedApi("setPrimaryLanguage", &DisplaySettings::setPrimaryLanguage, this);
-            registerMethodLockedApi("getPrimaryLanguage", &DisplaySettings::getPrimaryLanguage, this);
-            registerMethodLockedApi("setSecondaryLanguage", &DisplaySettings::setSecondaryLanguage, this);
-            registerMethodLockedApi("getSecondaryLanguage", &DisplaySettings::getSecondaryLanguage, this);
-
-            registerMethodLockedApi("getAudioDelay", &DisplaySettings::getAudioDelay, this);
-            registerMethodLockedApi("setAudioDelay", &DisplaySettings::setAudioDelay, this);
-            registerMethodLockedApi("getSinkAtmosCapability", &DisplaySettings::getSinkAtmosCapability, this);
-            registerMethodLockedApi("setAudioAtmosOutputMode", &DisplaySettings::setAudioAtmosOutputMode, this);
-            registerMethodLockedApi("setForceHDRMode", &DisplaySettings::setForceHDRMode, this);
-            registerMethodLockedApi("getTVHDRCapabilities", &DisplaySettings::getTVHDRCapabilities, this);
-            registerMethodLockedApi("isConnectedDeviceRepeater", &DisplaySettings::isConnectedDeviceRepeater, this);
-            registerMethodLockedApi("getDefaultResolution", &DisplaySettings::getDefaultResolution, this);
-            registerMethodLockedApi("setScartParameter", &DisplaySettings::setScartParameter, this);
-            registerMethodLockedApi("getSettopMS12Capabilities", &DisplaySettings::getSettopMS12Capabilities, this);
-            registerMethodLockedApi("getSettopAudioCapabilities", &DisplaySettings::getSettopAudioCapabilities, this);
-            registerMethodLockedApi("setMS12ProfileSettingsOverride", &DisplaySettings::setMS12ProfileSettingsOverride,this);
-
-            Utils::Synchro::RegisterLockedApiForHandler(GetHandler(2), "getVolumeLeveller", &DisplaySettings::getVolumeLeveller2, this);
-            Utils::Synchro::RegisterLockedApiForHandler(GetHandler(2), "setVolumeLeveller", &DisplaySettings::setVolumeLeveller2, this);
-            Utils::Synchro::RegisterLockedApiForHandler(GetHandler(2), "getSurroundVirtualizer", &DisplaySettings::getSurroundVirtualizer2, this);
-            Utils::Synchro::RegisterLockedApiForHandler(GetHandler(2), "setSurroundVirtualizer", &DisplaySettings::setSurroundVirtualizer2, this);
-
-            registerMethodLockedApi("getVideoFormat", &DisplaySettings::getVideoFormat, this);
-
-            registerMethodLockedApi("setPreferredColorDepth", &DisplaySettings::setPreferredColorDepth, this);
-            registerMethodLockedApi("getPreferredColorDepth", &DisplaySettings::getPreferredColorDepth, this);
-            registerMethodLockedApi("getColorDepthCapabilities", &DisplaySettings::getColorDepthCapabilities, this);
-            registerMethodLockedApi("getSupportedMS12Config", &DisplaySettings::getSupportedMS12Config, this);
-
-            registerMethodLockedApi("setAudioDucking", &DisplaySettings::setAudioDucking, this);
-            registerMethodLockedApi("setEnableVideoPort", &DisplaySettings::setEnableVideoPort, this);
-            registerMethodLockedApi("getEnableVideoPort", &DisplaySettings::getEnableVideoPort, this);
-            registerMethodLockedApi("getSupportedVideoCodingFormats", &DisplaySettings::getSupportedVideoCodingFormats, this);
-            registerMethodLockedApi("getVideoCodecInfo", &DisplaySettings::getVideoCodecInfo, this);
-            registerMethodLockedApi("getAudioEncoding", &DisplaySettings::getAudioEncoding, this);
-            registerMethodLockedApi("setAudioEncoding", &DisplaySettings::setAudioEncoding, this);
-            registerMethodLockedApi("getDisplayAspectRatio", &DisplaySettings::getDisplayAspectRatio, this);
-           
-
-	    m_subscribed = false; //HdmiCecSink event subscription
-	    m_hdmiInAudioDeviceConnected = false;// Tells about the device connection state, for eArc will be updated on audio device power status event handler after tinymix command and incase of ARC will be true after ARC Initiation
-	    m_arcEarcAudioEnabled = false; // Arc routing enabled/disabled
-	    m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED; // Arc connection/disconnection UI notified flag
-	    m_hdmiCecAudioDeviceDetected = false;// Audio device detected through cec ping
-            m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;// Power state of AVR
-	    m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED; // Maintains the ARC state
-	    m_requestSadRetrigger = false;
-	    m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;// Maintains the Audio device type whether Arc/eArc ocnnected
-	    m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UNKNOWN;// maintains the SAD state
-	    m_sendMsgThreadExit = false;
-	    isResCacheUpdated = false;
-            isDisplayConnectedCacheUpdated = false;
-            isStbHDRcapabilitiesCache = false;
-	    audioPortEnableStatusMap["IDLR0"] = false;
-	    audioPortEnableStatusMap["HDMI0"] = false;
-	    audioPortEnableStatusMap["SPDIF0"] = false;
-	    audioPortEnableStatusMap["SPEAKER0"] = false;
-	    audioPortEnableStatusMap["HDMI_ARC0"] = false;
-	    audioPortEnableStatusMap["HEADPHONE0"] = false;
-
-	   // m_AudioSentPoweronmsg = false;
+        if (audio != nullptr) {
+            audio->Release();
         }
+    }
 
-        DisplaySettings::~DisplaySettings()
-        {
-            LOGINFO ("dtor");
-            isResCacheUpdated = false;
-            isDisplayConnectedCacheUpdated = false;
-            isStbHDRcapabilitiesCache = false;
-	    audioPortEnableStatusMap.clear();
-        }
+    const string DisplaySettings::Initialize(PluginHost::IShell* service)
+    {
+        ASSERT(service != nullptr);
+        ASSERT(m_service == nullptr);
 
-        void DisplaySettings::AudioPortsReInitialize()
-        {
-            LOGINFO("Entering DisplaySettings::AudioPortsReInitialize");
-            try
-            {
-                device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
-                for (size_t i = 0; i < aPorts.size(); i++)
-                {
-                     device::AudioOutputPort &vPort = aPorts.at(i);
-                     vPort.reInitializeAudioOutputPort();
-                 }
-            }
-            catch(const device::Exception& err)
-            {
-                LOGWARN("Audio Port : AudioPortsReInitialize failed\n");
-                LOG_DEVICE_EXCEPTION0();
-            }
-        }
-     
-        void DisplaySettings::InitAudioPorts() 
-        {   //sample servicemanager response: {"success":true,"supportedAudioPorts":["HDMI0"]}
-            //LOGINFOMETHOD();
-            LOGINFO("Entering DisplaySettings::InitAudioPorts");
-            uint32_t ret = Core::ERROR_NONE;
-	    m_systemAudioMode_Power_RequestedAndReceived = true; //resetting this variable for bootup for AVR case
-            try
-            {
-                device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
-                for (size_t i = 0; i < aPorts.size(); i++)
-                {
-                    device::AudioOutputPort &vPort = aPorts.at(i);
-                    string portName  = vPort.getName();
-                    //By default all the ports enabled.
-                    bool isPortPersistenceValEnabled = true;
-                    LOGINFO("DisplaySettings::InitAudioPorts getting port persistance");
-                    try {
-                        isPortPersistenceValEnabled = vPort.getEnablePersist ();
-                    }
-                    catch(const device::Exception& err)
-                    {
-                        LOGWARN("Audio Port : [%s] Getting enable persist value failed. Proceeding with true\n", portName.c_str());
-                    }
-                    LOGWARN("Audio Port : [%s] InitAudioPorts isPortPersistenceValEnabled:%d\n", portName.c_str(), isPortPersistenceValEnabled);
-                    try {
-                        m_hdmiCecAudioDeviceDetected = getHdmiCecSinkAudioDeviceConnectedStatus();
-                    }
-                    catch (const device::Exception& err){
-                        LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
-                    } 
-                    if (portName == "HDMI_ARC0") {
-                        int portId = -1;
-                        vPort.getHdmiArcPortId(&portId);
-                        if(portId >= 0) {
-                           hdmiArcPortId = portId;
-                           LOGWARN("HDMI ARC port ID hdmiArcPortId=%d\n",hdmiArcPortId);
-                        }
+        m_service = service;
+        m_service->AddRef();
 
-                        //Set audio port config. ARC will be set up by onTimer()
-                        #ifdef APP_CONTROL_AUDIOPORT_INIT
-                        if(isPortPersistenceValEnabled ) {
-                            LOGWARN("Audio Port : APP_CONTROL_AUDIOPORT_INIT Enabled\n");
-                        #else
-                        if(isPortPersistenceValEnabled &&  m_hdmiCecAudioDeviceDetected) {
-                            LOGWARN("Audio Port : APP_CONTROL_AUDIOPORT_INIT Disabled\n");
-                        #endif 
-                            m_audioOutputPortConfig["HDMI_ARC"] = true;
-                        }
-                        else {
-                            m_audioOutputPortConfig["HDMI_ARC"] = false;
-                        }
-
-                        //Stop timer if its already running
-                        if(m_timer.isActive()) {
-                            m_timer.stop();
-                        }
-
-			try {
-		    		isCecEnabled = getHdmiCecSinkCecEnableStatus();
-			}
-			catch (const device::Exception& err){
-				LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
-			}
-
-            PluginHost::IShell::state state;
-            if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
-                LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
-
-                if(!m_subscribed) {
-			        if((subscribeForHdmiCecSinkEvent(HDMICECSINK_ARC_INITIATION_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_ARC_TERMINATION_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_SHORT_AUDIO_DESCRIPTOR_EVENT)== Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_SYSTEM_AUDIO_MODE_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_AUDIO_DEVICE_CONNECTED_STATUS_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_CEC_ENABLED_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_AUDIO_DEVICE_POWER_STATUS_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_ARC_AUDIO_STATUS_EVENT) == Core::ERROR_NONE)) {
-                                    m_subscribed = true;
-                                    LOGINFO("%s: HdmiCecSink event subscription completed.\n",__FUNCTION__);
-			        }
-			    }
-
-			    if(m_subscribed) {
-			     LOGINFO("m_hdmiCecAudioDeviceDetected status [%d] ... \n", m_hdmiCecAudioDeviceDetected);
-
-			     if (m_hdmiCecAudioDeviceDetected)
-			     {
-	                        m_systemAudioMode_Power_RequestedAndReceived = false; // Means we have not received system audio mode ON or power ON msg from AVR.
-                                LOGINFO("Audio Port : send SEND_DEVICE_AUDIO_STATUS message to update volume and mute status !!! \n");
-                                sendMsgToQueue(SEND_DEVICE_AUDIO_STATUS, NULL);
-				sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
-				LOGINFO("Audio Port : [HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n");
-				// Some AVR's and SB are not sending response for power on message even though it is in ON state
-				// Send power request immediately to query power status of the AVR
-				 LOGINFO("[HDMI_ARC0] Starting the timer to check audio device power status after power on msg!!!\n");
-				 m_AudioDevicePowerOnStatusTimer.start(AUDIO_DEVICE_POWER_TRANSITION_TIME_IN_MILLISECONDS);
-			     } /*m_hdmiCecAudioDeviceDetected */
-                             else {
-
-                                 LOGINFO("Starting the timer to recheck audio device connection state after : %d ms\n", AUDIO_DEVICE_CONNECTION_CHECK_TIME_IN_MILLISECONDS);
-                                 std::lock_guard<mutex> lock(m_callMutex);
-                                 m_AudioDeviceDetectTimer.start(AUDIO_DEVICE_CONNECTION_CHECK_TIME_IN_MILLISECONDS);
-                             }
-                            }
-			}
-			else {
-                            //Start the timer only if the device supports HDMI_ARC
-                            LOGINFO("Starting the timer");
-                            m_timer.start(RECONNECTION_TIME_IN_MILLISECONDS);
-			}
-                    }
-                    else {
-                        JsonObject aPortHdmiEnableResult;
-                        JsonObject aPortHdmiEnableParam;
-  
-                        aPortHdmiEnableParam.Set(_T("audioPort"), portName); //aPortHdmiEnableParam.Set(_T("audioPort"),"HDMI0");
-                        //Get value from ds srv persistence
-                        #ifdef APP_CONTROL_AUDIOPORT_INIT
-                        if(isPortPersistenceValEnabled) {
-                           LOGWARN("Audio Port : APP_CONTROL_AUDIOPORT_INIT Enabled\n");
-                        #else
-                        if(isPortPersistenceValEnabled || !m_hdmiCecAudioDeviceDetected) {
-                           LOGWARN("Audio Port : APP_CONTROL_AUDIOPORT_INIT Disabled\n");
-                        #endif
-                            aPortHdmiEnableParam.Set(_T("enable"),true);
-                        }
-                        else {
-                            aPortHdmiEnableParam.Set(_T("enable"),false);
-                        }
-
-                        ret = setEnableAudioPort (aPortHdmiEnableParam, aPortHdmiEnableResult);
-
-                        if(ret != Core::ERROR_NONE) {
-                            LOGWARN("Audio Port : [%s] enable: %d failed ! error code%d\n", portName.c_str(), isPortPersistenceValEnabled, ret);
-                        }
-                        else {
-                            LOGINFO("Audio Port : [%s] initialized successfully, enable: %d\n", portName.c_str(), isPortPersistenceValEnabled);
-                        }
-                    }
-                }
-            }
-            catch(const device::Exception& err)
-            {
-                LOGWARN("Audio Port : InitAudioPorts failed\n");
-                LOG_DEVICE_EXCEPTION0();
-            }
-        }
-
-        const string DisplaySettings::Initialize(PluginHost::IShell* service)
-        {
-            ASSERT(service != nullptr);
-            ASSERT(m_service == nullptr);
-
-            m_service = service;
-            m_service->AddRef();
-
-	    try {
+        try {
             m_sendMsgThread = std::thread(sendMsgThread);
         } catch (const std::system_error& e) {
             LOGERR("Failed to start m_sendMsgThread: %s", e.what());
         }
-	    m_timer.connect(std::bind(&DisplaySettings::onTimer, this));
-	    {
-	    std::lock_guard<std::mutex> lock(m_callMutex);
+        m_timer.connect(std::bind(&DisplaySettings::onTimer, this));
+        {
+            std::lock_guard<std::mutex> lock(m_callMutex);
             m_AudioDeviceDetectTimer.connect(std::bind(&DisplaySettings::checkAudioDeviceDetectionTimer, this));
             m_ArcDetectionTimer.connect(std::bind(&DisplaySettings::checkArcDeviceConnected, this));
             m_SADDetectionTimer.connect(std::bind(&DisplaySettings::checkSADUpdate, this));
-	    m_AudioDevicePowerOnStatusTimer.connect(std::bind(&DisplaySettings::checkAudioDevicePowerStatusTimer, this));
-	    }
-
-            InitializePowerManager();
-            try
-            {
-                device::Manager::Initialize();
-                LOGINFO("device::Manager::Initialize success");
-                registerDsEventHandlers();
-            }
-            catch(const device::Exception& err)
-            {
-                LOGINFO("device::Manager::Initialize failed");
-                LOG_DEVICE_EXCEPTION0();
-            }
-
-            if (WPEFramework::Exchange::IPowerManager::POWER_STATE_ON == getSystemPowerState())
-            {
-                InitAudioPorts();
-            }
-            else
-            {
-                LOGWARN("Current power state %d", m_powerState);
-            }
-            LOGWARN ("DisplaySettings::Initialize completes line:%d", __LINE__);
-
-            // On success return empty, to indicate there is no error text.
-            return (string());
+            m_AudioDevicePowerOnStatusTimer.connect(std::bind(&DisplaySettings::checkAudioDevicePowerStatusTimer, this));
         }
 
-        void DisplaySettings::Deinitialize(PluginHost::IShell* service)
+        InitializePowerManager();
+        // COM-RPC path: open the DeviceSettings plugin COM-RPC link.
+        // Sub-interface acquisition and notification registration happen in
+        // OnDeviceSettingsActivated() when the DeviceSettings plugin is ready.
+        DSHelper::Open(service, "DisplaySettings");
+
+        // On success return empty, to indicate there is no error text.
+        return (string());
+    }
+
+    void DisplaySettings::Deinitialize(PluginHost::IShell* service)
+    {
+        LOGINFO("Enetering DisplaySettings::Deinitialize");
+        if (_powerManagerPlugin) {
+            // Unregister from PowerManagerPlugin Notification
+            _powerManagerPlugin->Unregister(_pwrMgrNotification.baseInterface<Exchange::IPowerManager::IModeChangedNotification>());
+            _powerManagerPlugin.Reset();
+        }
+
+        _registeredEventHandlers = false;
+
         {
-            LOGINFO("Enetering DisplaySettings::Deinitialize");
-            if (_powerManagerPlugin) {
-		// Unregister from PowerManagerPlugin Notification
-		_powerManagerPlugin->Unregister(_pwrMgrNotification.baseInterface<Exchange::IPowerManager::IModeChangedNotification>());
-                _powerManagerPlugin.Reset();
-            }
-
-            _registeredEventHandlers = false;
-
-            {
 
             std::unique_lock<std::mutex> lock(DisplaySettings::_instance->m_sendMsgMutex);
             DisplaySettings::_instance->m_sendMsgThreadExit = true;
-                    DisplaySettings::_instance->m_sendMsgThreadRun = true;
-                    DisplaySettings::_instance->m_sendMsgCV.notify_one();
-            }
-            int count = 0;
-            while(audioPortInitActive && count < 20){
-                sleep(100);
-                count++;
-            }
-            try
-            {
+            DisplaySettings::_instance->m_sendMsgThreadRun = true;
+            DisplaySettings::_instance->m_sendMsgCV.notify_one();
+        }
+        int count = 0;
+        while (audioPortInitActive && count < 20) {
+            sleep(100);
+            count++;
+        }
+        try {
             if (m_sendMsgThread.joinable())
-            	m_sendMsgThread.join();
-            }
-            catch(const std::system_error& e)
-               {
+                m_sendMsgThread.join();
+        } catch (const std::system_error& e) {
             LOGERR("system_error exception in thread join %s", e.what());
-            }
-            catch(const std::exception& e)
-            {
+        } catch (const std::exception& e) {
             LOGERR("exception in thread join %s", e.what());
         }
 
-            stopCecTimeAndUnsubscribeEvent();
+        stopCecTimeAndUnsubscribeEvent();
 
-            device::Host::getInstance().UnRegister(baseInterface<device::Host::IDisplayEvents>());
-            device::Host::getInstance().UnRegister(baseInterface<device::Host::IAudioOutputPortEvents>());
-            device::Host::getInstance().UnRegister(baseInterface<device::Host::IDisplayDeviceEvents>());
-            device::Host::getInstance().UnRegister(baseInterface<device::Host::IHdmiInEvents>());
-            device::Host::getInstance().UnRegister(baseInterface<device::Host::IVideoDeviceEvents>());
-            device::Host::getInstance().UnRegister(baseInterface<device::Host::IVideoOutputPortEvents>());
-            _registeredDsEventHandlers = false;
-
-            try
-            {
-                device::Manager::DeInitialize();
-                LOGINFO("device::Manager::DeInitialize success");
-            }
-            catch(const device::Exception& err)
-            {
-                LOGINFO("device::Manager::DeInitialize failed");
-                LOG_DEVICE_EXCEPTION0();
-            }
-
-            DisplaySettings::_instance = nullptr;
-
-            ASSERT(service == m_service);
-
-            m_service->Release();
-            m_service = nullptr;
-        }
-
-        void DisplaySettings::InitializePowerManager()
+        // COM-RPC path: unregister notifications from all DS sub-interfaces then close the link.
         {
-            LOGINFO("Connect the COM-RPC socket\n");
-            PowerState pwrStateCur = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
-            PowerState pwrStatePrev = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
-            Core::hresult retStatus = Core::ERROR_GENERAL;
-            _powerManagerPlugin = PowerManagerInterfaceBuilder(_T("org.rdk.PowerManager"))
-                .withIShell(m_service)
-                .withRetryIntervalMS(200)
-                .withRetryCount(25)
-                .createInterface();
+            auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+            if (vp != nullptr) {
+                vp->Unregister(&_DSVideoPortNotification);
+                vp->Release();
+            }
+        }
+        {
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                audio->Unregister(&_DSAudioNotification);
+                audio->Release();
+            }
+        }
+        {
+            auto* disp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+            if (disp != nullptr) {
+                disp->Unregister(&_DSDisplayHotPlugNotification);
+                disp->Unregister(&_DSDisplayNotification);
+                disp->Release();
+            }
+        }
+        {
+            auto* vd = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+            if (vd != nullptr) {
+                vd->Unregister(&_DSVideoDeviceNotification);
+                vd->Release();
+            }
+        }
+        {
+            auto* hdmiIn = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsHDMIIn>();
+            if (hdmiIn != nullptr) {
+                hdmiIn->Unregister(&_DSHDMIInNotification);
+                hdmiIn->Release();
+            }
+        }
+        DSHelper::Close();
+        _registeredDsEventHandlers = false;
 
-            registerEventHandlers();
+        DisplaySettings::_instance = nullptr;
 
-                ASSERT (_powerManagerPlugin);
-                if (_powerManagerPlugin){
-                    retStatus = _powerManagerPlugin->GetPowerState(pwrStateCur, pwrStatePrev);
+        ASSERT(service == m_service);
+
+        m_service->Release();
+        m_service = nullptr;
+    }
+
+    void DisplaySettings::InitializePowerManager()
+    {
+        LOGINFO("Connect the COM-RPC socket\n");
+        PowerState pwrStateCur = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
+        PowerState pwrStatePrev = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
+        Core::hresult retStatus = Core::ERROR_GENERAL;
+        _powerManagerPlugin = PowerManagerInterfaceBuilder(_T("org.rdk.PowerManager"))
+                                  .withIShell(m_service)
+                                  .withRetryIntervalMS(200)
+                                  .withRetryCount(25)
+                                  .createInterface();
+
+        registerEventHandlers();
+
+        ASSERT(_powerManagerPlugin);
+        if (_powerManagerPlugin) {
+            retStatus = _powerManagerPlugin->GetPowerState(pwrStateCur, pwrStatePrev);
+        }
+        if (Core::ERROR_NONE == retStatus) {
+            m_powerState = pwrStateCur;
+            LOGINFO("DisplaySettings::m_powerState:%d", m_powerState);
+        }
+    }
+
+    void DisplaySettings::registerEventHandlers()
+    {
+        ASSERT(nullptr != _powerManagerPlugin);
+
+        if (!_registeredEventHandlers && _powerManagerPlugin) {
+            _registeredEventHandlers = true;
+            _powerManagerPlugin->Register(_pwrMgrNotification.baseInterface<Exchange::IPowerManager::IModeChangedNotification>());
+        }
+    }
+    int DisplaySettings::getAudioDeviceSADState(void)
+    {
+        // function used to read the current SAD state with lock
+        std::lock_guard<std::mutex> lock(m_SadMutex);
+        return m_AudioDeviceSADState;
+    }
+
+    void DisplaySettings::setAudioDeviceSADState(int newState)
+    {
+        // function used to set the required SAD state with lock
+        std::lock_guard<std::mutex> lock(m_SadMutex);
+        LOGINFO("Updating m_AudioDeviceSADState : %d", newState);
+        m_AudioDeviceSADState = newState;
+    }
+
+    int DisplaySettings::getCurrentArcRoutingState(void)
+    {
+        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+        return m_currentArcRoutingState;
+    }
+
+    bool DisplaySettings::isDisplayConnected(std::string port)
+    {
+        bool isConnected = isHdmiDisplayConnected;
+        if (!isDisplayConnectedCacheUpdated || !(Utils::String::stringContains(port, "HDMI0"))) {
+            const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(port);
+            if (INVALID_DS_HANDLE != videoHandle) {
+                auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    bool connected = false;
+                    auto hr = vp->IsVideoPortDisplayConnected(videoHandle, connected);
+                    if (hr == Core::ERROR_NONE) {
+                        LOGINFO("Video port '%s' is %s", port.c_str(), connected ? "connected" : "disconnected");
+                    } else {
+                        LOGERR("Failed to check video port '%s' connection status, Error: %d", port.c_str(), hr);
+                    }
+                    vp->Release();
+                    isHdmiDisplayConnected = connected;
+                    isConnected = connected;
+                    isDisplayConnectedCacheUpdated = true;
                 }
-                if (Core::ERROR_NONE == retStatus)
-                {
-                    m_powerState = pwrStateCur;
-                    LOGINFO("DisplaySettings::m_powerState:%d", m_powerState);
+                else {
+                    LOGERR("Failed to acquire IDeviceSettingsVideoPort interface");
                 }
             }
+        } else {
+            LOGINFO("Using isDisplayConnected cache \n");
+        }
+        return isConnected;
+    }
 
-        void DisplaySettings::registerEventHandlers()
+    // ====================================================================
+    // COM-RPC: DSHelper overrides
+    // Called by the framework when the DeviceSettings plugin activates or
+    // deactivates (including after a restart).
+    // ====================================================================
+
+    void DisplaySettings::OnDeviceSettingsActivated()
+    {
+        LOGINFO("DisplaySettings: OnDeviceSettingsActivated — registering DS sub-interface notifications");
+        // Config is already loaded by DSHelper::Operational(true)
+        // before this override is called. Do NOT call LoadAllConfigs() here.
+
+        // --- VideoPort sub-interface ---
         {
-            ASSERT (nullptr != _powerManagerPlugin);
-
-            if(!_registeredEventHandlers && _powerManagerPlugin) {
-                _registeredEventHandlers = true;
-                _powerManagerPlugin->Register(_pwrMgrNotification.baseInterface<Exchange::IPowerManager::IModeChangedNotification>());
+            auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+            if (vp != nullptr) {
+                vp->Register("DisplaySettings", &_DSVideoPortNotification);
+                vp->Release();
+            }
+            else {
+                LOGERR("Failed to acquire IDeviceSettingsVideoPort interface");
             }
         }
-        int DisplaySettings::getAudioDeviceSADState(void) {
-            //function used to read the current SAD state with lock
-            std::lock_guard<std::mutex> lock(m_SadMutex);
-            return m_AudioDeviceSADState;
-        }
 
-        void DisplaySettings::setAudioDeviceSADState(int newState) {
-            // function used to set the required SAD state with lock
-            std::lock_guard<std::mutex> lock(m_SadMutex);
-            LOGINFO("Updating m_AudioDeviceSADState : %d", newState);
-            m_AudioDeviceSADState = newState;
-        }
-
-        int DisplaySettings::getCurrentArcRoutingState(void) {
-            std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-            return m_currentArcRoutingState;
-        }
-        
-
-        bool DisplaySettings::isDisplayConnected (std::string port){
-            bool isConnected = isHdmiDisplayConnected;
-            if (!isDisplayConnectedCacheUpdated || !(Utils::String::stringContains(port, "HDMI0"))) {
-                device::VideoOutputPort vPort = device::VideoOutputPortConfig::getInstance().getPort(port.c_str());
-                isHdmiDisplayConnected = vPort.isDisplayConnected();
-                isConnected = isHdmiDisplayConnected;
-                isDisplayConnectedCacheUpdated = true;
-	    } else {
-                LOGINFO("Using isDisplayConnected cache \n");
-            }
-            return isConnected;
-	}
-
-        void setResponseArray(JsonObject& response, const char* key, const vector<string>& items)
+        // --- Audio sub-interface ---
         {
-            JsonArray arr;
-            for(auto& i : items) arr.Add(JsonValue(i));
-
-            response[key] = arr;
-
-            string json;
-            response.ToString(json);
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                audio->Register("DisplaySettings", &_DSAudioNotification);
+                audio->Release();
+            }
+            else {
+                LOGERR("Failed to acquire IDeviceSettingsAudio interface");
+            }
         }
 
-        //Begin methods
-        uint32_t DisplaySettings::getConnectedVideoDisplays(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response: {"connectedVideoDisplays":["HDMI0"],"success":true}
-            //this                          : {"connectedVideoDisplays":["HDMI0"]}
-            LOGINFOMETHOD();
-
-            vector<string> connectedVideoDisplays;
-            getConnectedVideoDisplaysHelper(connectedVideoDisplays);
-            setResponseArray(response, "connectedVideoDisplays", connectedVideoDisplays);
-            returnResponse(true);
+        // --- Display sub-interface ---
+        {
+            auto* disp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+            if (disp != nullptr) {
+                disp->Register("DisplaySettings", &_DSDisplayHotPlugNotification);
+                disp->Register("DisplaySettings", &_DSDisplayNotification);
+                disp->Release();
+            }
+            else {
+                LOGERR("Failed to acquire IDeviceSettingsDisplay interface");
+            }
         }
 
-        uint32_t DisplaySettings::getConnectedAudioPorts(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response: {"success":true,"connectedAudioPorts":["HDMI0"]}
-            LOGINFOMETHOD();
-            vector<string> connectedAudioPorts;
-            try
-            {
-                device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
-                for (size_t i = 0; i < aPorts.size(); i++)
-                {
-                    device::AudioOutputPort &aPort = aPorts.at(i);
-                    string portName = std::move(aPort.getName());
-                    if (aPort.isConnected())
-                    {
+        // --- VideoDevice sub-interface ---
+        {
+            auto* vd = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+            if (vd != nullptr) {
+                vd->Register("DisplaySettings", &_DSVideoDeviceNotification);
+                vd->Release();
+            }
+            else {
+                LOGERR("Failed to acquire IDeviceSettingsVideoDevice interface");
+            }
+        }
+
+        // --- HDMIIn sub-interface ---
+        // DS_IARM equivalent: registers IARMGroupHdmiIn for IARM_BUS_DSMGR_EVENT_HDMI_IN_HOTPLUG
+        // which dispatches IHdmiInEvents::OnHdmiInEventHotPlug. Here we register for the
+        // COM-RPC equivalent: IDeviceSettingsHDMIIn::INotification::OnHDMIInEventHotPlug.
+        {
+            auto* hdmiIn = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsHDMIIn>();
+            if (hdmiIn != nullptr) {
+                hdmiIn->Register("DisplaySettings", &_DSHDMIInNotification);
+                hdmiIn->Release();
+            }
+            else {
+                LOGERR("Failed to acquire IDeviceSettingsHDMIIn interface");
+            }
+        }
+
+        _registeredDsEventHandlers = true;
+        isDisplayConnectedCacheUpdated = false;
+        isResCacheUpdated = false;
+        isStbHDRcapabilitiesCache = false;
+
+        // Trigger audio port initialization on (re-)activation
+        if (WPEFramework::Exchange::IPowerManager::POWER_STATE_ON == getSystemPowerState()) {
+            InitAudioPorts();
+        }
+    }
+
+    void DisplaySettings::OnDeviceSettingsDeactivated()
+    {
+        LOGINFO("DisplaySettings: OnDeviceSettingsDeactivated — invalidating cached handles");
+        _registeredDsEventHandlers = false;
+        isDisplayConnectedCacheUpdated = false;
+        isResCacheUpdated = false;
+        isStbHDRcapabilitiesCache = false;
+    }
+
+    void DisplaySettings::dispatchEvent(Event ev, ParamsType params)
+    {
+        Core::IWorkerPool::Instance().Submit(DispatchJob::Create(this, ev, std::move(params)));
+    }
+
+    void DisplaySettings::Dispatch(Event ev, const ParamsType params)
+    {
+        if (!DisplaySettings::_instance) return;
+        if (ev == EV_RESOLUTION_POST_CHANGE) {
+            auto t = boost::get<std::tuple<uint32_t, uint32_t>>(params);
+            DisplaySettings::_instance->OnDSResolutionPostChange(std::get<0>(t), std::get<1>(t));
+        } else if (ev == EV_VIDEO_FORMAT_UPDATE) {
+            auto t = boost::get<std::tuple<uint32_t>>(params);
+            DisplaySettings::_instance->OnDSVideoFormatUpdate(std::get<0>(t));
+        } else if (ev == EV_AUDIO_PORT_STATE_CHANGED) {
+            auto t = boost::get<std::tuple<uint32_t>>(params);
+            DisplaySettings::_instance->OnDSAudioPortStateChanged(std::get<0>(t));
+        } else if (ev == EV_DISPLAY_HDMI_HOTPLUG) {
+            auto t = boost::get<std::tuple<uint32_t>>(params);
+            DisplaySettings::_instance->OnDSDisplayHDMIHotPlug(std::get<0>(t));
+        } else if (ev == EV_ARC_INITIATION) {
+            auto t = boost::get<std::tuple<JsonObject>>(params);
+            DisplaySettings::_instance->processARCInitiationEvent(std::get<0>(t));
+        } else if (ev == EV_SHORT_AUDIO_DESCRIPTOR) {
+            auto t = boost::get<std::tuple<JsonObject>>(params);
+            DisplaySettings::_instance->processShortAudioDescriptorEvent(std::get<0>(t));
+        } else if (ev == EV_AUDIO_DEVICE_POWER_STATUS) {
+            auto t = boost::get<std::tuple<JsonObject>>(params);
+            DisplaySettings::_instance->processAudioDevicePowerStatusEvent(std::get<0>(t));
+        }
+    }
+
+    // ====================================================================
+    // COM-RPC: private event forwarders called from notification delegates
+    // These bridge COM-RPC notification calls to the existing notification
+    // dispatchers (resolutionPreChange, notifyAudioFormatChange, etc.)
+    // ====================================================================
+
+    void DisplaySettings::OnDSResolutionPreChange()
+    {
+        LOGINFO("Received COM-RPC OnResolutionPreChange");
+        if (DisplaySettings::_instance) {
+            DisplaySettings::_instance->resolutionPreChange();
+        }
+        isResCacheUpdated = false;
+    }
+
+    void DisplaySettings::OnDSResolutionPostChange(uint32_t width, uint32_t height)
+    {
+        LOGINFO("Received COM-RPC OnResolutionPostChange %ux%u", width, height);
+        if (DisplaySettings::_instance) {
+            DisplaySettings::_instance->resolutionChanged(static_cast<int>(width), static_cast<int>(height));
+        }
+    }
+
+    void DisplaySettings::OnDSVideoFormatUpdate(uint32_t videoFormatHDR)
+    {
+        LOGINFO("Received COM-RPC OnVideoFormatUpdate hdr=%u", videoFormatHDR);
+        if (DisplaySettings::_instance) {
+            DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
+        }
+    }
+
+    void DisplaySettings::OnDSAudioOutHotPlug(int portType, uint32_t portNumber, bool isPortConnected)
+    {
+        LOGINFO("Received COM-RPC OnAudioOutHotPlug portType=%d connected=%d", portType, isPortConnected);
+        if (DisplaySettings::_instance) {
+            // DS_IARM: OnAudioOutHotPlug — calls connectedAudioPortUpdated unconditionally, then updates
+            // m_arcEarcConnectionNotifiedToUI for the HDMI_ARC port type. Nothing else.
+            // NOTE: DS_IARM's OnHdmiInEventHotPlug (IHdmiInEvents/IARM_BUS_DSMGR_EVENT_HDMI_IN_HOTPLUG)
+            // is handled separately by OnDSHDMIInEventHotPlug via IDeviceSettingsHDMIIn::INotification.
+            DisplaySettings::_instance->connectedAudioPortUpdated(portType, isPortConnected);
+            if (portType == static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HDMIARC)) {
+                if (isPortConnected) {
+                    DisplaySettings::_instance->m_arcEarcConnectionNotifiedToUI = ARC_EARC_CONNECTED;
+                } else {
+                    DisplaySettings::_instance->m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
+                }
+            }
+        }
+    }
+
+    void DisplaySettings::OnDSHDMIInEventHotPlug(int port, bool isConnected)
+    {
+        LOGINFO("Received COM-RPC OnHDMIInEventHotPlug port=%d connected=%d", port, isConnected);
+        if (DisplaySettings::_instance) {
+            // DS_IARM: OnHdmiInEventHotPlug — only processes the ARC/eARC port (hdmiArcPortId).
+            // On physical ARC port disconnect: if audio device was connected, resets connection
+            // state, notifies UI via connectedAudioPortUpdated, and clears SAD/ARC routing state.
+            if (port == hdmiArcPortId) {
+                try {
+                    LOGINFO("OnHDMIInEventHotPlug: HDMI_ARC port, connected=%d", isConnected);
+                    if (!isConnected) {
+                        std::lock_guard<std::mutex> lock(DisplaySettings::_instance->m_AudioDeviceStatesUpdateMutex);
+                        LOGINFO("Current Arc/eArc states m_currentArcRoutingState=%d, m_hdmiInAudioDeviceConnected=%d, "
+                                "m_arcEarcAudioEnabled=%d, m_hdmiInAudioDeviceType=%d",
+                                DisplaySettings::_instance->m_currentArcRoutingState,
+                                DisplaySettings::_instance->m_hdmiInAudioDeviceConnected,
+                                DisplaySettings::_instance->m_arcEarcAudioEnabled,
+                                DisplaySettings::_instance->m_hdmiInAudioDeviceType);
+                        if (DisplaySettings::_instance->m_hdmiInAudioDeviceConnected == true) {
+                            DisplaySettings::_instance->m_hdmiInAudioDeviceConnected = false;
+                            DisplaySettings::_instance->m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
+                            DisplaySettings::_instance->connectedAudioPortUpdated(
+                                static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HDMIARC),
+                                false);
+                            DisplaySettings::_instance->m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
+                            LOGINFO("Received OnHDMIInEventHotPlug HDMI_ARC Port disconnected. Notify UI !!!");
+                        }
+                        DisplaySettings::_instance->m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
+                        DisplaySettings::_instance->m_requestSadRetrigger = false;
+                        if (DisplaySettings::_instance->m_AudioDeviceSADState != AUDIO_DEVICE_SAD_CLEARED) {
+                            DisplaySettings::_instance->m_AudioDeviceSADState = AUDIO_DEVICE_SAD_CLEARED;
+                            LOGINFO("OnDSHDMIInEventHotPlug: Clearing Audio device SAD");
+                            sad_list.clear();
+                        } else {
+                            LOGINFO("SAD already cleared");
+                        }
+                    } // Release Mutex m_AudioDeviceStatesUpdateMutex
+                } catch (const std::exception& err) {
+                    LOGERR("OnDSHDMIInEventHotPlug exception: %s", err.what());
+                }
+            } // hdmiArcPortId
+        }
+    }
+
+    void DisplaySettings::OnDSAudioFormatUpdate(uint32_t audioFormat)
+    {
+        LOGINFO("Received COM-RPC OnAudioFormatUpdate format=%u", audioFormat);
+        if (DisplaySettings::_instance) {
+            DisplaySettings::_instance->notifyAudioFormatChange(audioFormat);
+        }
+    }
+
+    void DisplaySettings::OnDSDolbyAtmosCapabilitiesChanged(uint32_t atmosCapability, bool status)
+    {
+        LOGINFO("Received COM-RPC OnDolbyAtmosCapabilitiesChanged cap=%u status=%d", atmosCapability, status);
+        if (DisplaySettings::_instance && status) {
+            DisplaySettings::_instance->notifyAtmosCapabilityChange(atmosCapability);
+        }
+    }
+
+    void DisplaySettings::OnDSAudioPortStateChanged(uint32_t audioPortState)
+    {
+        LOGINFO("Received COM-RPC OnAudioPortStateChanged state=%u", audioPortState);
+        if (audioPortState == static_cast<uint32_t>(Exchange::IDeviceSettingsAudio::AudioPortState::AUDIO_PORT_STATE_INITIALIZED)) {
+            if (DisplaySettings::_instance) {
+                DisplaySettings::_instance->AudioPortsReInitialize();
+                DisplaySettings::_instance->InitAudioPorts();
+            }
+        }
+    }
+
+    void DisplaySettings::OnDSAssociatedAudioMixingChanged(bool mixing)
+    {
+        LOGINFO("Received COM-RPC OnAssociatedAudioMixingChanged mixing=%d", mixing);
+        if (DisplaySettings::_instance) {
+            DisplaySettings::_instance->notifyAssociatedAudioMixingChange(mixing);
+        }
+    }
+
+    void DisplaySettings::OnDSAudioFaderControlChanged(int32_t mixerBalance)
+    {
+        LOGINFO("Received COM-RPC OnAudioFaderControlChanged balance=%d", mixerBalance);
+        if (DisplaySettings::_instance) {
+            DisplaySettings::_instance->notifyFaderControlChange(static_cast<bool>(mixerBalance));
+        }
+    }
+
+    void DisplaySettings::OnDSAudioPrimaryLanguageChanged(const string& primaryLanguage)
+    {
+        LOGINFO("Received COM-RPC OnAudioPrimaryLanguageChanged lang=%s", primaryLanguage.c_str());
+        if (DisplaySettings::_instance) {
+            DisplaySettings::_instance->notifyPrimaryLanguageChange(primaryLanguage);
+        }
+    }
+
+    void DisplaySettings::OnDSAudioSecondaryLanguageChanged(const string& secondaryLanguage)
+    {
+        LOGINFO("Received COM-RPC OnAudioSecondaryLanguageChanged lang=%s", secondaryLanguage.c_str());
+        if (DisplaySettings::_instance) {
+            DisplaySettings::_instance->notifySecondaryLanguageChange(secondaryLanguage);
+        }
+    }
+
+    void DisplaySettings::OnDSDisplayHDMIHotPlug(uint32_t displayEvent)
+    {
+        LOGINFO("Received COM-RPC OnDisplayHDMIHotPlug event=%u", displayEvent);
+        isResCacheUpdated = false;
+        isDisplayConnectedCacheUpdated = false;
+        isStbHDRcapabilitiesCache = false;
+        if (DisplaySettings::_instance) {
+            // DS_DISPLAY_EVENT_CONNECTED = 0 maps to HDMI_HOT_PLUG_EVENT_CONNECTED (0)
+            DisplaySettings::_instance->connectedVideoDisplaysUpdated(static_cast<int>(displayEvent));
+        }
+    }
+
+    void DisplaySettings::OnDSDisplayRxSense(uint32_t displayEvent)
+    {
+        LOGINFO("Received COM-RPC OnDisplayRxSense event=%u", displayEvent);
+        if (DisplaySettings::_instance) {
+            if (displayEvent == static_cast<uint32_t>(Exchange::IDeviceSettingsDisplay::DisplayEvent::DS_DISPLAY_RXSENSE_ON)) {
+                DisplaySettings::_instance->activeInputChanged(true);
+            } else if (displayEvent == static_cast<uint32_t>(Exchange::IDeviceSettingsDisplay::DisplayEvent::DS_DISPLAY_RXSENSE_OFF)) {
+                DisplaySettings::_instance->activeInputChanged(false);
+            }
+        }
+    }
+
+    void DisplaySettings::OnDSZoomSettingChanged(int32_t zoomSetting)
+    {
+        LOGINFO("Received COM-RPC OnZoomSettingChanged zoom=%d", zoomSetting);
+        // Map zoom integer to named string (0=NONE, 1=FULL per dsVideoZoom_t equivalent)
+        if (DisplaySettings::_instance) {
+            if (zoomSetting == 0) {
+                DisplaySettings::_instance->zoomSettingUpdated("NONE");
+            } else if (zoomSetting == 1) {
+                DisplaySettings::_instance->zoomSettingUpdated("FULL");
+            }
+        }
+    }
+
+    // COM-RPC stub for registerDsEventHandlers() — actual registration is in OnDeviceSettingsActivated()
+    void DisplaySettings::registerDsEventHandlers()
+    {
+        LOGINFO("DisplaySettings (COM-RPC): DS notifications registered via OnDeviceSettingsActivated()");
+    }
+
+    void setResponseArray(JsonObject& response, const char* key, const vector<string>& items)
+    {
+        JsonArray arr;
+        for (auto& i : items)
+            arr.Add(JsonValue(i));
+
+        response[key] = arr;
+
+        string json;
+        response.ToString(json);
+    }
+
+    // Begin methods
+    uint32_t DisplaySettings::getConnectedVideoDisplays(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response: {"connectedVideoDisplays":["HDMI0"],"success":true}
+        // this                          : {"connectedVideoDisplays":["HDMI0"]}
+        LOGINFOMETHOD();
+
+        vector<string> connectedVideoDisplays;
+        getConnectedVideoDisplaysHelper(connectedVideoDisplays);
+        setResponseArray(response, "connectedVideoDisplays", connectedVideoDisplays);
+        returnResponse(true);
+    }
+
+    uint32_t DisplaySettings::getConnectedAudioPorts(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response: {"success":true,"connectedAudioPorts":["HDMI0"]}
+        LOGINFOMETHOD();
+        vector<string> connectedAudioPorts;
+        {
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                for (const auto& kv : DSHelper::getAudioPortHandleEntries()) {
+                    const std::string& portName = kv.first;
+                    int32_t portHandle = kv.second;
+                    if (DSHelper::isAudioOutputPortConnected(audio, portName, portHandle)) {
+                        LOGINFO("Audio Port : [%s] is connected \n", portName.c_str());
                         bool hdmiArcConnected;
                         {
                             std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
                             hdmiArcConnected = m_hdmiInAudioDeviceConnected;
                         }
-                        if((portName == "HDMI_ARC0") && (hdmiArcConnected != true)) {
+                        if ((portName == "HDMI_ARC0") && (hdmiArcConnected != true)) {
                             continue;
                         }
                         vectorSet(connectedAudioPorts, portName);
                     }
-		            else if (portName == "HDMI_ARC0")
-		            {
+                    else if (portName == "HDMI_ARC0") {
                         bool shouldResetArc = false;
                         {
                             std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
                             shouldResetArc = (m_hdmiInAudioDeviceConnected == true && m_arcEarcAudioEnabled == false);
                         }
-                        if (shouldResetArc)
-                        {
-	                   
-			            {
-			                std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-			                m_hdmiInAudioDeviceConnected = false;
-			                m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
-			                m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
-			                m_requestSadRetrigger = false;
-			                m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
-			                m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UNKNOWN;
-			                m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
-			            }
-			            DisplaySettings::_instance->connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, false);
-			            LOGINFO("[HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n");
-			            sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
-                        }
-		            }
-                }
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-            }
-            setResponseArray(response, "connectedAudioPorts", connectedAudioPorts);
-            returnResponse(true);
-        }
-
-        uint32_t DisplaySettings::getSupportedResolutions(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:{"success":true,"supportedResolutions":["720p","1080i","1080p60"]}
-            LOGINFOMETHOD();
-            std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
-            vector<string> supportedResolutions;
-            try
-            {
-                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
-                // Check if display is connected
-                if (vPort.isDisplayConnected())
-                {
-                    const device::List<device::VideoResolution> resolutions = device::VideoOutputPortConfig::getInstance().getPortType(vPort.getType().getId()).getSupportedResolutions();
-                    for (size_t i = 0; i < resolutions.size(); i++) {
-                        const device::VideoResolution &resolution = resolutions.at(i);
-                        string supportedResolution = resolution.getName();
-                        vectorSet(supportedResolutions,supportedResolution);
-                    }
-                }
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(videoDisplay);
-            }
-            setResponseArray(response, "supportedResolutions", supportedResolutions);
-            returnResponse(true);
-        }
-
-        uint32_t DisplaySettings::getSupportedVideoDisplays(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response: {"supportedVideoDisplays":["HDMI0"],"success":true}
-            LOGINFOMETHOD();
-            vector<string> supportedVideoDisplays;
-            try
-            {
-                device::List<device::VideoOutputPort> vPorts = device::Host::getInstance().getVideoOutputPorts();
-                for (size_t i = 0; i < vPorts.size(); i++)
-                {
-                    device::VideoOutputPort &vPort = vPorts.at(i);
-                    string videoDisplay = (vPort.getName());
-                    vectorSet(supportedVideoDisplays, videoDisplay);
-                }
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-            }
-            setResponseArray(response, "supportedVideoDisplays", supportedVideoDisplays);
-            returnResponse(true);
-        }
-
-        uint32_t DisplaySettings::getSupportedTvResolutions(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:{"success":true,"supportedTvResolutions":["480i","480p","576i","720p","1080i","1080p"]}
-            LOGINFOMETHOD();
-            std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
-            vector<string> supportedTvResolutions;
-            try
-            {
-                int tvResolutions = 0;
-                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
-                vPort.getSupportedTvResolutions(&tvResolutions);
-                if(!tvResolutions)supportedTvResolutions.emplace_back("none");
-                if(tvResolutions & dsTV_RESOLUTION_480i)supportedTvResolutions.emplace_back("480i");
-                if(tvResolutions & dsTV_RESOLUTION_480i)supportedTvResolutions.emplace_back("480i60");
-                if(tvResolutions & dsTV_RESOLUTION_480p)supportedTvResolutions.emplace_back("480p");
-                if(tvResolutions & dsTV_RESOLUTION_480p)supportedTvResolutions.emplace_back("480p60");
-                if(tvResolutions & dsTV_RESOLUTION_576i)supportedTvResolutions.emplace_back("576i50");
-                if(tvResolutions & dsTV_RESOLUTION_576p)supportedTvResolutions.emplace_back("576p50");
-                if(tvResolutions & dsTV_RESOLUTION_720p50)supportedTvResolutions.emplace_back("720p50");
-                if(tvResolutions & dsTV_RESOLUTION_720p)supportedTvResolutions.emplace_back("720p");
-                if(tvResolutions & dsTV_RESOLUTION_720p)supportedTvResolutions.emplace_back("720p60");
-                if(tvResolutions & dsTV_RESOLUTION_1080p24)supportedTvResolutions.emplace_back("1080p24");
-                if(tvResolutions & dsTV_RESOLUTION_1080p25)supportedTvResolutions.emplace_back("1080p25");
-                if(tvResolutions & dsTV_RESOLUTION_1080p30)supportedTvResolutions.emplace_back("1080p30");
-                if(tvResolutions & dsTV_RESOLUTION_1080i50)supportedTvResolutions.emplace_back("1080i50");
-                if(tvResolutions & dsTV_RESOLUTION_1080p50)supportedTvResolutions.emplace_back("1080p50");
-                if(tvResolutions & dsTV_RESOLUTION_1080i)supportedTvResolutions.emplace_back("1080i");
-                if(tvResolutions & dsTV_RESOLUTION_1080i)supportedTvResolutions.emplace_back("1080i60");
-                if(tvResolutions & dsTV_RESOLUTION_1080p)supportedTvResolutions.emplace_back("1080p");
-                if(tvResolutions & dsTV_RESOLUTION_1080p)supportedTvResolutions.emplace_back("1080p60");
-                if(tvResolutions & dsTV_RESOLUTION_1080p60)supportedTvResolutions.emplace_back("1080p60");
-                if(tvResolutions & dsTV_RESOLUTION_2160p24)supportedTvResolutions.emplace_back("2160p24");
-                if(tvResolutions & dsTV_RESOLUTION_2160p25)supportedTvResolutions.emplace_back("2160p25");
-                if(tvResolutions & dsTV_RESOLUTION_2160p30)supportedTvResolutions.emplace_back("2160p30");
-                if(tvResolutions & dsTV_RESOLUTION_2160p50)supportedTvResolutions.emplace_back("2160p50");
-                if(tvResolutions & dsTV_RESOLUTION_2160p60)supportedTvResolutions.emplace_back("2160p60");
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(videoDisplay);
-            }
-            setResponseArray(response, "supportedTvResolutions", supportedTvResolutions);
-            returnResponse(true);
-        }
-
-        uint32_t DisplaySettings::getSupportedSettopResolutions(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:{"success":true,"supportedSettopResolutions":["720p","1080i","1080p60"]}
-            LOGINFOMETHOD();
-            vector<string> supportedSettopResolutions;
-            try
-            {
-                if (device::Host::getInstance().getVideoDevices().size() < 1)
-                {
-                    LOGINFO("DSMGR_NOT_RUNNING");
-                    returnResponse(false);
-                }
-
-                device::VideoDevice &device = device::Host::getInstance().getVideoDevices().at(0);
-                list<string> resolutions;
-                device.getSettopSupportedResolutions(resolutions);
-                for (list<string>::const_iterator ci = resolutions.begin(); ci != resolutions.end(); ++ci)
-                {
-                      string supportedResolution = *ci;
-                      vectorSet(supportedSettopResolutions, supportedResolution);
-                }
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-            }
-            catch(const std::exception& err)
-            {
-                LOGERR("exception: %s", err.what());
-            }
-            catch(...)
-            {
-                LOGWARN("Unknown exception occurred");
-            }
-            setResponseArray(response, "supportedSettopResolutions", supportedSettopResolutions);
-            returnResponse(true);
-        }
-
-        uint32_t DisplaySettings::getSupportedAudioPorts(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response: {"success":true,"supportedAudioPorts":["HDMI0"]}
-            LOGINFOMETHOD();
-            vector<string> supportedAudioPorts;
-            try
-            {
-                device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
-                for (size_t i = 0; i < aPorts.size(); i++)
-                {
-                    device::AudioOutputPort &vPort = aPorts.at(i);
-                    string portName  = vPort.getName();
-                    vectorSet(supportedAudioPorts,portName);
-                }
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-            }
-            setResponseArray(response, "supportedAudioPorts", supportedAudioPorts);
-            returnResponse(true);
-        }
-
-        uint32_t DisplaySettings::getSupportedAudioModes(const JsonObject& parameters, JsonObject& response)
-        {   //sample response: {"success":true,"supportedAudioModes":["STEREO","PASSTHRU","AUTO (Dolby Digital 5.1)"]}
-            LOGINFOMETHOD();
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "";
-            vector<string> supportedAudioModes;
-            try
-            {
-                bool HAL_hasSurround = false;
-
-                device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
-                for (size_t i = 0; i < aPorts.size(); i++) {
-                    if (audioPort.empty() || Utils::String::stringContains(aPorts.at(i).getName(), audioPort))
-                    {
-                        for (size_t j = 0; j < aPorts.at(i).getSupportedStereoModes().size(); j++)
-                        {
-                            string audioMode = aPorts.at(i).getSupportedStereoModes().at(j).getName();
-
-                            // Starging Version 5, "Surround" mode is replaced by "Auto Mode"
-                            if (strcasecmp(audioMode.c_str(),"SURROUND") == 0)
+                        if (shouldResetArc) {
                             {
-                                HAL_hasSurround = true;
-                                continue;
+                                std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                                LOGINFO("HDMI_ARC0: Resetting ARC state due to HDMI ARC disconnection");
+                                /* This is the case where we get ARC initiation or eARC detection done before HPD.
+                                * Send connectedport update as ARC disconnected and Restart the ARC-eARC again */
+                                m_hdmiInAudioDeviceConnected = false;
+                                m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
+                                m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
+                                m_requestSadRetrigger = false;
+                                m_hdmiInAudioDeviceType = 0; // dsAUDIOARCSUPPORT_NONE
+                                m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UNKNOWN;
+                                m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
                             }
-                            vectorSet(supportedAudioModes, audioMode);
+                            DisplaySettings::_instance->connectedAudioPortUpdated(static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HDMIARC), false);
+                            LOGINFO("[HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n");
+                            sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
                         }
                     }
                 }
+                audio->Release();
+            }
+            else {
+                LOGERR("Failed to acquire IDeviceSettingsAudio interface");
+            }
+        }
+        setResponseArray(response, "connectedAudioPorts", connectedAudioPorts);
+        returnResponse(true);
+    }
 
-                if (Utils::String::stringContains(audioPort, "HDMI0"))
-                {
-                    std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                    device::VideoOutputPort vPort = device::VideoOutputPortConfig::getInstance().getPort(strVideoPort.c_str());
-                    int surroundMode = false;
-                    try{
-                        surroundMode = vPort.getDisplay().getSurroundMode();
-                    }
-                    catch(const device::Exception& err)
-                    {
-                        surroundMode = false;
-                        LOG_DEVICE_EXCEPTION1(audioPort);
-                    }
-                    if (isDisplayConnected(std::move(strVideoPort)) && surroundMode)
-                    {
-                        if(surroundMode & dsSURROUNDMODE_DDPLUS )
-                        {
-                            LOGINFO("HDMI0 has surround DD Plus ");
-                            supportedAudioModes.emplace_back("AUTO (Dolby Digital Plus)");
-                        }
-                        else if(surroundMode & dsSURROUNDMODE_DD )
-                        {
-                            LOGINFO("HDMI0 has surround DD5.1 ");
-                            supportedAudioModes.emplace_back("AUTO (Dolby Digital 5.1)");
+    uint32_t DisplaySettings::getSupportedResolutions(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:{"success":true,"supportedResolutions":["720p","1080i","1080p60"]}
+        LOGINFOMETHOD();
+        vector<string> supportedResolutions;
+        {
+            // Use cached config store — no COM-RPC config reload per request
+            std::string defaultPort = DSHelper::getDefaultVideoPortName();
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(defaultPort);
+            VideoPortEntry entry;
+            if (DSHelper::resolveVideoPortByName(videoDisplay, entry)) {
+                // DS_IARM: vPort.isDisplayConnected() — use isDisplayConnected() wrapper
+                if (isDisplayConnected(entry.name)) {
+                    LOGINFO("Display is connected for video port '%s' (type=%d, index=%d)", entry.name.c_str(), entry.type, entry.index);
+                    std::vector<VideoPortResolution> resolutions;
+                    if (DSHelper::getVideoPortResolutionsForType(entry.type, resolutions)) {
+                        for (const auto& res : resolutions) {
+                            vectorSet(supportedResolutions, res.name);
                         }
                     }
                     else {
-                        LOGINFO("HDMI0 does not have surround");
-                        supportedAudioModes.emplace_back("AUTO (Stereo)");
+                        LOGWARN("No resolutions found for video port '%s' (type=%d, index=%d)", entry.name.c_str(), entry.type, entry.index);
                     }
                 }
-		else if (audioPort.empty() || Utils::String::stringContains(audioPort, "SPDIF0") || Utils::String::stringContains(audioPort, "HDMI_ARC0"))
-                {
-                    if (HAL_hasSurround) {
-                        supportedAudioModes.emplace_back("SURROUND");
+                else {
+                    LOGWARN("Display is not connected for video port '%s' (type=%d, index=%d)", entry.name.c_str(), entry.type, entry.index);
+                }
+            }
+            else {
+                LOGWARN("Video port '%s' not found in config store", videoDisplay.c_str());
+            }
+        }
+        setResponseArray(response, "supportedResolutions", supportedResolutions);
+        returnResponse(true);
+    }
+
+    uint32_t DisplaySettings::getSupportedVideoDisplays(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response: {"supportedVideoDisplays":["HDMI0"],"success":true}
+        LOGINFOMETHOD();
+        vector<string> supportedVideoDisplays;
+        {
+            // Use cached config store — no COM-RPC config reload per request
+            std::vector<VideoPortEntry> entries;
+            if (DSHelper::getVideoPortEntries(entries)) {
+                for (const VideoPortEntry& e : entries) {
+                    vectorSet(supportedVideoDisplays, e.name);
+                }
+            }
+            else {
+                LOGWARN("No video port entries found in config store");
+            }
+        }
+        setResponseArray(response, "supportedVideoDisplays", supportedVideoDisplays);
+        returnResponse(true);
+    }
+
+    uint32_t DisplaySettings::getSupportedTvResolutions(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:{"success":true,"supportedTvResolutions":["480i","480p","576i","720p","1080i","1080p"]}
+        LOGINFOMETHOD();
+        // DS_IARM: device::Host::getInstance().DSHelper::getDefaultVideoPortName() for default
+        string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : DSHelper::getDefaultVideoPortName();
+        vector<string> supportedTvResolutions;
+        {
+            const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(videoDisplay);
+            if (INVALID_DS_HANDLE != videoHandle) {
+                auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    int32_t tvResolutions = 0;
+                    auto hr = vp->GetTVSupportedResolutions(videoHandle, tvResolutions);
+                    if (hr != Core::ERROR_NONE) {
+                        LOGERR("Failed to get TV supported resolutions for video port '%s' (handle=%d), Error=%d", videoDisplay.c_str(), videoHandle, hr);
+                    }
+
+                    if (!tvResolutions)
+                        supportedTvResolutions.emplace_back("none");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_480I)) {
+                        supportedTvResolutions.emplace_back("480i");
+                        supportedTvResolutions.emplace_back("480i60");
+                    }
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_480P)) {
+                        supportedTvResolutions.emplace_back("480p");
+                        supportedTvResolutions.emplace_back("480p60");
+                    }
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_576I))
+                        supportedTvResolutions.emplace_back("576i50");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_576P))
+                        supportedTvResolutions.emplace_back("576p50");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_720P50))
+                        supportedTvResolutions.emplace_back("720p50");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_720P)) {
+                        supportedTvResolutions.emplace_back("720p");
+                        supportedTvResolutions.emplace_back("720p60");
+                    }
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P24))
+                        supportedTvResolutions.emplace_back("1080p24");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080I25))
+                        supportedTvResolutions.emplace_back("1080p25");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P30))
+                        supportedTvResolutions.emplace_back("1080p30");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080I50))
+                        supportedTvResolutions.emplace_back("1080i50");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P50))
+                        supportedTvResolutions.emplace_back("1080p50");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080I)) {
+                        supportedTvResolutions.emplace_back("1080i");
+                        supportedTvResolutions.emplace_back("1080i60");
+                    }
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P)) {
+                        supportedTvResolutions.emplace_back("1080p");
+                        supportedTvResolutions.emplace_back("1080p60");
+                    }
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_1080P60))
+                        supportedTvResolutions.emplace_back("1080p60");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P24))
+                        supportedTvResolutions.emplace_back("2160p24");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P25))
+                        supportedTvResolutions.emplace_back("2160p25");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P30))
+                        supportedTvResolutions.emplace_back("2160p30");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P50))
+                        supportedTvResolutions.emplace_back("2160p50");
+                    if (tvResolutions & static_cast<int32_t>(TVResolution::DS_TV_RESOLUTION_2160P60))
+                        supportedTvResolutions.emplace_back("2160p60");
+                    vp->Release();
+                }
+                else {
+                    LOGERR("Failed to acquire IDeviceSettingsVideoPort interface");
+                }
+            }
+            else {
+                LOGERR("Video port '%s' not found in cached handles", videoDisplay.c_str());
+            }
+        }
+        setResponseArray(response, "supportedTvResolutions", supportedTvResolutions);
+        returnResponse(true);
+    }
+
+    uint32_t DisplaySettings::getSupportedSettopResolutions(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:{"success":true,"supportedSettopResolutions":["720p","1080i","1080p60"]}
+        LOGINFOMETHOD();
+        vector<string> supportedSettopResolutions;
+        {
+            // COM-RPC: use cached config store resolutions for the default video port type.
+            // DS_IARM: device.getSettopSupportedResolutions() returns what the STB decoder supports.
+            // The union of all port-type resolutions in the config store is the equivalent.
+            std::vector<VideoPortResolution> resolutions;
+            // Get resolutions for all entries in the config store (union = STB output capability)
+            std::set<std::string> seen;
+            std::vector<VideoPortEntry> entries;
+            if (DSHelper::getVideoPortEntries(entries)) {
+                for (const VideoPortEntry& e : entries) {
+                    std::vector<VideoPortResolution> portResolutions;
+                    if (DSHelper::getVideoPortResolutionsForType(e.type, portResolutions)) {
+                        for (const auto& res : portResolutions) {
+                            if (seen.insert(res.name).second) {
+                                supportedSettopResolutions.push_back(res.name);
+                            }
+                        }
                     }
                 }
             }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
+            else {
+                LOGWARN("No video port entries found in config store");
             }
-            setResponseArray(response, "supportedAudioModes", supportedAudioModes);
-            returnResponse(true);
         }
+        setResponseArray(response, "supportedSettopResolutions", supportedSettopResolutions);
+        returnResponse(true);
+    }
 
-        uint32_t DisplaySettings::getZoomSetting(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-            string zoomSetting = "unknown";
-
-            bool success = true;
-            try
-            {
-                if (device::Host::getInstance().getVideoDevices().size() < 1)
-                {
-                    LOGINFO("DSMGR_NOT_RUNNING");
-                    returnResponse(false);
+    uint32_t DisplaySettings::getSupportedAudioPorts(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response: {"success":true,"supportedAudioPorts":["HDMI0"]}
+        LOGINFOMETHOD();
+        vector<string> supportedAudioPorts;
+        {
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                for (const auto& kv : DSHelper::getAudioPortHandleEntries()) {
+                    vectorSet(supportedAudioPorts, kv.first);
                 }
-
-                // TODO: why is this always the first one in the list
-                device::VideoDevice &decoder = device::Host::getInstance().getVideoDevices().at(0);
-                zoomSetting = decoder.getDFC().getName();
+                audio->Release();
             }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-                success = false;
+            else {
+                LOGERR("Failed to acquire IDeviceSettingsAudio interface");
             }
-            catch(const std::exception& err)
-            {
-                LOGERR("exception: %s", err.what());
-                success = false;
-            }
-            catch(...)
-            {
-                LOGWARN("Unknown exception occurred");
-                success = false;
-            }
-#ifdef USE_IARM
-            zoomSetting = iarm2svc(zoomSetting);
-#endif
-            response["zoomSetting"] = zoomSetting;
-            returnResponse(success);
         }
+        setResponseArray(response, "supportedAudioPorts", supportedAudioPorts);
+        returnResponse(true);
+    }
 
-        uint32_t DisplaySettings::setZoomSetting(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-
-            returnIfParamNotFound(parameters, "zoomSetting");
-            string zoomSetting = parameters["zoomSetting"].String();
-
-            bool success = true;
-            try
-            {
-#ifdef USE_IARM
-                zoomSetting = svc2iarm(zoomSetting);
-#endif
-                if (device::Host::getInstance().getVideoDevices().size() < 1)
-                {
-                    LOGINFO("DSMGR_NOT_RUNNING");
-                    returnResponse(false);
+    uint32_t DisplaySettings::getSupportedAudioModes(const JsonObject& parameters, JsonObject& response)
+    { // sample response: {"success":true,"supportedAudioModes":["STEREO","PASSTHRU","AUTO (Dolby Digital 5.1)"]}
+        LOGINFOMETHOD();
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "";
+        vector<string> supportedAudioModes;
+        // DS_IARM: Starting Version 5, "Surround" mode is replaced by "Auto Mode".
+        // HAL_hasSurround is set when any matching port's supported modes include SURROUND.
+        // "SURROUND" is NOT added to the list during port iteration; it is only added
+        // post-loop for SPDIF0/HDMI_ARC0 ports.
+        bool HAL_hasSurround = false;
+        {
+            // COM-RPC: iterate cached audio port entries — mirrors DS_IARM aPorts loop.
+            // DS_IARM: device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
+            std::vector<AudioPortEntry> entries;
+            if (DSHelper::getAudioPortEntries(entries)) {
+                for (const AudioPortEntry& e : entries) {
+                    // DS_IARM: if (audioPort.empty() || Utils::String::stringContains(aPorts.at(i).getName(), audioPort))
+                    if (audioPort.empty() || Utils::String::stringContains(e.name, audioPort)) {
+                        AudioTypeConfigInfo typeCfg{};
+                        if (DSHelper::getAudioTypeConfig(static_cast<int32_t>(e.type), typeCfg)) {
+                            uint32_t modeMask = typeCfg.supportedStereoModeMask;
+                            // DS_IARM: for (j : aPorts.at(i).getSupportedStereoModes()) { name = .getName(); ... }
+                            // COM-RPC: each port type has its own supportedStereoModeMask; iterate
+                            //          KnownStereoModes() (DSHelper.h) and check each bit.
+                            for (const auto& m : KnownStereoModes()) {
+                                if (!(modeMask & (1u << static_cast<uint32_t>(m)))) continue;
+                                if (m == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND) {
+                                    // DS_IARM: if (strcasecmp(audioMode.c_str(),"SURROUND") == 0) { HAL_hasSurround = true; continue; }
+                                    HAL_hasSurround = true;
+                                } else {
+                                    const char* name = StereoModeToName(m);
+                                    if (name != nullptr) {
+                                        vectorSet(supportedAudioModes, name);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-
-                // TODO: why is this always the first one in the list?
-                device::VideoDevice &decoder = device::Host::getInstance().getVideoDevices().at(0);
-                decoder.setDFC(std::move(zoomSetting));
             }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(zoomSetting);
-                success = false;
+            else {
+                LOGWARN("No audio port entries found in config store");
             }
-            catch(const std::exception& err)
-            {
-                LOGERR("exception: %s", err.what());
-                success = false;
-            }
-            catch(...)
-            {
-                LOGWARN("Unknown exception occurred");
-                success = false;
-            }
-            returnResponse(success);
         }
+        // DS_IARM post-loop:
+        //   if (Utils::String::stringContains(audioPort, "HDMI0")) {
+        //       surroundMode = vPort.getDisplay().getSurroundMode();
+        //       if (isDisplayConnected && surroundMode) { add AUTO (DD Plus/5.1) }
+        //       else { add "AUTO (Stereo)" }
+        //   } else if (empty || SPDIF0 || HDMI_ARC0) { if (HAL_hasSurround) add "SURROUND" }
+        if (Utils::String::stringContains(audioPort, "HDMI0")) {
+            // DS_IARM: vPort.getDisplay().getSurroundMode() → bitmask of dsSURROUNDMODE_DD / dsSURROUNDMODE_DDPLUS
+            // COM-RPC: IDeviceSettingsVideoPort::GetVideoPortDisplaySurroundMode on the default video port handle
+            const std::string defaultVP = DSHelper::getDefaultVideoPortName();
+            const bool displayConnected = isDisplayConnected(defaultVP);
+            VideoPortSurroundMode surroundMode = VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_NONE;
+            if (displayConnected) {
+                LOGINFO("Display is connected for video port '%s', checking surround mode", defaultVP.c_str());
+                const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(defaultVP);
+                if (INVALID_DS_HANDLE != videoHandle) {
+                    auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                    if (vp != nullptr) {
+                        auto hr = vp->GetVideoPortDisplaySurroundMode(videoHandle, surroundMode);
+                        if (hr != Core::ERROR_NONE) {
+                            LOGERR("Failed to get video port display surround mode for video port '%s' (handle=%d), Error=%d", defaultVP.c_str(), videoHandle, hr);
+                        }
+                        vp->Release();
+                    }
+                    else {
+                        LOGERR("Failed to acquire IDeviceSettingsVideoPort interface");
+                    }
+                }
+                else {
+                    LOGERR("Video port '%s' not found in cached handles", defaultVP.c_str());
+                }
+            }
 
-        uint32_t DisplaySettings::getCurrentResolution(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:{"success":true,"resolution":"720p"}
-            LOGINFOMETHOD();
-            std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
-            bool success = true;
-            try
-            {
-                int width = 0;
-                int height = 0;
-                bool progressive = false;
-                string res = currentResolutionCache;
-                if (!isResCacheUpdated) {
-                    device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
-                    res = vPort.getResolution().getName();
-                    currentResolutionCache = res;
-                    isResCacheUpdated = true;
+            if (displayConnected && surroundMode != VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_NONE) {
+                // DS_IARM: if(surroundMode & dsSURROUNDMODE_DDPLUS) / else if(surroundMode & dsSURROUNDMODE_DD)
+                if (surroundMode == VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_DDPLUS) {
+                    LOGINFO("HDMI0 has surround DD Plus");
+                    supportedAudioModes.emplace_back("AUTO (Dolby Digital Plus)");
+                } else if (surroundMode == VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_DD) {
+                    LOGINFO("HDMI0 has surround DD5.1");
+                    supportedAudioModes.emplace_back("AUTO (Dolby Digital 5.1)");
+                }
+            } else {
+                LOGINFO("HDMI0 does not have surround");
+                supportedAudioModes.emplace_back("AUTO (Stereo)");
+            }
+        } else if (audioPort.empty() || Utils::String::stringContains(audioPort, "SPDIF0") || Utils::String::stringContains(audioPort, "HDMI_ARC0")) {
+            if (HAL_hasSurround) {
+                supportedAudioModes.emplace_back("SURROUND");
+            }
+        }
+        setResponseArray(response, "supportedAudioModes", supportedAudioModes);
+        returnResponse(true);
+    }
+
+    uint32_t DisplaySettings::getZoomSetting(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        string zoomSetting = "unknown";
+
+        bool success = true;
+        {
+            auto* vd = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+            if (vd != nullptr) {
+                Exchange::IDeviceSettingsVideoDevice::VideoZoom dfcZoom = Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_UNKNOWN;
+                int videoDeviceHandle = DSHelper::getCachedVideoDeviceHandle(0);
+                if (INVALID_DS_HANDLE == videoDeviceHandle) {
+                    LOGERR("No valid video device handle found");
+                    success = false;
+                }
+                else {
+                    auto hr = vd->GetVideoDeviceDFC(videoDeviceHandle, dfcZoom);
+                    if (hr == Core::ERROR_NONE) {
+                        switch (dfcZoom) {
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_NONE:
+                            zoomSetting = "NONE";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_FULL:
+                            zoomSetting = "FULL";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_LB_16_9:
+                            zoomSetting = "LB_16_9";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_LB_14_9:
+                            zoomSetting = "LB_14_9";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_CCO:
+                            zoomSetting = "CCO";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_PAN_SCAN:
+                            zoomSetting = "PAN_SCAN";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_PLATFORM:
+                            zoomSetting = "PLATFORM";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_16_9_ZOOM:
+                            zoomSetting = "16_9_ZOOM";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_PILLARBOX_4_3:
+                            zoomSetting = "PILLARBOX_4_3";
+                            break;
+                        case Exchange::IDeviceSettingsVideoDevice::VideoZoom::DS_VIDEO_DEVICE_ZOOM_WIDE_4_3:
+                            zoomSetting = "WIDE_4_3";
+                            break;
+                        default:
+                            LOGERR("Unknown DFC zoom value %d", static_cast<int>(dfcZoom));
+                            success = false;
+                            break;
+                        }
+                    } else {
+                        LOGERR("GetVideoDeviceDFC failed, Error=%d", static_cast<int>(hr));
+                        success = false;
+                    }
+                }
+                vd->Release();
+            } else {
+                LOGERR("IDeviceSettingsVideoDevice not available");
+                success = false;
+            }
+        }
+        response["zoomSetting"] = zoomSetting;
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setZoomSetting(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+
+        returnIfParamNotFound(parameters, "zoomSetting");
+        string zoomSetting = parameters["zoomSetting"].String();
+
+        bool success = true;
+        {
+            auto* vd = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+            if (vd != nullptr) {
+                VideoZoom dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_UNKNOWN;
+                string zs = zoomSetting;
+                std::transform(zs.begin(), zs.end(), zs.begin(), ::toupper);
+                if (zs == "NONE")
+                    dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_NONE;
+                else if (zs == "FULL")
+                    dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_FULL;
+                else if (zs == "LB_16_9")
+                    dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_LB_16_9;
+                else if (zs == "LB_14_9")
+                    dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_LB_14_9;
+                else if (zs == "CCO")
+                    dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_CCO;
+                else if (zs == "PAN_SCAN")
+                    dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_PAN_SCAN;
+                else if (zs == "PLATFORM")
+                    dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_PLATFORM;
+                else if (zs == "16_9_ZOOM")
+                    dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_16_9_ZOOM;
+                else if (zs == "PILLARBOX_4_3")
+                    dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_PILLARBOX_4_3;
+                else if (zs == "WIDE_4_3")
+                    dfcZoom = VideoZoom::DS_VIDEO_DEVICE_ZOOM_WIDE_4_3;
+                else {
+                    LOGERR("Unknown zoom setting: %s", zoomSetting.c_str());
+                    success = false;
+                }
+                if (success) {
+                    int videoDeviceHandle = DSHelper::getCachedVideoDeviceHandle(0);
+                    if (INVALID_DS_HANDLE == videoDeviceHandle) {
+                        LOGERR("No valid video device handle found");
+                        success = false;
+                    }
+                    else {
+                        auto hr = vd->SetVideoDeviceDFC(videoDeviceHandle, dfcZoom);
+                        if (hr != Core::ERROR_NONE) {
+                            LOGERR("SetVideoDeviceDFC failed for '%s', Error=%d", zoomSetting.c_str(), static_cast<int>(hr));
+                            success = false;
+                        }
+                    }
+                }
+                vd->Release();
+            } else {
+                LOGERR("IDeviceSettingsVideoDevice not available");
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getCurrentResolution(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:{"success":true,"resolution":"720p"}
+        LOGINFOMETHOD();
+        bool success = true;
+        {
+            // Use cached config store and handles — no COM-RPC config reload per request
+            const std::string defaultPort = DSHelper::getDefaultVideoPortName();
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : defaultPort;
+            VideoPortEntry entry;
+            if (DSHelper::resolveVideoPortByName(videoDisplay, entry)) {
+                const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(entry.name);
+                if (INVALID_DS_HANDLE != videoHandle) {
+                    if (!isResCacheUpdated) {
+                        auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                        if (vp != nullptr) {
+                            Exchange::IDeviceSettingsVideoPort::VideoPortResolution vpRes;
+                            auto comRc = vp->GetVideoPortResolution(videoHandle, vpRes);
+                            if (comRc == Core::ERROR_NONE){
+                                currentResolutionCache = vpRes.name;
+                                isResCacheUpdated = true;
+                            } else {
+                                LOGERR("GetVideoPortResolution failed for '%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comRc));
+                                success = false;
+                            }
+                            vp->Release();
+                        } else {
+                            LOGERR("IDeviceSettingsVideoPort not available");
+                            success = false;
+                        }
+                    }
                 } else {
-                    LOGINFO("Using currentResolutionCache cache \n");
+                    LOGERR("no video port handle for '%s'", videoDisplay.c_str());
+                    success = false;
                 }
-
-                if(res.rfind("480", 0) == 0)
-                {
-                    width =  720;
-                    height = 480;
-                }
-                else if(res.rfind("576", 0) == 0)
-                {
-                    width =  720;
-                    height = 576;
-                }
-                else if(res.rfind("720", 0) == 0)
-                {
-                    width =  1280;
-                    height = 720;
-                }
-                else if(res.rfind("768", 0) == 0)
-                {
-                    width =  1366;
-                    height = 768;
-                }
-                else if(res.rfind("1080", 0) == 0)
-                {
-                    width =  1920;
-                    height = 1080;
-                }
-                else if(res.rfind("2160", 0) == 0)
-                {
-                    width =  3840;
-                    height = 2160;
-                }
-                else if(res.rfind("4096x2160", 0) == 0)
-                {
-                    width =  4096;
-                    height = 2160;
-                }
-                else
-                {
-                    width =  1280;
-                    height = 720;
-                }
-		
-                if(res.find('p') != std::string::npos) {
-                    progressive = true;
-                }
-
-                response["resolution"] = res;
-                response["w"] = width;
-                response["h"] = height;
-                response["progressive"] = progressive;
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(videoDisplay);
+            } else {
+                LOGERR("unknown videoDisplay '%s'", videoDisplay.c_str());
                 success = false;
             }
-            returnResponse(success);
         }
-
-        uint32_t DisplaySettings::setCurrentResolution(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-            returnIfParamNotFound(parameters, "videoDisplay");
-            returnIfParamNotFound(parameters, "resolution");
-
-            string videoDisplay = parameters["videoDisplay"].String();
-            string resolution = parameters["resolution"].String();
-
-            bool hasPersist = parameters.HasLabel("persist");
-            bool persist = hasPersist ? parameters["persist"].Boolean() : true;
-            if (!hasPersist) LOGINFO("persist: true");
- 
-            bool isIgnoreEdidArg = parameters.HasLabel("ignoreEdid");
-            bool isIgnoreEdid = isIgnoreEdidArg ? parameters["ignoreEdid"].Boolean() : false;
-            if (!isIgnoreEdidArg) LOGINFO("isIgnoreEdid: false"); else LOGINFO("isIgnoreEdid: %d", isIgnoreEdid);
-
-            bool success = true;
-            try
-            {
-                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
-                vPort.setResolution(resolution, persist, isIgnoreEdid);
+        if (success) {
+            const string& res = currentResolutionCache;
+            int width = 0, height = 0;
+            bool progressive = false;
+            if (res.rfind("480", 0) == 0) {
+                width = 720;
+                height = 480;
+            } else if (res.rfind("576", 0) == 0) {
+                width = 720;
+                height = 576;
+            } else if (res.rfind("720", 0) == 0) {
+                width = 1280;
+                height = 720;
+            } else if (res.rfind("768", 0) == 0) {
+                width = 1366;
+                height = 768;
+            } else if (res.rfind("1080", 0) == 0) {
+                width = 1920;
+                height = 1080;
+            } else if (res.rfind("2160", 0) == 0) {
+                width = 3840;
+                height = 2160;
+            } else if (res.rfind("4096x2160", 0) == 0) {
+                width = 4096;
+                height = 2160;
+            } else {
+                width = 1280;
+                height = 720;
             }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION2(videoDisplay, resolution);
+            if (res.find('p') != std::string::npos) {
+                progressive = true;
+            }
+            response["resolution"] = res;
+            response["w"] = width;
+            response["h"] = height;
+            response["progressive"] = progressive;
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setCurrentResolution(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "videoDisplay");
+        returnIfParamNotFound(parameters, "resolution");
+
+        string videoDisplay = parameters["videoDisplay"].String();
+        string resolution = parameters["resolution"].String();
+
+        bool hasPersist = parameters.HasLabel("persist");
+        bool persist = hasPersist ? parameters["persist"].Boolean() : true;
+        if (!hasPersist)
+            LOGINFO("persist: true");
+
+        bool isIgnoreEdidArg = parameters.HasLabel("ignoreEdid");
+        bool isIgnoreEdid = isIgnoreEdidArg ? parameters["ignoreEdid"].Boolean() : false;
+        if (!isIgnoreEdidArg)
+            LOGINFO("isIgnoreEdid: false");
+        else
+            LOGINFO("isIgnoreEdid: %d", isIgnoreEdid);
+
+        bool success = true;
+        {
+            const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(videoDisplay);
+            if (INVALID_DS_HANDLE != videoHandle) {
+                auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    Exchange::IDeviceSettingsVideoPort::VideoPortResolution vpRes;
+                    vpRes.name = resolution;
+                    // pixelResolution/aspectRatio/etc. will be resolved by DeviceSettings implementation
+                    Core::hresult rc = vp->SetVideoPortResolution(videoHandle, vpRes, persist, isIgnoreEdid);
+                    if (rc != Core::ERROR_NONE) {
+                        LOGERR("SetVideoPortResolution failed for '%s', Error: %d", videoDisplay.c_str(), rc);
+                        success = false;
+                    } else {
+                        isResCacheUpdated = false; // invalidate cache
+                    }
+                    vp->Release();
+                } else {
+                    LOGERR("IDeviceSettingsVideoPort not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("No handle found for videoDisplay '%s'", videoDisplay.c_str());
                 success = false;
             }
-            returnResponse(success);
         }
+        returnResponse(success);
+    }
+    uint32_t DisplaySettings::getSoundMode(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:{"success":true,"soundMode":"AUTO (Dolby Digital 5.1)"}
+        LOGINFOMETHOD();
+        string audioPort = parameters["audioPort"].String(); // empty value will browse all ports
 
-        uint32_t DisplaySettings::getSoundMode(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:{"success":true,"soundMode":"AUTO (Dolby Digital 5.1)"}
-            LOGINFOMETHOD();
-            string audioPort = std::move(parameters["audioPort"].String());//empty value will browse all ports
+        if (!checkPortName(audioPort))
+            audioPort = "HDMI0";
 
-            if (!checkPortName(audioPort))
+        // DS_IARM: if audioPort is still empty, determine HDMI0 vs SPDIF0 based on display connectivity
+        if (audioPort.empty()) {
+            string videoDisplay = DSHelper::getDefaultVideoPortName();
+            // DS_IARM: default to HDMI0, switch to SPDIF0 only if another display is connected
+            if (!videoDisplay.empty() && isDisplayConnected(videoDisplay)) {
                 audioPort = "HDMI0";
-
-            string modeString("");
-            device::AudioStereoMode mode = device::AudioStereoMode::kStereo;  //default to stereo
-
-            try
-            {
-                /* Return the sound mode of the audio ouput connected to the specified videoDisplay */
-                /* Check if HDMI is connected - Return (default) Stereo Mode if not connected */
-                if (audioPort.empty())
-                {
-                    std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                    if (isDisplayConnected(std::move(strVideoPort)))
-                    {
-                        audioPort = "HDMI0";
+            } else {
+                audioPort = "HDMI0"; // DS_IARM: keeps HDMI0 as default even in else branch
+                for (const auto& kv : DSHelper::getVideoPortHandleEntries()) {
+                    if (isDisplayConnected(kv.first)) {
+                        audioPort = "SPDIF0";
+                        break;
                     }
-                    else
-                    {
-                        /*  * If HDMI is not connected
-                            * Get the SPDIF if it is supported by platform
-                            * If Platform does not have connected ports. Default to HDMI.
-                        */
-                        audioPort = "HDMI0";
-                        device::List<device::VideoOutputPort> vPorts = device::Host::getInstance().getVideoOutputPorts();
-                        for (size_t i = 0; i < vPorts.size(); i++)
-                        {
-                            device::VideoOutputPort &vPort = vPorts.at(i);
-                            if (isDisplayConnected(vPort.getName()))
-                            {
-                                audioPort = "SPDIF0";
-                                break;
-                            }
-                        }
+                }
+            }
+        }
+
+        LOGINFO("Determined audioPort: '%s'", audioPort.c_str());
+
+        string modeString("");
+        {
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                int32_t audioHandle = -1;
+                // DS_IARM: aPort.isConnected() — replicated per port type by isAudioOutputPortConnected
+                bool portConnected = DSHelper::isAudioOutputPortConnected(audio, audioPort, audioHandle);
+                if (INVALID_DS_HANDLE == audioHandle) {
+                    LOGERR("No audio handle found for audioPort '%s'", audioPort.c_str());
+                }
+
+                // Determine mode string — mirrors DS_IARM per-type logic
+                bool isHdmi = (audioPort == "HDMI0" || (Utils::String::stringContains(audioPort, "HDMI") && !Utils::String::stringContains(audioPort, "ARC")));
+                bool isArc = Utils::String::stringContains(audioPort, "HDMI_ARC");
+
+                // DS_IARM: getStereoMode()/getStereoAuto() called in both connected and disconnected paths
+                Exchange::IDeviceSettingsAudio::StereoMode stereoMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
+                int32_t stereoAuto = 0;
+                if (INVALID_DS_HANDLE != audioHandle) {
+                    auto hr = audio->GetStereoMode(audioHandle, stereoMode, false);
+                    if (hr != Core::ERROR_NONE) {
+                        LOGERR("GetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(hr));
+                    }
+                    hr = audio->GetStereoAuto(audioHandle, stereoAuto);
+                    if (hr != Core::ERROR_NONE) {
+                        LOGERR("GetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(hr));
                     }
                 }
 
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-
-                if (aPort.isConnected())
-                {
-                    mode = aPort.getStereoMode();
-                    if (aPort.getType().getId() == device::AudioOutputPortType::kHDMI)
-                    {
-                        /* In DS5, "Surround" implies "Auto" */
-                        if (aPort.getStereoAuto() || mode == device::AudioStereoMode::kSurround)
-                        {
+                if (portConnected) {
+                    if (isHdmi) {
+                        if (stereoAuto != 0 || stereoMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND) {
                             LOGINFO("HDMI0 is in Auto Mode");
-                            std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                            int surroundMode = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str()).getDisplay().getSurroundMode();
-                            if ( surroundMode & dsSURROUNDMODE_DDPLUS)
-                            {
-                                LOGINFO("HDMI0 has surround DDPlus");
-                                modeString.append("AUTO (Dolby Digital Plus)");
+                            // DS_IARM: vPort.getDisplay().getSurroundMode() determines DD/DDPlus/Stereo
+                            // COM-RPC: GetVideoPortDisplaySurroundMode on the HDMI video port handle
+                            VideoPortSurroundMode surroundMode = VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_NONE;
+                            string videoDisplay = DSHelper::getDefaultVideoPortName();
+                            const int32_t vpHandle = DSHelper::getCachedVideoPortHandle(videoDisplay);
+                            if (INVALID_DS_HANDLE != vpHandle) {
+                                auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                                if (vp != nullptr) {
+                                    auto hr = vp->GetVideoPortDisplaySurroundMode(vpHandle, surroundMode);
+                                    if (hr != Core::ERROR_NONE) {
+                                        LOGERR("GetVideoPortDisplaySurroundMode failed for video port handle %d, Error=%d", vpHandle, static_cast<int>(hr));
+                                    }
+                                    vp->Release();
+                                }
+                                else {
+                                    LOGERR("Failed to acquire IDeviceSettingsVideoPort interface");
+                                }
                             }
-                            else if (surroundMode & dsSURROUNDMODE_DD)
-                            {
-                                LOGINFO("HDMI0 has surround DD 5.1");
-                                modeString.append("AUTO (Dolby Digital 5.1)");
+                            else {
+                                LOGERR("No video port handle found for videoDisplay '%s'", videoDisplay.c_str());
                             }
-                            else
-                            {
-                                LOGINFO("HDMI0 does not surround");
-                                modeString.append("AUTO (Stereo)");
+                            if (surroundMode == VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_DDPLUS) {
+                                modeString = "AUTO (Dolby Digital Plus)";
+                            } else if (surroundMode == VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_DD) {
+                                modeString = "AUTO (Dolby Digital 5.1)";
+                            } else {
+                                modeString = "AUTO (Stereo)";
                             }
                         }
-                        else if ( mode == device::AudioStereoMode::kDD)
-                        {
+                        else if (stereoMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_DD) {
                             LOGINFO("HDMI0 is in dolby digital Mode");
                             modeString.append("DOLBYDIGITAL");
                         }
-                        else if ( mode == device::AudioStereoMode::kDDPlus)
-                        {
-                            LOGINFO("HDMI0 is in dolby digital Plus Mode");
+                        else if (stereoMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_DDPLUS) {
+                            LOGINFO("HDMI0 is in dolby digital plus Mode");
                             modeString.append("DOLBYDIGITALPLUS");
                         }
-                        else
-                            modeString.append(mode.toString());
-                    }
-                    else if((aPort.getType().getId() == device::AudioOutputPortType::kARC)
-                        || (aPort.getType().getId() == device::AudioOutputPortType::kSPDIF)
-                        || (aPort.getType().getId() == device::AudioOutputPortType::kHEADPHONE)) {
-                        if (aPort.getStereoAuto()) {
+                        else {
+                            // DS_IARM: modeString.append(mode.toString())
+                            // COM-RPC: StereoModeToString() mirrors AudioStereoMode::toString()
+                            modeString = StereoModeToString(stereoMode);
+                        }
+                    } else if (isArc || Utils::String::stringContains(audioPort, "SPDIF") || Utils::String::stringContains(audioPort, "HEADPHONE")) {
+                        if (stereoAuto != 0) {
                             LOGINFO("%s output mode Auto", audioPort.c_str());
-                            modeString.append("AUTO");
-                        }
-                        else{
-                            modeString.append(mode.toString());
-                        }
-                    }
-                    else
-                    {
-                        modeString.append(mode.toString());
-                    }
-                }
-                else
-                {
-                    if((aPort.getType().getId() == device::AudioOutputPortType::kARC)){
-                        if (aPort.getStereoAuto()) {
-                            LOGINFO("%s output mode Auto", audioPort.c_str());
-                            modeString.append("AUTO");
-                        }
-                        else{
-                            mode = aPort.getStereoMode();
-                            modeString.append(mode.toString());
-                        }
-                    }
-                    else if((aPort.getType().getId() == device::AudioOutputPortType::kHDMI)){
-                        mode = aPort.getStereoMode();
-                        if (aPort.getStereoAuto() || mode == device::AudioStereoMode::kSurround)
-                        {
-                            LOGINFO("%s output mode Auto", audioPort.c_str());
-                            modeString.append("AUTO (Stereo)");
-                        }
-                        else{
-                            modeString.append(mode.toString());
-                        }
-                    }
-                    else {
-                        /*
-                        * VideoDisplay is not connected. Its audio mode is unknown. Return
-                        * "Stereo" as safe default;
-                        */
-                        mode = device::AudioStereoMode::kStereo;
-                        modeString.append(mode.toString());
-                    }
-                }
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-                
-                // Exception
-                // "Stereo" as safe default;
-                
-                mode = device::AudioStereoMode::kStereo;
-                modeString.append(mode.toString());
-            }
-
-            LOGWARN("audioPort = %s, mode = %s!", audioPort.c_str(), modeString.c_str());
-#ifdef USE_IARM
-            modeString = iarm2svc(modeString);
-#endif
-            response["soundMode"] = modeString;
-            returnResponse(true);
-        }
-
-        uint32_t DisplaySettings::setSoundMode(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-            string audioPort = parameters["audioPort"].String();//missing or empty string and we will set all ports
-
-            returnIfParamNotFound(parameters, "soundMode");
-            string soundMode = parameters["soundMode"].String();
-            Utils::String::toLower(soundMode);
-
-            bool hasPersist = parameters.HasLabel("persist");
-            bool persist = hasPersist ? parameters["persist"].Boolean() : true;
-            if (!hasPersist) LOGINFO("persist: true");
-
-            bool success = true;
-            device::AudioStereoMode mode = device::AudioStereoMode::kStereo;  //default to stereo
-            bool stereoAuto = false;
-
-            if (soundMode == "mono" || soundMode == "MONO")
-                mode = device::AudioStereoMode::kMono;
-            else if (soundMode == "stereo" || soundMode == "STEREO")
-                mode = device::AudioStereoMode::kStereo;
-            else if (soundMode == "surround" || soundMode == "SURROUND")
-                mode = device::AudioStereoMode::kSurround;
-            else if (soundMode == "passthru" || soundMode == "PASSTHRU")
-                mode = device::AudioStereoMode::kPassThru;
-            else if (soundMode == "dolbydigital" || soundMode == "DOLBYDIGITAL")
-                mode = device::AudioStereoMode::kDD;
-            else if (soundMode == "dolbydigitalplus" || soundMode == "DOLBYDIGITALPLUS")
-                mode = device::AudioStereoMode::kDDPlus;
-            else if (soundMode == "auto" || soundMode == "auto " || soundMode == "AUTO" || soundMode == "AUTO ")
-            {
-                /*
-                 * anything after "auto" is only descriptive, and can be ignored.
-                 * use kSurround in this case.
-                 */
-                if (audioPort.empty())
-                    audioPort = "HDMI0";
-
-                stereoAuto = true;
-                mode = device::AudioStereoMode::kSurround;
-            }
-            else if (soundMode == "dolby digital 5.1")
-                mode = device::AudioStereoMode::kSurround;
-            else
-            {
-                LOGWARN("Sound mode '%s' is empty or incompatible with known values, hence sound mode will not changed!", soundMode.c_str());
-                returnResponse(success);
-            }
-
-            if (!checkPortName(audioPort))
-            {
-                LOGERR("Invalid port Name: display = %s, mode = %s!", audioPort.c_str(), soundMode.c_str());
-                returnResponse(false);
-            }
-
-            LOGWARN("display = %s, mode = %s!", audioPort.c_str(), soundMode.c_str());
-
-            try
-            {
-                //now setting the sound mode for specified video display types
-                if (!audioPort.empty())
-                {
-                    device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                    if (aPort.isConnected())
-                    {
-                        /* Auto mode is only for HDMI and DS5 and non-Passthru*/
-                        if (aPort.getType().getId() == device::AudioOutputPortType::kHDMI && (!(mode == device::AudioStereoMode::kPassThru)))
-                        {
-                            aPort.setStereoAuto(stereoAuto, persist);
-                            if (stereoAuto)
-                            {
-                                std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                                if (device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str()).getDisplay().getSurroundMode())
-                                    mode = device::AudioStereoMode::kSurround;
-                                else
-                                    mode = device::AudioStereoMode::kStereo;
-                            }
-                            //TODO: if mode has not changed, we can skip the extra call
-                            aPort.setStereoMode(mode.toString(), persist);
-                        }
-                        else if (aPort.getType().getId() == device::AudioOutputPortType::kHDMI)
-                        {
-                            LOGERR("Reset auto on %s for mode = %s!", audioPort.c_str(), soundMode.c_str());
-                            aPort.setStereoAuto(false, persist);
-                            //TODO: if mode has not changed, we can skip the extra call
-                            aPort.setStereoMode(mode.toString(), persist);
-                        }
-			else if (aPort.getType().getId() == device::AudioOutputPortType::kARC) {
-		            if(((mode == device::AudioStereoMode::kSurround) || (mode == device::AudioStereoMode::kPassThru) || (mode == device::AudioStereoMode::kStereo)) && (stereoAuto == false)) {
-				    aPort.setStereoAuto(false, persist);
-
-				    // Capture shared state under lock to avoid TOCTOU race
-				    bool deviceConnected = false;
-				    dsAudioARCTypes_t deviceType = dsAUDIOARCSUPPORT_NONE;
-				    {
-					std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-					deviceConnected = m_hdmiInAudioDeviceConnected;
-					deviceType = m_hdmiInAudioDeviceType;
-				    }
-				    if((deviceType == dsAUDIOARCSUPPORT_ARC) && (deviceConnected == true)) {
-					if (mode == device::AudioStereoMode::kPassThru) {
-					    if (m_AudioDeviceSADState  == AUDIO_DEVICE_SAD_CLEARED || \
-							    m_AudioDeviceSADState  == AUDIO_DEVICE_SAD_UNKNOWN) {
-						LOGINFO("%s: sending SAD request\n", __FUNCTION__);
-			                        sendMsgToQueue(REQUEST_SHORT_AUDIO_DESCRIPTOR, NULL);
-                                                m_AudioDeviceSADState  = AUDIO_DEVICE_SAD_REQUESTED; 
-                                                LOGINFO("setSoundMode Passthru: SAD Requested\n");
-					    }
-					} else if (mode == device::AudioStereoMode::kStereo) {
-					    if (m_AudioDeviceSADState  != AUDIO_DEVICE_SAD_CLEARED) {
-						LOGINFO("%s: Clearing the SAD since audio mode is changed to PCM\n", __FUNCTION__);
-						m_AudioDeviceSADState  = AUDIO_DEVICE_SAD_CLEARED;
-						m_requestSadRetrigger = false;
-						//clear the SAD list
-						sad_list.clear();
-					    }
-					}
-                                    }
-				    aPort.setStereoMode(mode.toString(), persist);
-		            }
-			    else { //Auto Mode
-
-				// Capture shared state under lock to avoid TOCTOU race
-				bool deviceConnected = false;
-				dsAudioARCTypes_t deviceType = dsAUDIOARCSUPPORT_NONE;
-				{
-				    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-				    deviceConnected = m_hdmiInAudioDeviceConnected;
-				    deviceType = m_hdmiInAudioDeviceType;
-				}
-				if(deviceType == dsAUDIOARCSUPPORT_eARC) {
-				    aPort.setStereoAuto(stereoAuto, persist); //setStereoAuto true
-				}
-				else if ((deviceType == dsAUDIOARCSUPPORT_ARC) && (deviceConnected == true)) {
-				    if (m_AudioDeviceSADState  == AUDIO_DEVICE_SAD_CLEARED ||\
-						    m_AudioDeviceSADState  == AUDIO_DEVICE_SAD_UNKNOWN) {
-					LOGINFO("%s: sending SAD request\n", __FUNCTION__);
-			                sendMsgToQueue(REQUEST_SHORT_AUDIO_DESCRIPTOR, NULL);
-                                        m_AudioDeviceSADState  = AUDIO_DEVICE_SAD_REQUESTED;
-                                        LOGINFO("setSoundMode Auto: SAD Requested\n");
-				    }
-				    aPort.setStereoAuto(stereoAuto, persist); //setStereoAuto true
-				}
-				aPort.setStereoMode(mode.toString(), persist);
-			   }
-			}
-                        else if ((aPort.getType().getId() == device::AudioOutputPortType::kSPDIF) || (aPort.getType().getId() == device::AudioOutputPortType::kHEADPHONE))
-                        {
-			    if(stereoAuto == false) {
-                                aPort.setStereoAuto(false, persist);
-                                aPort.setStereoMode(mode.toString(), persist);
-			    }
-			    else{
-			        aPort.setStereoAuto(true, persist);
-			    }
-                        }
-
-                    }
-		    else {
-                        if (aPort.getType().getId() == device::AudioOutputPortType::kARC) {
-                            if(((mode == device::AudioStereoMode::kPassThru) || (mode == device::AudioStereoMode::kStereo) || (mode == device::AudioStereoMode::kSurround)) && (stereoAuto == false)) {
-                                aPort.setStereoAuto(false, persist);
-                                aPort.setStereoMode(mode.toString(), persist);
-                            }
-                            else { //Auto Mode
-                                aPort.setStereoAuto(stereoAuto, persist);
-                                aPort.setStereoMode(mode.toString(), persist);
-                            }
-                        }else if (aPort.getType().getId() == device::AudioOutputPortType::kHDMI) {
-                            if (!(mode == device::AudioStereoMode::kPassThru))
-                            {
-                                aPort.setStereoAuto(stereoAuto, persist);
-                                LOGINFO("setting stereoAuto= %d  \n ",stereoAuto);
-                            }
-                            else
-                            {
-                                aPort.setStereoAuto(false, persist);
-                            }
-                            LOGINFO("setting sound mode = %s  \n ", mode.toString().c_str());
-                            aPort.setStereoMode(mode.toString(), persist);
+                            modeString = "AUTO";
                         } else {
-                            LOGERR("setSoundMode failed !! Device Not Connected...\n");
-                            success = false;
+                            // DS_IARM: modeString.append(mode.toString())
+                            modeString = StereoModeToString(stereoMode);
                         }
-		    }
+                    } else {
+                        modeString = StereoModeToString(stereoMode); // safe default
+                    }
+                } else {
+                    // Port not connected — mirror DS_IARM disconnected-port handling
+                    if (isArc) {
+                        if (stereoAuto != 0) {
+                            LOGINFO("%s output mode Auto", audioPort.c_str());
+                            modeString = "AUTO";
+                        } else {
+                            // DS_IARM: mode.toString() — use StereoModeToString for consistent mapping
+                            modeString = StereoModeToString(stereoMode);
+                        }
+                    } else if (isHdmi) {
+                        if (stereoAuto != 0 || stereoMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND) {
+                            LOGINFO("%s output mode Auto", audioPort.c_str());
+                            modeString = "AUTO (Stereo)";
+                        } else {
+                            // DS_IARM: modeString.append(mode.toString())
+                            modeString = StereoModeToString(stereoMode);
+                        }
+                    } else {
+                        modeString = StereoModeToString(Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO); // DS_IARM: kStereo as safe default
+                    }
                 }
-                else
-                {
-                    /* No videoDisplay is specified, setMode to all connected ports */
-                    JsonObject params;
-                    params["videoDisplay"] = "HDMI0";
-                    params["soundMode"] = soundMode;
-                    JsonObject unusedResponse;
-                    setSoundMode(params, response);
-                    params["videoDisplay"] = "SPDIF0";
-                    setSoundMode(params, unusedResponse);
-                }
+                audio->Release();
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
+                modeString = StereoModeToString(Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO); // safe default
             }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-                success = false;
-            }
-            //TODO(MROLLINS) -- so this is interesting.  ServiceManager had a settingChanged event that I guess handled settings from many services.
-            //Does that mean we need to save our setting back to another plugin that would own settings (and this settingsChanged event) ?
-            //ServiceManager::getInstance()->saveSetting(this, SETTING_DISPLAY_SERVICE_SOUND_MODE, soundMode);
+        }
+        LOGWARN("audioPort = %s, mode = %s!", audioPort.c_str(), modeString.c_str());
+        response["soundMode"] = modeString;
+        returnResponse(true);
+    }
 
+    uint32_t DisplaySettings::setSoundMode(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        string audioPort = parameters["audioPort"].String(); // missing or empty string and we will set all ports
+
+        returnIfParamNotFound(parameters, "soundMode");
+        string soundMode = parameters["soundMode"].String();
+        Utils::String::toLower(soundMode);
+
+        bool hasPersist = parameters.HasLabel("persist");
+        bool persist = hasPersist ? parameters["persist"].Boolean() : true;
+        if (!hasPersist)
+            LOGINFO("persist: true");
+
+        bool success = true;
+        Exchange::IDeviceSettingsAudio::StereoMode comMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO; // default
+        bool stereoAuto = false;
+
+        if (soundMode == "mono" || soundMode == "MONO")
+            comMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_MONO;
+        else if (soundMode == "stereo" || soundMode == "STEREO")
+            comMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
+        else if (soundMode == "surround" || soundMode == "SURROUND")
+            comMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND;
+        else if (soundMode == "passthru" || soundMode == "PASSTHRU")
+            comMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH;
+        else if (soundMode == "dolbydigital" || soundMode == "DOLBYDIGITAL")
+            comMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_DD;
+        else if (soundMode == "dolbydigitalplus" || soundMode == "DOLBYDIGITALPLUS")
+            comMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_DDPLUS;
+        else if (soundMode == "dolby digital 5.1")
+            comMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND;
+        else if (soundMode == "auto" || soundMode == "auto " || soundMode == "AUTO" || soundMode == "AUTO ") {
+            // DS_IARM: anything after "auto" is descriptive; set stereoAuto=true, mode=kSurround
+            if (audioPort.empty())
+                audioPort = "HDMI0";
+            stereoAuto = true;
+            comMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND;
+        } else {
+            LOGWARN("Sound mode '%s' is empty or incompatible with known values, hence sound mode will not changed!", soundMode.c_str());
             returnResponse(success);
         }
 
-        uint32_t DisplaySettings::readEDID(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response: {"EDID":"AP///////wBSYgYCAQEBAQEXAQOAoFp4CvCdo1VJmyYPR0ovzgCBgIvAAQEBAQEBAQEBAQEBAjqAGHE4LUBYLEUAQIRjAAAeZiFQsFEAGzBAcDYAQIRjAAAeAAAA/ABUT1NISUJBLVRWCiAgAAAA/QAXSw9EDwAKICAgICAgAbECAytxSpABAgMEBQYHICImCQcHEQcYgwEAAGwDDAAQADgtwBUVHx/jBQMBAR2AGHEcFiBYLCUAQIRjAACeAR0AclHQHiBuKFUAQIRjAAAejArQiiDgLRAQPpYAsIRDAAAYjAqgFFHwFgAmfEMAsIRDAACYAAAAAAAAAAAAAAAA9w=="
-            //sample this thunder plugin    : {"EDID":"AP///////wBSYgYCAQEBAQEXAQOAoFp4CvCdo1VJmyYPR0ovzgCBgIvAAQEBAQEBAQEBAQEBAjqAGHE4LUBYLEUAQIRjAAAeZiFQsFEAGzBAcDYAQIRjAAAeAAAA/ABUT1NISUJBLVRWCiAgAAAA/QAXSw9EDwAKICAgICAgAbECAytxSpABAgMEBQYHICImCQcHEQcYgwEAAGwDDAAQADgtwBUVHx/jBQMBAR2AGHEcFiBYLCUAQIRjAACeAR0AclHQHiBuKFUAQIRjAAAejArQiiDgLRAQPpYAsIRDAAAYjAqgFFHwFgAmfEMAsIRDAACYAAAAAAAAAAAAAAAA9w"}
-            LOGINFOMETHOD();
-
-            vector<uint8_t> edidVec({'u','n','k','n','o','w','n' });
-			string edidbase64 = "";
-            try
-            {
-                vector<uint8_t> edidVec2;
-                std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
-                if (isDisplayConnected(std::move(strVideoPort)))
-                {
-                    vPort.getDisplay().getEDIDBytes(edidVec2);
-                    edidVec = std::move(edidVec2);//edidVec must be "unknown" unless we successfully get to this line
-
-                    //convert to base64
-                    uint16_t size = min(edidVec.size(), (size_t)numeric_limits<uint16_t>::max());
-                    if(edidVec.size() > (size_t)numeric_limits<uint16_t>::max())
-                        LOGERR("Size too large to use ToString base64 wpe api");
-                    Core::ToString((uint8_t*)&edidVec[0], size, true, edidbase64);
-
-                }
-                else
-                {
-                    LOGWARN("failure: HDMI0 not connected!");
-                }
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-            }
-            response["EDID"] = edidbase64;
-            returnResponse(true);
+        if (!checkPortName(audioPort)) {
+            LOGERR("Invalid port Name: display = %s, mode = %s!", audioPort.c_str(), soundMode.c_str());
+            returnResponse(false);
         }
 
-        uint32_t DisplaySettings::readHostEDID(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
+        LOGWARN("display = %s, mode = %s!", audioPort.c_str(), soundMode.c_str());
 
-            vector<uint8_t> edidVec({'u','n','k','n','o','w','n' });
-            try
-            {
-                vector<unsigned char> edidVec2;
-                device::Host::getInstance().getHostEDID(edidVec2);
-				size_t edidSize = edidVec2.size();
-                edidVec = std::move(edidVec2);//edidVec must be "unknown" unless we successfully get to this line
-                LOGINFO("getHostEDID size is %d.", int(edidSize));
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-            }
-            //convert to base64
-            string base64String;
-            uint16_t size = min(edidVec.size(), (size_t)numeric_limits<uint16_t>::max());
-            if(edidVec.size() > (size_t)numeric_limits<uint16_t>::max())
-                LOGINFO("size too large to use ToString base64 wpe api");
-
-            Core::ToString((uint8_t*)&edidVec[0], size, true, base64String);
-            response["EDID"] = base64String;
-            returnResponse(true);
-        }
-
-        uint32_t DisplaySettings::getActiveInput(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-
-            std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
-            bool active = true;
-            try
-            {
-                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
-                active = (isDisplayConnected(videoDisplay) && vPort.isActive());
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(std::move(videoDisplay));
-                response["activeInput"] = JsonValue(false);
-                returnResponse(false);
-            }
-            response["activeInput"] = JsonValue(active);
-            returnResponse(true);
-        }
-
-        uint32_t DisplaySettings::getTvHDRSupport(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:{"standards":["none"],"supportsHDR":false}
-            LOGINFOMETHOD();
-
-            JsonArray hdrCapabilities;
-            int capabilities = dsHDRSTANDARD_NONE;
-
-            try
-            {
-                std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                device::VideoOutputPort vPort = device::VideoOutputPortConfig::getInstance().getPort(strVideoPort.c_str());
-                if (isDisplayConnected(std::move(strVideoPort))) {
-                    vPort.getTVHDRCapabilities(&capabilities);
-                }
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-            }
-
-            if(!capabilities)hdrCapabilities.Add("none");
-            if(capabilities & dsHDRSTANDARD_HDR10)hdrCapabilities.Add("HDR10");
-            if(capabilities & dsHDRSTANDARD_HDR10PLUS)hdrCapabilities.Add("HDR10PLUS");
-	    if(capabilities & dsHDRSTANDARD_HLG)hdrCapabilities.Add("HLG");
-            if(capabilities & dsHDRSTANDARD_DolbyVision)hdrCapabilities.Add("Dolby Vision");
-            if(capabilities & dsHDRSTANDARD_TechnicolorPrime)hdrCapabilities.Add("Technicolor Prime");
-            if(capabilities & dsHDRSTANDARD_SDR)hdrCapabilities.Add("SDR");
-
-            if(capabilities)
-            {
-                response["supportsHDR"] = true;
-            }
-            else
-            {
-                response["supportsHDR"] = false;
-            }
-            response["standards"] = hdrCapabilities;
-            for (uint32_t i = 0; i < hdrCapabilities.Length(); i++)
-            {
-               LOGINFO("capabilities: %s", hdrCapabilities[i].String().c_str());
-            }
-            returnResponse(true);
-        }
-
-        uint32_t DisplaySettings::getSettopHDRSupport(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:{"standards":["HDR10"],"supportsHDR":true}
-            LOGINFOMETHOD();
-
-            JsonArray hdrCapabilities;
-	    int capabilities = stbHDRcapabilitiesCache;
-            if (!isStbHDRcapabilitiesCache) {
-                capabilities = dsHDRSTANDARD_NONE;
-
-                try
-                {
-                    if (device::Host::getInstance().getVideoDevices().size() < 1)
-                    {
-                        LOGINFO("DSMGR_NOT_RUNNING");
-                        returnResponse(false);
-                    }
-
-                    device::VideoDevice &device = device::Host::getInstance().getVideoDevices().at(0);
-                    device.getHDRCapabilities(&capabilities);
-                }
-                catch(const device::Exception& err)
-                {
-                    LOG_DEVICE_EXCEPTION0();
-                }
-                catch(const std::exception& err)
-                {
-                    LOGERR("exception: %s", err.what());
-                }
-                catch(...)
-                {
-                    LOGWARN("Unknown exception occurred");
-                }
-		stbHDRcapabilitiesCache = capabilities;
-		isStbHDRcapabilitiesCache = true;
-            } else {
-                LOGINFO("Using getSettopHDRSupport cache \n");
-            }
-
-
-            if(!capabilities)hdrCapabilities.Add("none");
-            if(capabilities & dsHDRSTANDARD_HDR10)hdrCapabilities.Add("HDR10");
-            if(capabilities & dsHDRSTANDARD_HDR10PLUS)hdrCapabilities.Add("HDR10PLUS");
-	    if(capabilities & dsHDRSTANDARD_HLG)hdrCapabilities.Add("HLG");
-            if(capabilities & dsHDRSTANDARD_DolbyVision)hdrCapabilities.Add("Dolby Vision");
-            if(capabilities & dsHDRSTANDARD_TechnicolorPrime)hdrCapabilities.Add("Technicolor Prime");
-            if(capabilities & dsHDRSTANDARD_SDR)hdrCapabilities.Add("SDR");
-
-            if(capabilities)
-            {
-                response["supportsHDR"] = true;
-            }
-            else
-            {
-                response["supportsHDR"] = false;
-            }
-            response["standards"] = hdrCapabilities;
-            for (uint32_t i = 0; i < hdrCapabilities.Length(); i++)
-            {
-               LOGINFO("capabilities: %s", hdrCapabilities[i].String().c_str());
-            }
-            returnResponse(true);
-        }
-        uint32_t DisplaySettings::getSettopAudioCapabilities(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:{"AudioCapabilities":["ATMOS","DOLBY DIGITAL","DOLBYDIGITAL PLUS","MS12"]}
-            LOGINFOMETHOD();
-
-            JsonArray audioCapabilities;
-            int capabilities = dsAUDIOSUPPORT_NONE;
-
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.getAudioCapabilities(&capabilities);
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-            }
-
-            if(!capabilities)audioCapabilities.Add("none");
-            if(capabilities & dsAUDIOSUPPORT_ATMOS)audioCapabilities.Add("ATMOS");
-            if(capabilities & dsAUDIOSUPPORT_DD)audioCapabilities.Add("DOLBY DIGITAL");
-            if(capabilities & dsAUDIOSUPPORT_DDPLUS)audioCapabilities.Add("DOLBY DIGITAL PLUS");
-            if(capabilities & dsAUDIOSUPPORT_DAD)audioCapabilities.Add("Dual Audio Decode");
-            if(capabilities & dsAUDIOSUPPORT_DAPv2)audioCapabilities.Add("DAPv2");
-            if(capabilities & dsAUDIOSUPPORT_MS12)audioCapabilities.Add("MS12");
-
-            response["AudioCapabilities"] = audioCapabilities;
-            for (uint32_t i = 0; i < audioCapabilities.Length(); i++)
-            {
-               LOGINFO("capabilities: %s", audioCapabilities[i].String().c_str());
-            }
-            returnResponse(true);
-        }
-
-        uint32_t DisplaySettings::getSettopMS12Capabilities(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:{"MS12Capabilities":["Dolby Volume","Inteligent Equalizer","Dialogue Enhancer"]}
-            LOGINFOMETHOD();
-
-            JsonArray ms12Capabilities;
-            int capabilities = dsMS12SUPPORT_NONE;
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.getMS12Capabilities(&capabilities);
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-            }
-
-            if(!capabilities)ms12Capabilities.Add("none");
-            if(capabilities & dsMS12SUPPORT_DolbyVolume)ms12Capabilities.Add("Dolby Volume");
-            if(capabilities & dsMS12SUPPORT_InteligentEqualizer)ms12Capabilities.Add("Inteligent Equalizer");
-            if(capabilities & dsMS12SUPPORT_DialogueEnhancer)ms12Capabilities.Add("Dialogue Enhancer");
-
-            response["MS12Capabilities"] = ms12Capabilities;
-            for (uint32_t i = 0; i < ms12Capabilities.Length(); i++)
-            {
-               LOGINFO("capabilities: %s", ms12Capabilities[i].String().c_str());
-            }
-            returnResponse(true);
-        }
-
-        uint32_t DisplaySettings::getCurrentOutputSettings(const JsonObject& parameters, JsonObject& response)
         {
-            LOGINFOMETHOD();
+            if (!audioPort.empty()) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = Core::ERROR_NONE;
+                    int32_t audioHandle = -1;
+                    // DS_IARM: aPort.isConnected() — replicated per port type by isAudioOutputPortConnected
+                    bool portConnected = DSHelper::isAudioOutputPortConnected(audio, audioPort, audioHandle);
 
-            bool success = true;
-            try
-            {
-                std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
-                if (isDisplayConnected(std::move(strVideoPort)))
-                {
-                    int videoEOTF = 0, matrixCoefficients = 0, colorSpace = 0, colorDepth = 0, quantizationRange =0;
-                    vPort.getCurrentOutputSettings(videoEOTF, matrixCoefficients, colorSpace, colorDepth, quantizationRange);
+                    if (INVALID_DS_HANDLE != audioHandle) {
+                        bool isHdmi = (audioPort == "HDMI0" || (Utils::String::stringContains(audioPort, "HDMI") && !Utils::String::stringContains(audioPort, "ARC")));
+                        bool isArc = Utils::String::stringContains(audioPort, "HDMI_ARC");
 
-                    response["colorSpace"] = colorSpace;
-                    response["colorDepth"] = colorDepth;
-                    response["matrixCoefficients"] = matrixCoefficients;
-                    response["videoEOTF"] = videoEOTF;
-                    response["quantizationRange"] = quantizationRange;
-                }
-                else
-                {
-                    LOGERR("HDMI0 not connected!");
+                        if (portConnected) {
+                            if (isHdmi && comMode != Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH) {
+                                // HDMI + non-passthru: set stereoAuto then stereoMode
+                                comResult = audio->SetStereoAuto(audioHandle, stereoAuto ? 1 : 0, persist);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                    success = false;
+                                }
+
+                                if (stereoAuto) {
+                                    // DS_IARM: if (getSurroundMode()) comMode = kSurround; else comMode = kStereo
+                                    // COM-RPC: GetVideoPortDisplaySurroundMode on the HDMI video port handle
+                                    VideoPortSurroundMode surroundMode = VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_NONE;
+                                    std::string videoDisplay = DSHelper::getDefaultVideoPortName();
+                                    const int32_t vpHandle = DSHelper::getCachedVideoPortHandle(videoDisplay);
+                                    if (INVALID_DS_HANDLE != vpHandle) {
+                                        auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                                        if (vp != nullptr) {
+                                            comResult = vp->GetVideoPortDisplaySurroundMode(vpHandle, surroundMode);
+                                            if (comResult != Core::ERROR_NONE) {
+                                                LOGERR("GetVideoPortDisplaySurroundMode failed for video port handle %d, Error=%d", vpHandle, static_cast<int>(comResult));
+                                                success = false;
+                                            }
+                                            vp->Release();
+                                        }
+                                        else {
+                                            LOGERR("Failed to acquire IDeviceSettingsVideoPort interface");
+                                            success = false;
+                                        }
+                                    }
+                                    else {
+                                        LOGERR("No video port handle found for videoDisplay '%s'", videoDisplay.c_str());
+                                        success = false;
+                                    }
+
+                                    if (surroundMode != VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_NONE) {
+                                        comMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND;
+                                    } else {
+                                        comMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
+                                    }
+                                }
+                                comResult = audio->SetStereoMode(audioHandle, comMode, persist);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                    success = false;
+                                }
+                            } else if (isHdmi) {
+                                // HDMI + passthru: reset stereoAuto
+                                LOGWARN("Reset auto on %s for mode = %s!", audioPort.c_str(), soundMode.c_str());
+                                comResult = audio->SetStereoAuto(audioHandle, 0, persist);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                    success = false;
+                                }
+                                comResult = audio->SetStereoMode(audioHandle, comMode, persist);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                    success = false;
+                                }
+                            } else if (isArc) {
+                                if (!stereoAuto && (comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND ||
+                                                    comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH ||
+                                                    comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO)) {
+                                    // ARC non-auto: reset stereoAuto, audioHandle SAD, set stereoMode
+                                    comResult = audio->SetStereoAuto(audioHandle, 0, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
+                                    // Capture shared state under lock to avoid TOCTOU race
+                                    bool deviceConnected = false;
+                                    int32_t deviceType = 0;
+                                    {
+                                        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                                        deviceConnected = m_hdmiInAudioDeviceConnected;
+                                        deviceType = m_hdmiInAudioDeviceType;
+                                    }
+                                    if (deviceType == static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC) && deviceConnected == true) {
+                                        if (comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH) {
+                                            if (m_AudioDeviceSADState == AUDIO_DEVICE_SAD_CLEARED || m_AudioDeviceSADState == AUDIO_DEVICE_SAD_UNKNOWN) {
+                                                LOGINFO("%s: sending SAD request\n", __FUNCTION__);
+                                                sendMsgToQueue(REQUEST_SHORT_AUDIO_DESCRIPTOR, NULL);
+                                                m_AudioDeviceSADState = AUDIO_DEVICE_SAD_REQUESTED;
+                                                LOGINFO("setSoundMode Passthru: SAD Requested\n");
+                                            }
+                                        } else if (comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO) {
+                                            if (m_AudioDeviceSADState != AUDIO_DEVICE_SAD_CLEARED) {
+                                                LOGINFO("%s: Clearing the SAD since audio mode is changed to PCM\n", __FUNCTION__);
+                                                m_AudioDeviceSADState = AUDIO_DEVICE_SAD_CLEARED;
+                                                m_requestSadRetrigger = false;
+                                                sad_list.clear();
+                                            }
+                                        }
+                                    }
+                                    comResult = audio->SetStereoMode(audioHandle, comMode, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
+                                } else {
+                                    bool deviceConnected = false;
+                                    int32_t deviceType = 0;
+                                    {
+                                        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                                        deviceConnected = m_hdmiInAudioDeviceConnected;
+                                        deviceType = m_hdmiInAudioDeviceType;
+                                    }
+                                    // ARC auto mode
+                                    if (deviceType == static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_EARC)) {
+                                        comResult = audio->SetStereoAuto(audioHandle, 1, persist);
+                                        if (comResult != Core::ERROR_NONE) {
+                                            LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                            success = false;
+                                        }
+                                    } else if (deviceType == static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC) && deviceConnected == true) {
+                                        if (m_AudioDeviceSADState == AUDIO_DEVICE_SAD_CLEARED || m_AudioDeviceSADState == AUDIO_DEVICE_SAD_UNKNOWN) {
+                                            LOGINFO("%s: sending SAD request\n", __FUNCTION__);
+                                            sendMsgToQueue(REQUEST_SHORT_AUDIO_DESCRIPTOR, NULL);
+                                            m_AudioDeviceSADState = AUDIO_DEVICE_SAD_REQUESTED;
+                                            LOGINFO("setSoundMode Auto: SAD Requested\n");
+                                        }
+                                        comResult = audio->SetStereoAuto(audioHandle, 1, persist);
+                                        if (comResult != Core::ERROR_NONE) {
+                                            LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                            success = false;
+                                        }
+                                    }
+                                    comResult = audio->SetStereoMode(audioHandle, comMode, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
+                                }
+                            } else if (Utils::String::stringContains(audioPort, "SPDIF") || Utils::String::stringContains(audioPort, "HEADPHONE")) {
+                                // DS_IARM: else if (kSPDIF || kHEADPHONE)
+                                if (!stereoAuto) {
+                                    comResult = audio->SetStereoAuto(audioHandle, 0, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
+                                    comResult = audio->SetStereoMode(audioHandle, comMode, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
+                                } else {
+                                    comResult = audio->SetStereoAuto(audioHandle, 1, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
+                                }
+                            }
+                        } else {
+                            // Port not connected — mirror DS_IARM disconnected-port handling
+                            if (isArc) {
+                                if (!stereoAuto && (comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND ||
+                                                    comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH ||
+                                                    comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO)) {
+                                    comResult = audio->SetStereoAuto(audioHandle, 0, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
+                                    comResult = audio->SetStereoMode(audioHandle, comMode, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
+                                } else {
+                                    comResult = audio->SetStereoAuto(audioHandle, stereoAuto ? 1 : 0, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
+                                    comResult = audio->SetStereoMode(audioHandle, comMode, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
+                                }
+                            } else if (isHdmi) {
+                                if (comMode != Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH) {
+                                    comResult = audio->SetStereoAuto(audioHandle, stereoAuto ? 1 : 0, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
+                                    LOGINFO("setting stereoAuto=%d", stereoAuto);
+                                } else {
+                                    comResult = audio->SetStereoAuto(audioHandle, 0, persist);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                        success = false;
+                                    }
+                                }
+                                LOGINFO("setting sound mode = %s", soundMode.c_str());
+                                comResult = audio->SetStereoMode(audioHandle, comMode, persist);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                                    success = false;
+                                }
+                            } else {
+                                LOGERR("setSoundMode failed !! Device Not Connected...\n");
+                                success = false;
+                            }
+                        }
+                    } else {
+                        LOGERR("no audio port handle found for audioPort='%s'", audioPort.c_str());
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
+            } else {
+                /* No audioPort specified, set mode to all connected ports */
+                JsonObject params;
+                params["videoDisplay"] = "HDMI0";
+                params["soundMode"] = soundMode;
+                JsonObject unusedResponse;
+                setSoundMode(params, response);
+                params["videoDisplay"] = "SPDIF0";
+                setSoundMode(params, unusedResponse);
             }
-            catch (const device::Exception& err)
-            {
-                LOGINFO("caught an exception: %d, %s", err.getCode(), err.what());
-                success = false;
-            }
+        }
+        // TODO(MROLLINS) -- so this is interesting.  ServiceManager had a settingChanged event that I guess handled settings from many services.
+        // Does that mean we need to save our setting back to another plugin that would own settings (and this settingsChanged event) ?
+        // ServiceManager::getInstance()->saveSetting(this, SETTING_DISPLAY_SERVICE_SOUND_MODE, soundMode);
 
-            LOGINFO("Leaving_ DisplaySettings::%s\n", __FUNCTION__);
-            returnResponse(success);
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::readEDID(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response: {"EDID":"AP///////wBSYgYCAQEBAQEXAQOAoFp4CvCdo1VJmyYPR0ovzgCBgIvAAQEBAQEBAQEBAQEBAjqAGHE4LUBYLEUAQIRjAAAeZiFQsFEAGzBAcDYAQIRjAAAeAAAA/ABUT1NISUJBLVRWCiAgAAAA/QAXSw9EDwAKICAgICAgAbECAytxSpABAgMEBQYHICImCQcHEQcYgwEAAGwDDAAQADgtwBUVHx/jBQMBAR2AGHEcFiBYLCUAQIRjAACeAR0AclHQHiBuKFUAQIRjAAAejArQiiDgLRAQPpYAsIRDAAAYjAqgFFHwFgAmfEMAsIRDAACYAAAAAAAAAAAAAAAA9w=="
+        // sample this thunder plugin    : {"EDID":"AP///////wBSYgYCAQEBAQEXAQOAoFp4CvCdo1VJmyYPR0ovzgCBgIvAAQEBAQEBAQEBAQEBAjqAGHE4LUBYLEUAQIRjAAAeZiFQsFEAGzBAcDYAQIRjAAAeAAAA/ABUT1NISUJBLVRWCiAgAAAA/QAXSw9EDwAKICAgICAgAbECAytxSpABAgMEBQYHICImCQcHEQcYgwEAAGwDDAAQADgtwBUVHx/jBQMBAR2AGHEcFiBYLCUAQIRjAACeAR0AclHQHiBuKFUAQIRjAAAejArQiiDgLRAQPpYAsIRDAAAYjAqgFFHwFgAmfEMAsIRDAACYAAAAAAAAAAAAAAAA9w"}
+        LOGINFOMETHOD();
+
+        string edidbase64 = "";
+        {
+            auto* disp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+            if (disp != nullptr) {
+                int32_t displayHandle = -1;
+                Core::hresult comResult = disp->GetDisplay(Exchange::IDeviceSettingsDisplay::DS_DISPLAY_PORT_TYPE_HDMI, 0, displayHandle);
+                // COM-RPC_TODO: Need to check and maintain a cache of display handles, similar to video port handles, to avoid repeated calls to GetDisplay()
+                if (comResult == Core::ERROR_NONE && INVALID_DS_HANDLE != displayHandle) {
+                    constexpr uint16_t kEdidMaxLen = 256;
+                    uint8_t edidBuf[kEdidMaxLen] = {};
+                    if (disp->GetDisplayEdidBytes(displayHandle, edidBuf, kEdidMaxLen) == Core::ERROR_NONE) {
+                        Core::ToString(edidBuf, kEdidMaxLen, true, edidbase64);
+                    }
+                }
+                else {
+                    LOGERR("GetDisplay failed for HDMI display, Error=%d", static_cast<int>(comResult));
+                }
+                disp->Release();
+            }
+            else {
+                LOGERR("IDeviceSettingsDisplay not available");
+            }
+        }
+        // DS_IARM: returns base64("unknown") when not connected; match that default
+        if (edidbase64.empty()) {
+            const uint8_t kUnknown[] = { 'u', 'n', 'k', 'n', 'o', 'w', 'n' };
+            Core::ToString(kUnknown, sizeof(kUnknown), true, edidbase64);
+        }
+        response["EDID"] = edidbase64;
+        returnResponse(true);
+    }
+
+    uint32_t DisplaySettings::readHostEDID(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+
+        string base64String;
+        {
+            auto* host = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsHost>();
+            if (host != nullptr) {
+                constexpr uint16_t kEdidMaxLen = 256;
+                uint8_t edidBuf[kEdidMaxLen] = {};
+                Core::hresult comResult = host->GetEDID(edidBuf, kEdidMaxLen);
+                if (comResult == Core::ERROR_NONE) {
+                    Core::ToString(edidBuf, kEdidMaxLen, true, base64String);
+                    LOGINFO("getHostEDID size is %d", kEdidMaxLen);
+                }
+                else {
+                    LOGERR("GetEDID failed for host, Error=%d", static_cast<int>(comResult));
+                }
+                host->Release();
+            }
+            else {
+                LOGERR("IDeviceSettingsHost not available");
+            }
+        }
+        // DS_IARM: returns base64("unknown") on failure; match that default
+        if (base64String.empty()) {
+            const uint8_t kUnknown[] = { 'u', 'n', 'k', 'n', 'o', 'w', 'n' };
+            Core::ToString(kUnknown, sizeof(kUnknown), true, base64String);
+        }
+        response["EDID"] = base64String;
+        returnResponse(true);
+    }
+
+    uint32_t DisplaySettings::getActiveInput(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+
+        // DS_IARM: device::Host::getInstance().DSHelper::getDefaultVideoPortName() for default
+        string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : DSHelper::getDefaultVideoPortName();
+        // DS_IARM: active = (isDisplayConnected(videoDisplay) && vPort.isActive())
+        // Default false — DS_IARM also returns false on exception
+        bool active = false;
+        if (isDisplayConnected(videoDisplay)) {
+            const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(videoDisplay);
+            if (INVALID_DS_HANDLE != videoHandle) {
+                auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    bool portActive = false;
+                    Core::hresult comResult = vp->IsVideoPortActive(videoHandle, portActive);
+                    if (comResult == Core::ERROR_NONE) {
+                        active = portActive;
+                    }
+                    else {
+                        LOGERR("IsVideoPortActive failed for video handle %d, Error=%d", videoHandle, static_cast<int>(comResult));
+                    }
+                    vp->Release();
+                }
+                else {
+                    LOGERR("IDeviceSettingsVideoPort not available");
+                }
+            }
+            else {
+                LOGERR("No video port handle found for videoDisplay '%s'", videoDisplay.c_str());
+            }
+        }
+        else {
+            LOGINFO("Display '%s' is not connected", videoDisplay.c_str());
+        }
+        response["activeInput"] = JsonValue(active);
+        returnResponse(true);
+    }
+
+    uint32_t DisplaySettings::getTvHDRSupport(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:{"standards":["none"],"supportsHDR":false}
+        LOGINFOMETHOD();
+
+        JsonArray hdrCapabilities;
+        int capabilities = 0;
+
+        {
+            // DS_IARM: always uses DSHelper::getDefaultVideoPortName(); queries only if isDisplayConnected
+            const std::string defaultVP = DSHelper::getDefaultVideoPortName();
+            if (isDisplayConnected(defaultVP)) {
+                const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(defaultVP);
+                if (INVALID_DS_HANDLE != videoHandle) {
+                    auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                    if (vp != nullptr) {
+                        int32_t tvCapabilities = 0;
+                        Core::hresult comResult = vp->GetTVHDRCapabilities(videoHandle, tvCapabilities);
+                        if (comResult == Core::ERROR_NONE) {
+                            capabilities = tvCapabilities;
+                        }
+                        else {
+                            LOGERR("GetTVHDRCapabilities failed for video handle %d, Error=%d", videoHandle, static_cast<int>(comResult));
+                        }
+                        vp->Release();
+                    }
+                    else {
+                        LOGERR("IDeviceSettingsVideoPort not available");
+                    }
+                }
+                else {
+                    LOGERR("No video port handle found for videoDisplay '%s'", defaultVP.c_str());
+                }
+            }
+            else {
+                LOGINFO("Display '%s' is not connected", defaultVP.c_str());
+            }
         }
 
-        uint32_t DisplaySettings::getVolumeLeveller(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
+        if (!capabilities)
+            hdrCapabilities.Add("none");
+        if (capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_HDR10))
+            hdrCapabilities.Add("HDR10");
+        if (capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_HDR10PLUS))
+            hdrCapabilities.Add("HDR10PLUS");
+        if (capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_HLG))
+            hdrCapabilities.Add("HLG");
+        if (capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_DOLBYVISION))
+            hdrCapabilities.Add("Dolby Vision");
+        if (capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_TECHNICOLORPRIME))
+            hdrCapabilities.Add("Technicolor Prime");
+        if (capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_SDR))
+            hdrCapabilities.Add("SDR");
 
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                dsVolumeLeveller_t leveller;
+        if (capabilities) {
+            response["supportsHDR"] = true;
+        } else {
+            response["supportsHDR"] = false;
+        }
+        response["standards"] = hdrCapabilities;
+        for (uint32_t i = 0; i < hdrCapabilities.Length(); i++) {
+            LOGINFO("capabilities: %s", hdrCapabilities[i].String().c_str());
+        }
+        returnResponse(true);
+    }
 
-                try
-                {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                                if (aPort.isConnected())
-                                {
-                                        leveller= aPort.getVolumeLeveller();
-                                        response["enable"] = (leveller.mode ? true : false);
-                                        response["level"] = leveller.level;
-                                }
+    uint32_t DisplaySettings::getSettopHDRSupport(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:{"standards":["HDR10"],"supportsHDR":true}
+        LOGINFOMETHOD();
+
+        JsonArray hdrCapabilities;
+        int capabilities = stbHDRcapabilitiesCache;
+    
+        if (!isStbHDRcapabilitiesCache) {
+            capabilities = 0; // dsHDRSTANDARD_NONE = 0
+            {
+                int cachedVideoDeviceHandle = DSHelper::getCachedVideoDeviceHandle(0);
+                if (INVALID_DS_HANDLE == cachedVideoDeviceHandle) {
+                    LOGERR("No video device handle found for index 0");
                 }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION1(audioPort);
+                else {
+                    auto* vd = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+                    if (vd != nullptr) {
+                        int32_t caps = 0;
+                        Core::hresult comResult = vd->GetHDRCapabilities(cachedVideoDeviceHandle, caps);
+                        if (comResult == Core::ERROR_NONE) {
+                            capabilities = caps;
+                        }
+                        else {
+                            LOGERR("GetHDRCapabilities failed for video device handle %d, Error=%d", cachedVideoDeviceHandle, static_cast<int>(comResult));
+                        }
+                        vd->Release();
+                    }
+                    else {
+                        LOGERR("IDeviceSettingsVideoDevice not available");
+                    }
+                    stbHDRcapabilitiesCache = capabilities;
+                    isStbHDRcapabilitiesCache = true;
+                }
+            }
+        } else {
+            LOGINFO("Using getSettopHDRSupport cache \n");
+        }
+
+        if (!capabilities)
+            hdrCapabilities.Add("none");
+        if (capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_HDR10))
+            hdrCapabilities.Add("HDR10");
+        if (capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_HDR10PLUS))
+            hdrCapabilities.Add("HDR10PLUS");
+        if (capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_HLG))
+            hdrCapabilities.Add("HLG");
+        if (capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_DOLBYVISION))
+            hdrCapabilities.Add("Dolby Vision");
+        if (capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_TECHNICOLORPRIME))
+            hdrCapabilities.Add("Technicolor Prime");
+        if (capabilities & static_cast<int32_t>(HDRStandard::DS_HDRSTANDARD_SDR))
+            hdrCapabilities.Add("SDR");
+
+        if (capabilities) {
+            response["supportsHDR"] = true;
+        } else {
+            response["supportsHDR"] = false;
+        }
+        response["standards"] = hdrCapabilities;
+        for (uint32_t i = 0; i < hdrCapabilities.Length(); i++) {
+            LOGINFO("capabilities: %s", hdrCapabilities[i].String().c_str());
+        }
+        returnResponse(true);
+    }
+
+    uint32_t DisplaySettings::getSettopAudioCapabilities(const JsonObject& parameters, JsonObject& response)
+    {
+        JsonArray audioCapabilities;
+        int capabilities = 0;
+
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    int32_t caps = 0;
+                    Core::hresult comResult = audio->GetAudioCapabilities(audioHandle, caps);
+                    if (comResult == Core::ERROR_NONE) {
+                        capabilities = caps;
+                    } else {
+                        LOGERR("GetAudioCapabilities failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                    }
+                    audio->Release();
+                }
+                else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                }
+            }
+            else {
+                LOGERR("no audio port handle for '%s'", audioPort.c_str());
+            }
+        }
+
+        if (!capabilities)
+            audioCapabilities.Add("none");
+        if (capabilities & static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioCapabilities::AUDIO_CAPS_ATMOS))
+            audioCapabilities.Add("ATMOS");
+        if (capabilities & static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioCapabilities::AUDIO_CAPS_DOLBY_DIGITAL))
+            audioCapabilities.Add("DOLBY DIGITAL");
+        if (capabilities & static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioCapabilities::AUDIO_CAPS_DOLBY_DIGITAL_PLUS))
+            audioCapabilities.Add("DOLBY DIGITAL PLUS");
+        if (capabilities & static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioCapabilities::AUDIO_CAPS_DIGITAL_AUDIO_DELIVERY))
+            audioCapabilities.Add("Dual Audio Decode");
+        if (capabilities & static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioCapabilities::AUDIO_CAPS_DIGITAL_AUDIO_PROCESS_V2))
+            audioCapabilities.Add("DAPv2");
+        if (capabilities & static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioCapabilities::AUDIO_CAPS_MS12))
+            audioCapabilities.Add("MS12");
+
+        response["AudioCapabilities"] = audioCapabilities;
+        for (uint32_t i = 0; i < audioCapabilities.Length(); i++) {
+            LOGINFO("capabilities: %s", audioCapabilities[i].String().c_str());
+        }
+        returnResponse(true);
+    }
+
+    uint32_t DisplaySettings::getSettopMS12Capabilities(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:{"MS12Capabilities":["Dolby Volume","Inteligent Equalizer","Dialogue Enhancer"]}
+        LOGINFOMETHOD();
+
+        JsonArray ms12Capabilities;
+        int capabilities = 0;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    int32_t caps = 0;
+                    Core::hresult comResult = audio->GetAudioMS12Capabilities(audioHandle, caps);
+                    if (comResult == Core::ERROR_NONE) {
+                        capabilities = caps;
+                    } else {
+                        LOGERR("GetAudioMS12Capabilities failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
+                    }
+                    audio->Release();
+                }
+                else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                }
+            }
+            else {
+                LOGERR("no audio port handle for '%s'", audioPort.c_str());
+            }
+        }
+
+        if (!capabilities)
+            ms12Capabilities.Add("none");
+        if (capabilities & static_cast<int32_t>(Exchange::IDeviceSettingsAudio::MS12Capabilities::AUDIO_MS12_CAPABILITIES_DOLBYVOLUME))
+            ms12Capabilities.Add("Dolby Volume");
+        if (capabilities & static_cast<int32_t>(Exchange::IDeviceSettingsAudio::MS12Capabilities::AUDIO_MS12_CAPABILITIES_INTELLIGENT_EQUALIZER))
+            ms12Capabilities.Add("Inteligent Equalizer");
+        if (capabilities & static_cast<int32_t>(Exchange::IDeviceSettingsAudio::MS12Capabilities::AUDIO_MS12_CAPABILITIES_DIALOG_ENHANCER))
+            ms12Capabilities.Add("Dialogue Enhancer");
+
+        response["MS12Capabilities"] = ms12Capabilities;
+        for (uint32_t i = 0; i < ms12Capabilities.Length(); i++) {
+            LOGINFO("capabilities: %s", ms12Capabilities[i].String().c_str());
+        }
+        returnResponse(true);
+    }
+
+    uint32_t DisplaySettings::getCurrentOutputSettings(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+
+        bool success = true;
+        // DS_IARM: uses default video port, checks isDisplayConnected first
+        const std::string defaultVP = DSHelper::getDefaultVideoPortName();
+        string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : defaultVP;
+        if (!isDisplayConnected(videoDisplay)) {
+            LOGERR("display not connected on %s", videoDisplay.c_str());
+            returnResponse(false);
+        }
+        {
+            const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(videoDisplay);
+            if (INVALID_DS_HANDLE != videoHandle) {
+                auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    Exchange::IDeviceSettingsVideoPort::DSOutputSettings settings;
+                    Core::hresult comResult = vp->GetCurrentOutputSettings(videoHandle, settings);
+                    if (comResult == Core::ERROR_NONE) {
+                        // DS_IARM response keys: colorSpace, colorDepth, matrixCoefficients, videoEOTF, quantizationRange
+                        response["colorSpace"] = static_cast<uint32_t>(settings.colorSpace);
+                        response["colorDepth"] = static_cast<uint32_t>(settings.colorDepth);
+                        response["matrixCoefficients"] = static_cast<uint32_t>(settings.matrixCoefficients);
+                        response["videoEOTF"] = static_cast<uint32_t>(settings.videoEotf);
+                        response["quantizationRange"] = static_cast<uint32_t>(settings.quantizationRange);
+                    } else {
+                        LOGERR("GetCurrentOutputSettings failed for '%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    vp->Release();
+                } else {
+                    LOGERR("IDeviceSettingsVideoPort not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("no video port handle for '%s'", videoDisplay.c_str());
+                success = false;
+            }
+        }
+
+        LOGINFO("Leaving_ DisplaySettings::%s\n", __FUNCTION__);
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getVolumeLeveller(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                int32_t audioHandle = -1;
+                if (DSHelper::isAudioOutputPortConnected(audio, audioPort, audioHandle)) {
+                    Exchange::IDeviceSettingsAudio::VolumeLeveller leveller{ 0, 0 };
+                    Core::hresult comResult = audio->GetAudioVolumeLeveller(audioHandle, leveller);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["enable"] = (leveller.mode ? true : false);
+                        response["level"] = leveller.level;
+                    } else {
+                        LOGERR("GetAudioVolumeLeveller failed for audioPort='%s'", audioPort.c_str());
                         success = false;
                         response["enable"] = false;
                         response["level"] = 0;
+                    }
+                } else {
+                    LOGERR("no audio port handle for '%s'", audioPort.c_str());
+                    success = false;
                 }
-                returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getVolumeLeveller2(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                dsVolumeLeveller_t leveller;
-
-                try
-                {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                                if (aPort.isConnected())
-                                {
-                                        leveller= aPort.getVolumeLeveller();
-                                        response["mode"] = leveller.mode;
-                                        response["level"] = leveller.level;
-                                }
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION1(audioPort);
-                        success = false;
-                        response["mode"] = 0; //Off
-                        response["level"] = 0;
-                }
-                returnResponse(success);
-        }
-
-        void DisplaySettings::audioFormatToString(dsAudioFormat_t audioFormat, JsonObject & response)
-        {
-            std::vector<string> supportedAudioFormat = {"NONE", "PCM", "AAC","VORBIS","WMA", "DOLBY AC3", "DOLBY EAC3",
-                                                         "DOLBY AC4", "DOLBY MAT", "DOLBY TRUEHD",
-                                                         "DOLBY EAC3 ATMOS","DOLBY TRUEHD ATMOS",
-                                                         "DOLBY MAT ATMOS","DOLBY AC4 ATMOS","UNKNOWN"};
-            switch (audioFormat)
-            {
-                   case dsAUDIO_FORMAT_NONE:
-                       response["currentAudioFormat"] = "NONE";
-                       break;
-                   case dsAUDIO_FORMAT_PCM:
-                       response["currentAudioFormat"] = "PCM";
-                       break;
-                   case dsAUDIO_FORMAT_AAC:
-                       response["currentAudioFormat"] = "AAC";
-                       break;
-                   case dsAUDIO_FORMAT_VORBIS:
-                       response["currentAudioFormat"] = "VORBIS";
-                       break;
-                   case dsAUDIO_FORMAT_WMA:
-                       response["currentAudioFormat"] = "WMA";
-                       break;
-                   case dsAUDIO_FORMAT_DOLBY_AC3:
-                       response["currentAudioFormat"] = "DOLBY AC3";
-                       break;
-                   case dsAUDIO_FORMAT_DOLBY_EAC3:
-                       response["currentAudioFormat"] = "DOLBY EAC3";
-                       break;
-                   case dsAUDIO_FORMAT_DOLBY_AC4:
-                       response["currentAudioFormat"] = "DOLBY AC4";
-                       break;
-                   case dsAUDIO_FORMAT_DOLBY_MAT:
-                       response["currentAudioFormat"] = "DOLBY MAT";
-                       break;
-                   case dsAUDIO_FORMAT_DOLBY_TRUEHD:
-                       response["currentAudioFormat"] = "DOLBY TRUEHD";
-                       break;
-                   case dsAUDIO_FORMAT_DOLBY_EAC3_ATMOS:
-                       response["currentAudioFormat"] = "DOLBY EAC3 ATMOS";
-                       break;
-                   case dsAUDIO_FORMAT_DOLBY_TRUEHD_ATMOS:
-                       response["currentAudioFormat"] = "DOLBY TRUEHD ATMOS";
-                       break;
-                   case dsAUDIO_FORMAT_DOLBY_MAT_ATMOS:
-                       response["currentAudioFormat"] = "DOLBY MAT ATMOS";
-                       break;
-                   case dsAUDIO_FORMAT_DOLBY_AC4_ATMOS:
-                       response["currentAudioFormat"] = "DOLBY AC4 ATMOS";
-                       break;
-                   default:
-                       response["currentAudioFormat"] = "UNKNOWN";
-                       break;
+                audio->Release();
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
+                success = false;
             }
-            setResponseArray(response, "supportedAudioFormat", supportedAudioFormat);
-	}
-
-        uint32_t DisplaySettings::getAudioFormat(const JsonObject& parameters, JsonObject& response)
-        {
-             LOGINFOMETHOD();
-	     bool success = true;
-             dsAudioFormat_t audioFormat = dsAUDIO_FORMAT_NONE;
-             try
-             {
-                 device::Host::getInstance().getCurrentAudioFormat(audioFormat);
-                 LOGINFO("current audio format: %d \n", audioFormat);
-                 audioFormatToString(audioFormat, response);
-                 success = true;
-             }
-             catch (const device::Exception& err)
-             {
-                 LOG_DEVICE_EXCEPTION0();
-		 success = false;
-		 audioFormatToString(dsAUDIO_FORMAT_NONE, response);
-             }
-	     returnResponse(success);
         }
+        returnResponse(success);
+    }
 
-	void DisplaySettings::notifyAudioFormatChange(dsAudioFormat_t audioFormat)
-	{
-	     JsonObject params;
-	     audioFormatToString(audioFormat, params);
-             sendNotify("audioFormatChanged", params);
-	}
-
-    void DisplaySettings::notifyAtmosCapabilityChange(dsATMOSCapability_t atmosCaps)
+    uint32_t DisplaySettings::getVolumeLeveller2(const JsonObject& parameters, JsonObject& response)
     {
-         JsonObject params;
-         switch (atmosCaps) {
-        case dsAUDIO_ATMOS_ATMOSMETADATA:
+        LOGINFOMETHOD();
+
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                int32_t audioHandle = -1;
+                if (DSHelper::isAudioOutputPortConnected(audio, audioPort, audioHandle)) {
+                    Exchange::IDeviceSettingsAudio::VolumeLeveller leveller{ 0, 0 };
+                    Core::hresult comResult = audio->GetAudioVolumeLeveller(audioHandle, leveller);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["mode"] = leveller.mode;
+                        response["level"] = leveller.level;
+                    } else {
+                        LOGERR("getVolumeLeveller2: GetAudioVolumeLeveller failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                        response["mode"] = 0;
+                        response["level"] = 0;
+                    }
+                } else {
+                    LOGERR("getVolumeLeveller2: no audio port handle for '%s'", audioPort.c_str());
+                    success = false;
+                }
+                audio->Release();
+            } else {
+                LOGERR("getVolumeLeveller2: IDeviceSettingsAudio not available");
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    void DisplaySettings::audioFormatToString(
+        uint32_t audioFormat,
+        JsonObject& response)
+    {
+        std::vector<string> supportedAudioFormat = { "NONE", "PCM", "AAC", "VORBIS", "WMA", "DOLBY AC3", "DOLBY EAC3",
+            "DOLBY AC4", "DOLBY MAT", "DOLBY TRUEHD",
+            "DOLBY EAC3 ATMOS", "DOLBY TRUEHD ATMOS",
+            "DOLBY MAT ATMOS", "DOLBY AC4 ATMOS", "UNKNOWN" };
+        // COM-RPC path: Exchange::IDeviceSettingsAudio::AudioFormat enum values
+        switch (static_cast<Exchange::IDeviceSettingsAudio::AudioFormat>(audioFormat)) {
+        case Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_NONE:
+            response["currentAudioFormat"] = "NONE";
+            break;
+        case Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_PCM:
+            response["currentAudioFormat"] = "PCM";
+            break;
+        case Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_DOLBY_AC3:
+            response["currentAudioFormat"] = "DOLBY AC3";
+            break;
+        case Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_DOLBY_EAC3:
+            response["currentAudioFormat"] = "DOLBY EAC3";
+            break;
+        case Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_DOLBY_AC4:
+            response["currentAudioFormat"] = "DOLBY AC4";
+            break;
+        case Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_DOLBY_MAT:
+            response["currentAudioFormat"] = "DOLBY MAT";
+            break;
+        case Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_DOLBY_TRUEHD:
+            response["currentAudioFormat"] = "DOLBY TRUEHD";
+            break;
+        case Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_DOLBY_EAC3_ATMOS:
+            response["currentAudioFormat"] = "DOLBY EAC3 ATMOS";
+            break;
+        case Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_DOLBY_TRUEHD_ATMOS:
+            response["currentAudioFormat"] = "DOLBY TRUEHD ATMOS";
+            break;
+        case Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_DOLBY_MAT_ATMOS:
+            response["currentAudioFormat"] = "DOLBY MAT ATMOS";
+            break;
+        case Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_DOLBY_AC4_ATMOS:
+            response["currentAudioFormat"] = "DOLBY AC4 ATMOS";
+            break;
+        case Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_AAC:
+            response["currentAudioFormat"] = "AAC";
+            break;
+        case Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_VORBIS:
+            response["currentAudioFormat"] = "VORBIS";
+            break;
+        case Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_WMA:
+            response["currentAudioFormat"] = "WMA";
+            break;
+        default:
+            response["currentAudioFormat"] = "UNKNOWN";
+            break;
+        }
+        setResponseArray(response, "supportedAudioFormat", supportedAudioFormat);
+    }
+
+    uint32_t DisplaySettings::getAudioFormat(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        Exchange::IDeviceSettingsAudio::AudioFormat fmt = Exchange::IDeviceSettingsAudio::AudioFormat::AUDIO_FORMAT_NONE;
+        bool success = false;
+        {
+            // DS_IARM: Host::getCurrentAudioFormat() → getAudioPortHandle() auto-selects port:
+            //   STB (HDMI0 present): always HDMI0
+            //   TV: first enabled+connected from {HDMI_ARC0, HEADPHONE0, SPDIF0, SPEAKER0}
+            // COM-RPC: replicate the same port-selection logic
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                int32_t audioHandle = -1;
+
+                if (DSHelper::hasAudioPortHandle("HDMI0")) {
+                    // STB profile: use HDMI0 audio port
+                    audioHandle = DSHelper::getCachedAudioPortHandle("HDMI0");
+                } else {
+                    // TV profile: first enabled+connected port in priority order
+                    const std::string priority[] = {"HDMI_ARC0", "HEADPHONE0", "SPDIF0", "SPEAKER0"};
+                    for (const auto& portName : priority) {
+                        if (!DSHelper::hasAudioPortHandle(portName)) continue;
+                        int32_t handle = DSHelper::getCachedAudioPortHandle(portName);
+                        bool enabled = false;
+                        Core::hresult comResult = audio->IsAudioPortEnabled(handle, enabled);
+                        if (comResult == Core::ERROR_NONE && enabled) {
+                            if (DSHelper::isAudioOutputPortConnected(audio, portName, handle)) {
+                                audioHandle = handle;
+                                break;
+                            }
+                        }
+                        else {
+                            LOGERR("IsAudioPortEnabled failed for audio port '%s', Error=%d", portName.c_str(), static_cast<int>(comResult));
+                        }
+                    }
+                }
+
+                if (INVALID_DS_HANDLE != audioHandle) {
+                    Core::hresult comResult = audio->GetAudioFormat(audioHandle, fmt);
+                    if (comResult == Core::ERROR_NONE) {
+                        success = true;
+                    } else {
+                        LOGERR("GetAudioFormat failed, Error=%d", static_cast<int>(comResult));
+                    }
+                } else {
+                    LOGERR("no suitable audio port handle found");
+                }
+                audio->Release();
+            } else {
+                LOGERR("getAudioFormat failed: IDeviceSettingsAudio not available");
+            }
+            audioFormatToString(static_cast<uint32_t>(fmt), response);
+        }
+        returnResponse(success);
+    }
+
+    void DisplaySettings::notifyAudioFormatChange(uint32_t audioFormat)
+    {
+        JsonObject params;
+        audioFormatToString(audioFormat, params);
+        sendNotify("audioFormatChanged", params);
+    }
+
+    void DisplaySettings::notifyAtmosCapabilityChange(uint32_t atmosCaps)
+    {
+        JsonObject params;
+        switch (static_cast<Exchange::IDeviceSettingsAudio::DolbyAtmosCapability>(atmosCaps)) {
+        case Exchange::IDeviceSettingsAudio::DolbyAtmosCapability::AUDIO_DOLBY_ATMOS_METADATA:
             params["currentAtmosCapability"] = "ATMOS_SUPPORTED";
             break;
-        case dsAUDIO_ATMOS_NOTSUPPORTED:
+        case Exchange::IDeviceSettingsAudio::DolbyAtmosCapability::AUDIO_DOLBY_ATMOS_NOT_SUPPORTED:
             params["currentAtmosCapability"] = "ATMOS_NOT_SUPPORTED";
             break;
         default:
             LOGINFO("Atmos capability unknown, not notifying");
             break;
-         }
-             sendNotify("AtmosCapabilityChanged", params);
+        }
+        sendNotify("AtmosCapabilityChanged", params);
     }
-	void DisplaySettings::notifyVideoFormatChange(dsHDRStandard_t videoFormat)
-	{
-            JsonObject params;
-            params["currentVideoFormat"] = getVideoFormatTypeToString(videoFormat);
+    void DisplaySettings::notifyVideoFormatChange(uint32_t videoFormat)
+    {
+        JsonObject params;
+        params["currentVideoFormat"] = getVideoFormatTypeToString(videoFormat);
+        params["supportedVideoFormat"] = getSupportedVideoFormats();
+        sendNotify("videoFormatChanged", params);
+    }
 
-            params["supportedVideoFormat"] = getSupportedVideoFormats();
-            sendNotify("videoFormatChanged", params);
-        }
+    void DisplaySettings::notifyAssociatedAudioMixingChange(bool mixing)
+    {
+        JsonObject params;
+        params["mixing"] = mixing;
+        sendNotify("associatedAudioMixingChanged", params);
+    }
 
-        void DisplaySettings::notifyAssociatedAudioMixingChange(bool mixing)
+    void DisplaySettings::notifyFaderControlChange(bool mixerbalance)
+    {
+        JsonObject params;
+        params["mixerBalance"] = mixerbalance;
+        sendNotify("faderControlChanged", params);
+    }
+
+    void DisplaySettings::notifyPrimaryLanguageChange(std::string pLang)
+    {
+        JsonObject params;
+        params["primaryLanguage"] = pLang;
+        sendNotify("primaryLanguageChanged", params);
+    }
+
+    void DisplaySettings::notifySecondaryLanguageChange(std::string sLang)
+    {
+        JsonObject params;
+        params["secondaryLanguage"] = sLang;
+        sendNotify("secondaryLanguageChanged", params);
+    }
+
+    uint32_t DisplaySettings::getBassEnhancer(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        int boost = 0;
         {
-             JsonObject params;
-             params["mixing"] = mixing;
-             sendNotify("associatedAudioMixingChanged", params);
-        }
-
-        void DisplaySettings::notifyFaderControlChange(bool mixerbalance)
-        {
-             JsonObject params;
-             params["mixerBalance"] = mixerbalance;
-             sendNotify("faderControlChanged", params);
-        }
-
-        void DisplaySettings::notifyPrimaryLanguageChange(std::string pLang)
-        {
-             JsonObject params;
-             params["primaryLanguage"] = pLang;
-             sendNotify("primaryLanguageChanged", params);
-        }
-
-        void DisplaySettings::notifySecondaryLanguageChange(std::string sLang)
-        {
-             JsonObject params;
-             params["secondaryLanguage"] = sLang;
-             sendNotify("secondaryLanguageChanged", params);
-        }
-
-        uint32_t DisplaySettings::getBassEnhancer(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                int boost = 0;
-                try
-                {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                                if (aPort.isConnected())
-                                {
-                                        boost = aPort.getBassEnhancer();
-                                        response["enable"] = boost ? true : false ;
-                                        response["bassBoost"] = boost;
-                                }
-                                else
-                                {
-                                        LOGERR("aport is not connected!");
-                                        success = false;
-                                }
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION1(audioPort);
-                        success = false;
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                int32_t audioHandle = -1;
+                if (DSHelper::isAudioOutputPortConnected(audio, audioPort, audioHandle)) {
+                    int32_t bassBoost = 0;
+                    Core::hresult comResult = audio->GetAudioBassEnhancer(audioHandle, bassBoost);
+                    if (comResult == Core::ERROR_NONE) {
+                        boost = bassBoost;
+                        response["enable"] = boost ? true : false;
+                        response["bassBoost"] = boost;
+                    } else {
+                        // DS_IARM: catch sets response["enable"] = false
                         response["enable"] = false;
-                }
-                returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::isSurroundDecoderEnabled(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                bool success = true;
-                bool surroundDecoderEnable = false;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-
-                try
-                {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                                if (aPort.isConnected())
-                                {
-                                        surroundDecoderEnable = aPort.isSurroundDecoderEnabled();
-                                        response["surroundDecoderEnable"] = surroundDecoderEnable;
-                                }
-                                else
-                                {
-                                        LOGERR("aport is not connected!");
-                                        success = false;
-                                }
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION1(audioPort);
+                        LOGERR("GetAudioBassEnhancer failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
-                }
-                returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getGain (const JsonObject& parameters, JsonObject& response)
-        {
-            LOGINFOMETHOD();
-            bool success = true;
-            float gain = 0;
-
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                gain = aPort.getGain();
-                response["gain"] = to_string(gain);
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(std::move(audioPort));
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getMuted (const JsonObject& parameters, JsonObject& response)
-        {
-            LOGINFOMETHOD();
-            bool success = true;
-            bool muted = false;
-
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                muted = aPort.isMuted();
-                response["muted"] = muted;
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(std::move(audioPort));
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getVolumeLevel (const JsonObject& parameters, JsonObject& response)
-        {
-            //LOGINFOMETHOD();
-            bool success = true;
-            float level = 0;
-
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                if( audioPort != "HDMI_ARC0")
-                {
-                     device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                     level = aPort.getLevel();
-                }
-                else
-                {
-                    level = hdmiArcVolumeLevel;
-                }
-                response["volumeLevel"] = to_string(level);
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getDRCMode(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                bool success = true;
-                int mode = 0;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                try
-                {
-                       device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                                if (aPort.isConnected())
-                                {
-                                        mode = aPort.getDRCMode();
-                                        response["DRCMode"] = mode ? "RF" : "line" ;
-                                }
-                                else
-                                {
-                                        LOGERR("aport is not connected!");
-                                        success = false;
-                                }
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION1(audioPort);
-                        success = false;
-                }
-                returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getSurroundVirtualizer(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                dsSurroundVirtualizer_t virtualizer;
-
-                try
-                {
-                       device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                                if (aPort.isConnected())
-                                {
-                                        virtualizer = aPort.getSurroundVirtualizer();
-                                        response["enable"] = virtualizer.mode ? true : false ;
-                                        response["boost"] = virtualizer.boost;
-                                }
-                                else
-                                {
-                                        LOGERR("aport is not connected!");
-                                        success = false;
-                                }
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION1(audioPort);
-                        success = false;
-                }
-                returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getSurroundVirtualizer2(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                dsSurroundVirtualizer_t virtualizer;
-
-                try
-                {
-                       device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                                if (aPort.isConnected())
-                                {
-                                        virtualizer = aPort.getSurroundVirtualizer();
-                                        response["mode"] = virtualizer.mode;
-                                        response["boost"] = virtualizer.boost;
-                                }
-                                else
-                                {
-                                        LOGERR("aport is not connected!");
-                                        success = false;
-                                }
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION1(audioPort);
-                        success = false;
-                        response["mode"] = 0; //Off
-                        response["boost"] = 0;
-
-                }
-                returnResponse(success);
-        }
-	
-        uint32_t DisplaySettings::getMISteering(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                bool success = true;
-                bool enable = false;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                try
-                {
-                       device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                                if (aPort.isConnected())
-                                {
-                                        enable = aPort.getMISteering();
-                                        response["MISteeringEnable"] = enable;
-                                }
-                                else
-                                {
-                                        LOGERR("aport is not connected!");
-                                        success = false;
-                                }
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION1(audioPort);
-                        success = false;
-                }
-                returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setVolumeLeveller(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                returnIfParamNotFound(parameters, "level");
-                string sVolumeLeveller = parameters["level"].String();
-                dsVolumeLeveller_t VolumeLeveller;
-                if (!TryParseIntInRange(sVolumeLeveller, 0, 10, VolumeLeveller.level)) {
-                    LOGWARN("level invalid: '%s' (expected range [0, 10])", sVolumeLeveller.c_str());
-                    returnResponse(false);
-                }
-
-                if(VolumeLeveller.level == 0) {
-                    VolumeLeveller.mode = 0; //Off
-                }
-                else {
-                    VolumeLeveller.mode = 1; //On
-                }
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                try
-                {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                        aPort.setVolumeLeveller(VolumeLeveller);
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION2(audioPort, sVolumeLeveller);
-                        success = false;
-                }
-                returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setVolumeLeveller2(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                returnIfParamNotFound(parameters, "mode");
-            returnIfParamNotFound(parameters, "level");
-    		string sMode = parameters["mode"].String();
-                string sLevel = parameters["level"].String();
-                dsVolumeLeveller_t volumeLeveller;
-
-            int mode = 0;
-            if (!TryParseIntInRange(sMode, 0, 2, mode)) {
-                LOGWARN("mode invalid: '%s' (expected range [0, 2])", sMode.c_str());
-                returnResponse(false);
-            }
-            if ((mode == 1) && !TryParseIntInRange(sLevel, 0, 10, volumeLeveller.level)) {
-                    LOGWARN("level invalid: '%s' (expected range [0, 10] when mode is 1)", sLevel.c_str());
-                    returnResponse(false);
-            }
-
-            if (mode == 0) {
-                volumeLeveller.mode = 0; //Off
-				volumeLeveller.level = 0;
-            }
-            else if (mode == 1){
-                volumeLeveller.mode = 1; //On
-            }
-			else if (mode == 2) {
-				volumeLeveller.mode = 2; //Auto
-				volumeLeveller.level = 0;
-            }
-            else {
-                LOGERR("Invalid volume leveller mode \n");
-                returnResponse(false);
-            }
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                try
-                {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                        aPort.setVolumeLeveller(volumeLeveller);
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION2(audioPort, sMode);
-                        success = false;
-                }
-                returnResponse(success);
-        }
-
-
-        uint32_t DisplaySettings::enableSurroundDecoder(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                returnIfParamNotFound(parameters, "surroundDecoderEnable");
-                string sEnableSurroundDecoder = parameters["surroundDecoderEnable"].String();
-                bool enableSurroundDecoder = false;
-                if (!TryGetBoolParam(parameters, "surroundDecoderEnable", enableSurroundDecoder)) {
-                    LOGWARN("surroundDecoderEnable invalid: '%s' (expected true/false)", sEnableSurroundDecoder.c_str());
-                    returnResponse(false);
-                }
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                try
-                {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                        aPort.enableSurroundDecoder(enableSurroundDecoder);
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION2(audioPort, sEnableSurroundDecoder);
-                        success = false;
-                }
-                returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setBassEnhancer(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                returnIfParamNotFound(parameters, "bassBoost");
-                string sBassBoost = parameters["bassBoost"].String();
-                int bassBoost = 0;
-                if (!TryParseIntInRange(sBassBoost, 0, 100, bassBoost)) {
-                    LOGWARN("bassBoost invalid: '%s' (expected range [0, 100])", sBassBoost.c_str());
-                    returnResponse(false);
-                }
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                try
-                {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                        aPort.setBassEnhancer(bassBoost);
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION2(audioPort, sBassBoost);
-                        success = false;
-                }
-                returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setSurroundVirtualizer(const JsonObject& parameters, JsonObject& response)
-        {
-               LOGINFOMETHOD();
-               returnIfParamNotFound(parameters, "boost");
-               string sSurroundVirtualizer = parameters["boost"].String();
-               dsSurroundVirtualizer_t surroundVirtualizer;
-               if (!TryParseIntInRange(sSurroundVirtualizer, 0, 96, surroundVirtualizer.boost)) {
-                   LOGWARN("boost invalid: '%s' (expected range [0, 96])", sSurroundVirtualizer.c_str());
-                   returnResponse(false);
-               }
-
-               if(surroundVirtualizer.boost == 0) {
-		  surroundVirtualizer.mode = 0; //Off
-               }
-		  else {
-			  surroundVirtualizer.mode = 1; //On
-               }
-               bool success = true;
-               string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-               try
-               {
-                   device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                   aPort.setSurroundVirtualizer(surroundVirtualizer);
-               }
-               catch (const device::Exception& err)
-               {
-                   LOG_DEVICE_EXCEPTION2(audioPort, sSurroundVirtualizer);
-                   success = false;
-               }
-               returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setSurroundVirtualizer2(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                returnIfParamNotFound(parameters, "mode");
-                string sMode = parameters["mode"].String();
-                string sBoost = parameters.HasLabel("boost") ? parameters["boost"].String() : "";
-                dsSurroundVirtualizer_t surroundVirtualizer;
-
-            int mode = 0;
-            if (!TryParseIntInRange(sMode, 0, 2, mode)) {
-                LOGWARN("mode invalid: '%s' (expected range [0, 2])", sMode.c_str());
-                returnResponse(false);
-            }
-            if ((mode == 1) && !TryParseIntInRange(sBoost, 0, 96, surroundVirtualizer.boost)) {
-                LOGWARN("boost invalid: '%s' (expected range [0, 96] when mode is 1)", sBoost.c_str());
-                returnResponse(false);
-            }
-
-            if (mode == 0) {
-                surroundVirtualizer.mode = 0; //Off
-                surroundVirtualizer.boost = 0;
-            }
-            else if (mode == 1){
-                surroundVirtualizer.mode = 1; //On
-            }
-            else if (mode == 2) {
-                surroundVirtualizer.mode = 2; //Auto
-                surroundVirtualizer.boost = 0;
-            }
-            else {
-                LOGERR("Invalid surround virtualizer mode \n");
-                returnResponse(false);
-            }
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                try
-                {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                        aPort.setSurroundVirtualizer(surroundVirtualizer);
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION2(audioPort, sMode);
-                        success = false;
-                }
-                returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setMISteering(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                returnIfParamNotFound(parameters, "MISteeringEnable");
-            string sMISteering = parameters["MISteeringEnable"].String();
-                bool MISteering = false;
-            if (!TryGetBoolParam(parameters, "MISteeringEnable", MISteering)) {
-                LOGWARN("MISteeringEnable invalid: '%s' (expected true/false)", sMISteering.c_str());
-                returnResponse(false);
-            }
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                try
-                {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                        aPort.setMISteering(MISteering);
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION2(audioPort, sMISteering);
-                        success = false;
-                }
-                returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setGain(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                returnIfParamNotFound(parameters, "gain");
-                string sGain = parameters["gain"].String();
-                float newGain = 0;
-                try {
-                        newGain = stof(sGain);
-                        if ((newGain < -2080) || (newGain > 480)) {
-                            LOGERR("Gain value being set to an invalid value newGain: %f \n",newGain);
-                            returnResponse(false);
-                        }
-            }catch (const std::exception& err) {
-                LOGERR("Failed to parse gain '%s': %s", sGain.c_str(), err.what());
-                returnResponse(false);
-            }catch (...) {
-                LOGERR("Failed to parse gain '%s'", sGain.c_str());
-                        returnResponse(false);
-                }
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                try
-                {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                        aPort.setGain(newGain);
-                        success= true;
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION2(audioPort, sGain);
-                        success = false;
-                }
-                returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setMuted (const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                returnIfParamNotFound(parameters, "muted");
-                string sMuted = parameters["muted"].String();
-                bool muted = false;
-                static bool cache_muted = false;
-            if (!TryGetBoolParam(parameters, "muted", muted)) {
-                LOGWARN("muted invalid: '%s' (expected true/false)", sMuted.c_str());
-                returnResponse(false);
-            }
-            bool success = true;
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            LOGWARN("DisplaySettings::setMuted called Audio Port :%s muted:%d\n", audioPort.c_str(), muted);
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.setMuted(muted);
-                if(cache_muted != muted)
-                {
-                    cache_muted = muted;
-                    JsonObject params;
-                    params["muted"] = muted;
-                    sendNotify("muteStatusChanged", params);
-                }
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION2(audioPort, sMuted);
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setVolumeLevel(const JsonObject& parameters, JsonObject& response)
-        {
-                //LOGINFOMETHOD();
-                returnIfParamNotFound(parameters, "volumeLevel");
-                string sLevel = parameters["volumeLevel"].String();
-            int level = 0;
-                int current_volumelevel = 0;
-            if (!TryParseIntInRange(sLevel, 0, 100, level)) {
-                LOGWARN("volumeLevel invalid: '%s' (expected range [0, 100])", sLevel.c_str());
-                returnResponse(false);
-            }
-
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                try
-                {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-			current_volumelevel = (int)aPort.getLevel();
-                        aPort.setLevel(level);
-                        if(current_volumelevel != (int)level)
-                        {
-                            JsonObject params;
-                            params["volumeLevel"] = (int)level;
-                            sendNotify("volumeLevelChanged", params);
-                        }
-                        success= true;
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION2(audioPort, sLevel);
-                        success = false;
-                }
-                returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setDRCMode(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                returnIfParamNotFound(parameters, "DRCMode");
-                string sDRCMode = parameters["DRCMode"].String();
-                int DRCMode = 0;
-                if (!TryParseIntInRange(sDRCMode, 0, 1, DRCMode)) {
-                    LOGWARN("DRCMode invalid: '%s' (expected 0 for Line or 1 for RF)", sDRCMode.c_str());
-                    returnResponse(false);
-                }
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                try
-                {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                        aPort.setDRCMode(DRCMode);
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION2(audioPort, sDRCMode);
-                        success = false;
-                }
-                returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setMS12AudioCompression (const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-            returnIfParamNotFound(parameters, "compresionLevel");
-
-            string sCompresionLevel = parameters["compresionLevel"].String();
-            int compresionLevel = 0;
-            if (!TryParseIntInRange(sCompresionLevel, 0, 10, compresionLevel)) {
-                LOGWARN("compresionLevel invalid: '%s' (expected range [0, 10])", sCompresionLevel.c_str());
-                returnResponse(false);
-            }
-
-            bool success = true;
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.setCompression (compresionLevel);
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION2(audioPort, sCompresionLevel);
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getMS12AudioCompression (const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-                       bool success = true;
-                       int compressionlevel = 0;
-
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                compressionlevel = aPort.getCompression();
-                response["compressionlevel"] = compressionlevel;
-                               response["enable"] = (compressionlevel ? true : false);
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
-                response["compressionlevel"] = 0;
-                               response["enable"] = false;
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setDolbyVolumeMode (const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-            returnIfParamNotFound(parameters, "dolbyVolumeMode");
-
-            string sDolbyVolumeMode = parameters["dolbyVolumeMode"].String();
-            bool dolbyVolumeMode = false;
-
-            try
-            {
-                dolbyVolumeMode = parameters["dolbyVolumeMode"].Boolean();
-            }
-            catch (const std::exception &err)
-            {
-               LOGERR("Failed to parse dolbyVolumeMode '%s'", sDolbyVolumeMode.c_str());
-               returnResponse(false);
-            }
-
-            bool success = true;
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.setDolbyVolumeMode (dolbyVolumeMode);
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION2(audioPort, sDolbyVolumeMode);
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getDolbyVolumeMode (const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-                       bool success = true;
-
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                response["dolbyVolumeMode"] = aPort.getDolbyVolumeMode();
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setDialogEnhancement (const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-            returnIfParamNotFound(parameters, "enhancerlevel");
-
-            string sEnhancerlevel = parameters["enhancerlevel"].String();
-            int enhancerlevel = 0;
-            if (!TryParseIntInRange(sEnhancerlevel, 0, 16, enhancerlevel)) {
-                LOGWARN("enhancerlevel invalid: '%s' (expected range [0, 16])", sEnhancerlevel.c_str());
-                returnResponse(false);
-            }
-
-            bool success = true;
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.setDialogEnhancement (enhancerlevel);
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION2(audioPort, sEnhancerlevel);
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getDialogEnhancement (const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-                       bool success = true;
-                       int enhancerlevel = 0;
-
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                enhancerlevel = aPort.getDialogEnhancement();
-                response["enable"] = (enhancerlevel ? true : false);
-                response["enhancerlevel"] = enhancerlevel;
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(std::move(audioPort));
-                response["enable"] = false;
-                response["enhancerlevel"] = 0;
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setIntelligentEqualizerMode (const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-            returnIfParamNotFound(parameters, "intelligentEqualizerMode");
-
-            string sIntelligentEqualizerMode = parameters["intelligentEqualizerMode"].String();
-                       int intelligentEqualizerMode = 0;
-            try {
-                intelligentEqualizerMode = stoi(sIntelligentEqualizerMode);
-            }catch (const std::exception &err) {
-               LOGERR("Failed to parse intelligentEqualizerMode '%s'", std::move(sIntelligentEqualizerMode.c_str()));
-                          returnResponse(false);
-            }
-
-            bool success = true;
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.setIntelligentEqualizerMode (intelligentEqualizerMode);
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION2(audioPort, sIntelligentEqualizerMode);
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getIntelligentEqualizerMode (const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-                       bool success = true;
-                       int intelligentEqualizerMode = 0;
-
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                intelligentEqualizerMode = aPort.getIntelligentEqualizerMode ();
-                response["enable"] = (intelligentEqualizerMode ? true : false);
-                response["mode"] = intelligentEqualizerMode;
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
-                response["enable"] = false;
-                response["mode"] = 0;
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-
-        uint32_t DisplaySettings::setGraphicEqualizerMode (const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-            returnIfParamNotFound(parameters, "graphicEqualizerMode");
-
-            string sGraphicEqualizerMode = parameters["graphicEqualizerMode"].String();
-                       int graphicEqualizerMode = 0;
-            try {
-                graphicEqualizerMode = stoi(sGraphicEqualizerMode);
-            }catch (const std::exception &err) {
-               LOGERR("Failed to parse graphicEqualizerMode '%s'", sGraphicEqualizerMode.c_str());
-                          returnResponse(false);
-            }
-
-            bool success = true;
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.setGraphicEqualizerMode (graphicEqualizerMode);
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION2(audioPort, sGraphicEqualizerMode);
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getGraphicEqualizerMode (const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-                       bool success = true;
-                       int graphicEqualizerMode = 0;
-
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                graphicEqualizerMode = aPort.getGraphicEqualizerMode ();
-                response["enable"] = (graphicEqualizerMode ? true : false);
-                response["mode"] = graphicEqualizerMode;
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
-                response["enable"] = false;
-                response["mode"] = 0;
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-
-        uint32_t DisplaySettings::setMS12AudioProfile (const JsonObject& parameters, JsonObject& response)
-        {
-            LOGINFOMETHOD();
-
-            bool success = true;
-
-            returnIfParamNotFound(parameters, "ms12AudioProfile");
-            string audioProfileName = parameters["ms12AudioProfile"].String();
-
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.setMS12AudioProfile(audioProfileName);
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION2(audioPort, audioProfileName);
-                success = false;
-            }
-
-	    returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setMS12ProfileSettingsOverride(const JsonObject& parameters, JsonObject& response)
-        {
-            LOGINFOMETHOD();
-            bool success = true;
-
-            returnIfParamNotFound(parameters, "operation");
-            string audioProfileState = parameters["operation"].String();
-
-            returnIfParamNotFound(parameters, "profileName");
-            string audioProfileName = parameters["profileName"].String();
-
-            returnIfParamNotFound(parameters, "ms12SettingsName");
-            string audioProfileSettingsName = parameters["ms12SettingsName"].String();
-
-            returnIfParamNotFound(parameters, "ms12SettingsValue");
-            string audioProfileSettingValue = parameters["ms12SettingsValue"].String();
-
-
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.setMS12AudioProfileSetttingsOverride(std::move(audioProfileState),std::move(audioProfileName),std::move(audioProfileSettingsName), std::move(audioProfileSettingValue));
-            }
-            catch (const device::Exception& err)
-            {
-                success = false;
-            }
-
-            returnResponse(success);
-        }
-
-
-        uint32_t DisplaySettings::getMS12AudioProfile (const JsonObject& parameters, JsonObject& response)
-        {
-            LOGINFOMETHOD();
-            bool success = true;
-
-	    string audioProfileName;
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                audioProfileName = std::move(aPort.getMS12AudioProfile());
-                response["ms12AudioProfile"] = audioProfileName;
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
-                response["ms12AudioProfile"] = "None";
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-
-        uint32_t DisplaySettings::getSupportedMS12AudioProfiles(const JsonObject& parameters, JsonObject& response)
-        {   //sample response: {"success":true,"supportedMS12AudioProfiles":["Off","Music","Movie","Game","Voice","Night","User"]}
-            LOGINFOMETHOD();
-            vector<string> supportedProfiles;
-	    string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-		device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-		supportedProfiles = aPort.getMS12AudioProfileList();
-                for (size_t i = 0; i < supportedProfiles.size(); i++)
-                {
-		    LOGINFO("Profile[%d]:  %s\n",i,supportedProfiles.at(i).c_str());
-                }
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-            }
-            setResponseArray(response, "supportedMS12AudioProfiles", supportedProfiles);
-            returnResponse(true);
-        }
-
-
-        uint32_t DisplaySettings::setAssociatedAudioMixing(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                returnIfParamNotFound(parameters, "mixing");
-                string sMixing = parameters["mixing"].String();
-                bool mixing = false;
-            if (!TryGetBoolParam(parameters, "mixing", mixing)) {
-                LOGWARN("mixing invalid: '%s' (expected true/false)", sMixing.c_str());
-                returnResponse(false);
-            }
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                try
-                {
-                    if (device::Host::getInstance().isHDMIOutPortPresent())
-                    {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                        aPort.setAssociatedAudioMixing(mixing);
                     }
-                    else {
-                        device::Host::getInstance().setAssociatedAudioMixing(mixing);
-                    }
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION2(audioPort, sMixing);
-                        success = false;
-                }
-                returnResponse(success);
-        }
-
-
-
-        uint32_t DisplaySettings::getAssociatedAudioMixing(const JsonObject& parameters, JsonObject& response)
-        {
-                LOGINFOMETHOD();
-                bool success = true;
-                bool mixing = false;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                try
-                {
-                    if (device::Host::getInstance().isHDMIOutPortPresent())
-                    {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                        aPort.getAssociatedAudioMixing(&mixing);
-                    }
-                    else {
-                        device::Host::getInstance().getAssociatedAudioMixing(&mixing);
-                    }
-                    response["mixing"] = mixing;
-                }
-                catch (const device::Exception& err)
-                {
-                    LOG_DEVICE_EXCEPTION1(audioPort);
+                } else {
+                    LOGERR("aport is not connected!");
                     success = false;
                 }
-                returnResponse(success);
+                audio->Release();
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
+                success = false;
+            }
         }
+        returnResponse(success);
+    }
 
-        uint32_t DisplaySettings::setFaderControl(const JsonObject& parameters, JsonObject& response)
+    uint32_t DisplaySettings::isSurroundDecoderEnabled(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+        bool surroundDecoderEnable = false;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
-                LOGINFOMETHOD();
-                returnIfParamNotFound(parameters, "mixerBalance");
-                string sMixerBalance = parameters["mixerBalance"].String();
-                int mixerBalance = 0;
-                if (!TryParseIntInRange(sMixerBalance, -32, 32, mixerBalance)) {
-                    LOGWARN("mixerBalance invalid: '%s' (expected range [-32, 32])", sMixerBalance.c_str());
-                    returnResponse(false);
-                }
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                try
-                {
-                    if (device::Host::getInstance().isHDMIOutPortPresent())
-                    {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                        aPort.setFaderControl(mixerBalance);
-                    }
-                    else {
-                        device::Host::getInstance().setFaderControl(mixerBalance);
-                    }
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION2(audioPort, sMixerBalance);
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                int32_t audioHandle = -1;
+                if (DSHelper::isAudioOutputPortConnected(audio, audioPort, audioHandle)) {
+                    Core::hresult comResult = audio->IsAudioSurroundDecoderEnabled(audioHandle, surroundDecoderEnable);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["surroundDecoderEnable"] = surroundDecoderEnable;
+                    } else {
+                        LOGERR("IsAudioSurroundDecoderEnabled failed for audioPort='%s'", audioPort.c_str());
                         success = false;
+                    }
+                } else {
+                    LOGERR("aport is not connected!");
+                    success = false;
                 }
-                returnResponse(success);
+                audio->Release();
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
+                success = false;
+            }
         }
+        returnResponse(success);
+    }
 
+    uint32_t DisplaySettings::getGain(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+        float gain = 0;
 
-        uint32_t DisplaySettings::getFaderControl(const JsonObject& parameters, JsonObject& response)
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
-                LOGINFOMETHOD();
-                bool success = true;
-                string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-                int mixerBalance = 0;
-                try
-                {
-                    if (device::Host::getInstance().isHDMIOutPortPresent())
-                    {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                        aPort.getFaderControl(&mixerBalance);
-                    }
-                    else {
-                        device::Host::getInstance().getFaderControl(&mixerBalance);
-                    }
-                    response["mixerBalance"] = mixerBalance;
-                }
-                catch (const device::Exception& err)
-                {
-                        LOG_DEVICE_EXCEPTION1(audioPort);
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->GetAudioGain(audioHandle, gain);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["gain"] = to_string(gain);
+                    } else {
+                        LOGERR("GetAudioGain failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
-                }
-                returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setPrimaryLanguage (const JsonObject& parameters, JsonObject& response)
-        {
-            LOGINFOMETHOD();
-
-            bool success = true;
-
-            returnIfParamNotFound(parameters, "lang");
-            string primaryLanguage = parameters["lang"].String();
-
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                if (device::Host::getInstance().isHDMIOutPortPresent())
-                {
-                    device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                    aPort.setPrimaryLanguage(primaryLanguage);
-		}
-                else {
-                    device::Host::getInstance().setPrimaryLanguage(primaryLanguage);
-                }
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION2(audioPort, primaryLanguage);
-                success = false;
-            }
-
-            returnResponse(success);
-        }
-
-
-        uint32_t DisplaySettings::getPrimaryLanguage (const JsonObject& parameters, JsonObject& response)
-        {
-            LOGINFOMETHOD();
-            bool success = true;
-
-            string primaryLanguage;
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                if (device::Host::getInstance().isHDMIOutPortPresent())
-                {
-                    device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                    aPort.getPrimaryLanguage(primaryLanguage);
-                }
-                else {
-                    device::Host::getInstance().getPrimaryLanguage(primaryLanguage);
-                }
-                response["lang"] = primaryLanguage;
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
-                response["lang"] = "None";
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setSecondaryLanguage (const JsonObject& parameters, JsonObject& response)
-        {
-            LOGINFOMETHOD();
-
-            bool success = true;
-
-            returnIfParamNotFound(parameters, "lang");
-            string secondaryLanguage = parameters["lang"].String();
-
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                if (device::Host::getInstance().isHDMIOutPortPresent())
-                {
-                    device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                    aPort.setSecondaryLanguage(secondaryLanguage);
-                }
-                else {
-                    device::Host::getInstance().setSecondaryLanguage(secondaryLanguage);
-                }
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION2(audioPort, secondaryLanguage);
-                success = false;
-            }
-
-            returnResponse(success);
-        }
-
-
-        uint32_t DisplaySettings::getSecondaryLanguage (const JsonObject& parameters, JsonObject& response)
-        {
-            LOGINFOMETHOD();
-            bool success = true;
-
-            string secondaryLanguage;
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                if (device::Host::getInstance().isHDMIOutPortPresent())
-                {
-                    device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                    aPort.getSecondaryLanguage(secondaryLanguage);
-                }
-                else {
-                    device::Host::getInstance().getSecondaryLanguage(secondaryLanguage);
-                }
-                response["lang"] = secondaryLanguage;
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
-                response["lang"] = "None";
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-
-        uint32_t DisplaySettings::getAudioDelay (const JsonObject& parameters, JsonObject& response) 
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-            bool success = true;
-            string audioPort = parameters["audioPort"].String();//empty value will browse all ports
-
-            if (!checkPortName(audioPort))
-                audioPort = "HDMI0";
-
-            uint32_t audioDelayMs = 0;
-            try
-            {
-                /* Return the sound mode of the audio ouput connected to the specified audioPort */
-                /* Check if HDMI is connected - Return (default) Stereo Mode if not connected */
-                if (audioPort.empty())
-                {
-                    std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                    if (isDisplayConnected(std::move(strVideoPort)))
-                    {
-                        audioPort = "HDMI0";
                     }
-                    else
-                    {
-                        /*  * If HDMI is not connected
-                            * Get the SPDIF if it is supported by platform
-                            * If Platform does not have connected ports. Default to HDMI.
-                        */
-                        audioPort = "HDMI0";
-                        device::List<device::VideoOutputPort> vPorts = device::Host::getInstance().getVideoOutputPorts();
-                        for (size_t i = 0; i < vPorts.size(); i++)
-                        {
-                            device::VideoOutputPort &vPort = vPorts.at(i);
-                            if (isDisplayConnected(vPort.getName()))
-                            {
-                                audioPort = "SPDIF0";
-                                break;
-                            }
-                        }
-                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
                 }
-
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.getAudioDelay(audioDelayMs);
-				response["audioDelay"] = std::to_string(audioDelayMs);
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(std::move(audioPort));
+            } else {
+                LOGERR("audio port handle not found for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
+        }
+        returnResponse(success);
+    }
 
+    uint32_t DisplaySettings::getMuted(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+        bool muted = false;
+
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->IsAudioMuted(audioHandle, muted);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["muted"] = muted;
+                    } else {
+                        LOGERR("IsAudioMuted failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("audio port handle not found for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getVolumeLevel(const JsonObject& parameters, JsonObject& response)
+    {
+        // LOGINFOMETHOD();
+        bool success = true;
+        float level = 0;
+
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        // DS_IARM: HDMI_ARC0 uses cached hdmiArcVolumeLevel (updated via CEC onArcAudioStatusEventHandler)
+        if (audioPort == "HDMI_ARC0") {
+            level = hdmiArcVolumeLevel;
+            response["volumeLevel"] = to_string(level);
             returnResponse(success);
         }
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    float vol = 0;
+                    Core::hresult comResult = audio->GetAudioLevel(audioHandle, vol);
+                    if (comResult == Core::ERROR_NONE) {
+                        level = vol;
+                        response["volumeLevel"] = to_string(level);
+                    } else {
+                        LOGERR("GetAudioLevel failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("audio port handle not found for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
 
-        uint32_t DisplaySettings::setAudioDelay (const JsonObject& parameters, JsonObject& response) 
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
+    uint32_t DisplaySettings::getDRCMode(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+        int mode = 0;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                int32_t audioHandle = -1;
+                if (DSHelper::isAudioOutputPortConnected(audio, audioPort, audioHandle)) {
+                    int32_t drcMode = 0;
+                    Core::hresult comResult = audio->GetAudioDRCMode(audioHandle, drcMode);
+                    if (comResult == Core::ERROR_NONE) {
+                        mode = drcMode;
+                        response["DRCMode"] = mode ? "RF" : "line";
+                    } else {
+                        LOGERR("GetAudioDRCMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                } else {
+                    LOGERR("aport is not connected!");
+                    success = false;
+                }
+                audio->Release();
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
 
-			returnIfParamNotFound(parameters, "audioDelay");
+    uint32_t DisplaySettings::getSurroundVirtualizer(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                int32_t audioHandle = -1;
+                if (DSHelper::isAudioOutputPortConnected(audio, audioPort, audioHandle)) {
+                    Exchange::IDeviceSettingsAudio::SurroundVirtualizer sv{ 0, 0 };
+                    Core::hresult comResult = audio->GetAudioSurroundVirtualizer(audioHandle, sv);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["enable"] = sv.mode ? true : false;
+                        response["boost"] = sv.boost;
+                    } else {
+                        LOGERR("GetAudioSurroundVirtualizer failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                } else {
+                    LOGERR("aport is not connected!");
+                    success = false;
+                }
+                audio->Release();
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
 
-            string sAudioDelayMs = parameters["audioDelay"].String();
-			int audioDelayMs = 0;
-            try {
-                audioDelayMs = stoi(sAudioDelayMs);
-            } catch (const std::exception &err) {
-                LOGERR("Failed to parse audioDelay '%s'", sAudioDelayMs.c_str());
+    uint32_t DisplaySettings::getSurroundVirtualizer2(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                int32_t audioHandle = -1;
+                if (DSHelper::isAudioOutputPortConnected(audio, audioPort, audioHandle)) {
+                    Exchange::IDeviceSettingsAudio::SurroundVirtualizer sv{ 0, 0 };
+                    Core::hresult comResult = audio->GetAudioSurroundVirtualizer(audioHandle, sv);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["mode"] = sv.mode;
+                        response["boost"] = sv.boost;
+                    } else {
+                        LOGERR("getSurroundVirtualizer2: GetAudioSurroundVirtualizer failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                        response["mode"] = 0;
+                        response["boost"] = 0;
+                    }
+                } else {
+                    LOGERR("aport is not connected!");
+                    success = false;
+                    response["mode"] = 0;
+                    response["boost"] = 0;
+                }
+                audio->Release();
+            } else {
+                LOGERR("getSurroundVirtualizer2: IDeviceSettingsAudio not available");
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getMISteering(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+        bool enable = false;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                int32_t audioHandle = -1;
+                if (DSHelper::isAudioOutputPortConnected(audio, audioPort, audioHandle)) {
+                    Core::hresult comResult = audio->GetAudioMISteering(audioHandle, enable);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["MISteeringEnable"] = enable;
+                    } else {
+                        LOGERR("GetAudioMISteering failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                } else {
+                    LOGERR("aport is not connected!");
+                    success = false;
+                }
+                audio->Release();
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setVolumeLeveller(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "level");
+        string sVolumeLeveller = parameters["level"].String();
+        int volLevel = 0;
+        int volMode = 0;
+        // DS_IARM: TryParseIntInRange(sVolumeLeveller, 0, 10, ...) — hard rejects outside [0,10]
+        if (!TryParseIntInRange(sVolumeLeveller, 0, 10, volLevel)) {
+            LOGWARN("level invalid: '%s' (expected range [0, 10])", sVolumeLeveller.c_str());
+            returnResponse(false);
+        }
+        volMode = (volLevel == 0) ? 0 : 1;
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Exchange::IDeviceSettingsAudio::VolumeLeveller vl;
+                    vl.level = static_cast<uint8_t>(volLevel);
+                    vl.mode = static_cast<uint8_t>(volMode);
+                    Core::hresult comResult = audio->SetAudioVolumeLeveller(audioHandle, vl);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioVolumeLeveller failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setVolumeLeveller2(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "mode");
+        // DS_IARM: returnIfParamNotFound for both mode and level
+        returnIfParamNotFound(parameters, "level");
+        string sMode = parameters["mode"].String();
+        string sLevel = parameters["level"].String();
+        int volLevel = 0;
+        int volMode = 0;
+        // DS_IARM: TryParseIntInRange(sMode, 0, 2, mode) — hard rejects outside [0,2]
+        int mode = 0;
+        if (!TryParseIntInRange(sMode, 0, 2, mode)) {
+            LOGWARN("mode invalid: '%s' (expected range [0, 2])", sMode.c_str());
+            returnResponse(false);
+        }
+        // DS_IARM: only validates level when mode==1
+        if ((mode == 1) && !TryParseIntInRange(sLevel, 0, 10, volLevel)) {
+            LOGWARN("level invalid: '%s' (expected range [0, 10] when mode is 1)", sLevel.c_str());
+            returnResponse(false);
+        }
+        if (mode == 0) {
+            volMode = 0; // Off
+            volLevel = 0;
+        } else if (mode == 1) {
+            volMode = 1; // On
+        } else if (mode == 2) {
+            volMode = 2; // Auto
+            volLevel = 0;
+        } else {
+            LOGERR("Invalid volume leveller mode \n");
+            returnResponse(false);
+        }
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Exchange::IDeviceSettingsAudio::VolumeLeveller vl;
+                    vl.level = static_cast<uint8_t>(volLevel);
+                    vl.mode = static_cast<uint8_t>(volMode);
+                    Core::hresult comResult = audio->SetAudioVolumeLeveller(audioHandle, vl);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioVolumeLeveller failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::enableSurroundDecoder(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "surroundDecoderEnable");
+        string sEnableSurroundDecoder = parameters["surroundDecoderEnable"].String();
+        bool enableSurroundDecoder = false;
+        // DS_IARM: TryGetBoolParam accepts true/false/TRUE/FALSE/1/0
+        if (!TryGetBoolParam(parameters, "surroundDecoderEnable", enableSurroundDecoder)) {
+            LOGWARN("surroundDecoderEnable invalid: '%s' (expected true/false)", sEnableSurroundDecoder.c_str());
+            returnResponse(false);
+        }
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->EnableAudioSurroundDecoder(audioHandle, enableSurroundDecoder);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("EnableAudioSurroundDecoder failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setBassEnhancer(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "bassBoost");
+        string sBassBoost = parameters["bassBoost"].String();
+        int bassBoost = 0;
+        // DS_IARM: TryParseIntInRange(sBassBoost, 0, 100, bassBoost) — hard rejects outside [0,100]
+        if (!TryParseIntInRange(sBassBoost, 0, 100, bassBoost)) {
+            LOGWARN("bassBoost invalid: '%s' (expected range [0, 100])", sBassBoost.c_str());
+            returnResponse(false);
+        }
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->SetAudioBassEnhancer(audioHandle, bassBoost);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioBassEnhancer failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setSurroundVirtualizer(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "boost");
+        string sSurroundVirtualizer = parameters["boost"].String();
+        int svBoost = 0;
+        int svMode = 0;
+        // DS_IARM: TryParseIntInRange(sSurroundVirtualizer, 0, 96, surroundVirtualizer.boost)
+        if (!TryParseIntInRange(sSurroundVirtualizer, 0, 96, svBoost)) {
+            LOGWARN("boost invalid: '%s' (expected range [0, 96])", sSurroundVirtualizer.c_str());
+            returnResponse(false);
+        }
+        svMode = (svBoost == 0) ? 0 : 1;
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Exchange::IDeviceSettingsAudio::SurroundVirtualizer sv;
+                    sv.mode = static_cast<uint8_t>(svMode);
+                    sv.boost = static_cast<uint8_t>(svBoost);
+                    Core::hresult comResult = audio->SetAudioSurroundVirtualizer(audioHandle, sv);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioSurroundVirtualizer failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setSurroundVirtualizer2(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "mode");
+        string sMode = parameters["mode"].String();
+        // DS_IARM: HasLabel guard for boost (optional when mode != 1)
+        string sBoost = parameters.HasLabel("boost") ? parameters["boost"].String() : "";
+        int svMode = 0;
+        int svBoost = 0;
+        // DS_IARM: TryParseIntInRange(sMode, 0, 2, mode) — hard rejects outside [0,2]
+        int mode2 = 0;
+        if (!TryParseIntInRange(sMode, 0, 2, mode2)) {
+            LOGWARN("mode invalid: '%s' (expected range [0, 2])", sMode.c_str());
+            returnResponse(false);
+        }
+        // DS_IARM: only validates boost when mode==1
+        if ((mode2 == 1) && !TryParseIntInRange(sBoost, 0, 96, svBoost)) {
+            LOGWARN("boost invalid: '%s' (expected range [0, 96] when mode is 1)", sBoost.c_str());
+            returnResponse(false);
+        }
+        if (mode2 == 0) {
+            svMode = 0; // Off
+            svBoost = 0;
+        } else if (mode2 == 1) {
+            svMode = 1; // On
+        } else if (mode2 == 2) {
+            svMode = 2; // Auto
+            svBoost = 0;
+        } else {
+            LOGERR("Invalid surround virtualizer mode \n");
+            returnResponse(false);
+        }
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Exchange::IDeviceSettingsAudio::SurroundVirtualizer sv;
+                    sv.mode = static_cast<uint8_t>(svMode);
+                    sv.boost = static_cast<uint8_t>(svBoost);
+                    Core::hresult comResult = audio->SetAudioSurroundVirtualizer(audioHandle, sv);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioSurroundVirtualizer failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setMISteering(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "MISteeringEnable");
+        string sMISteering = parameters["MISteeringEnable"].String();
+        bool MISteering = false;
+        // DS_IARM: TryGetBoolParam accepts true/false/TRUE/FALSE/1/0
+        if (!TryGetBoolParam(parameters, "MISteeringEnable", MISteering)) {
+            LOGWARN("MISteeringEnable invalid: '%s' (expected true/false)", sMISteering.c_str());
+            returnResponse(false);
+        }
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->SetAudioMISteering(audioHandle, MISteering);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioMISteering failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setGain(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "gain");
+        string sGain = parameters["gain"].String();
+        float newGain = 0;
+        try {
+            newGain = stof(sGain);
+            if ((newGain < -2080) || (newGain > 480)) {
+                LOGERR("Gain value being set to an invalid value newGain: %f \n", newGain);
                 returnResponse(false);
             }
-            
-            if ( audioDelayMs < 0 )
-            {
-                LOGERR("audioDelay '%s', Should be a postiive value", sAudioDelayMs.c_str());
-                returnResponse(false);
-            }
-
-            bool success = true;
-            string audioPort = parameters["audioPort"].String();//empty value will browse all ports
-
-            if (!checkPortName(audioPort))
-                audioPort = "HDMI0";
-
-            try
-            {
-                /* Return the sound mode of the audio ouput connected to the specified audioPort */
-                /* Check if HDMI is connected - Return (default) Stereo Mode if not connected */
-                if (audioPort.empty())
-                {
-                    std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                    if (isDisplayConnected(std::move(strVideoPort))) {
-                        audioPort = "HDMI0";
-                    }
-                    else
-                    {
-                        /*  * If HDMI is not connected
-                            * Get the SPDIF if it is supported by platform
-                            * If Platform does not have connected ports. Default to HDMI.
-                        */
-                        audioPort = "HDMI0";
-                        device::List<device::VideoOutputPort> vPorts = device::Host::getInstance().getVideoOutputPorts();
-                        for (size_t i = 0; i < vPorts.size(); i++)
-                        {
-                            device::VideoOutputPort &vPort = vPorts.at(i);
-                            if (isDisplayConnected(vPort.getName()))
-                            {
-                                audioPort = "SPDIF0";
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.setAudioDelay (audioDelayMs);
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION2(std::move(audioPort), std::move(sAudioDelayMs));
-                success = false;
-            }
-            returnResponse(success);
+        } catch (const std::exception& err) {
+            LOGERR("Failed to parse gain: %s", err.what());
+            returnResponse(false);
         }
-
-        uint32_t DisplaySettings::getSinkAtmosCapability (const JsonObject& parameters, JsonObject& response) 
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-            bool success = true;
-            bool isValidAudioPort =  false;
-            dsATMOSCapability_t atmosCapability = dsAUDIO_ATMOS_NOTSUPPORTED;
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "NULL";
-            try
-            {
-                if(audioPort != "NULL") {
-                    device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
-                    for (size_t i = 0; i < aPorts.size(); i++)
-                    {
-                        device::AudioOutputPort port = aPorts.at(i);
-                        if(audioPort == port.getName()) {
-                            isValidAudioPort = true;
-                            break;
-                        }
-                    }
-
-                    if(isValidAudioPort != true) {
-                         success = false;
-                         LOGERR("getSinkAtmosCapability failure: Unsupported Audio Port!!!\n");
-                         returnResponse(success);
-                    }
-		}
-
-                if (device::Host::getInstance().isHDMIOutPortPresent()) //STB
-                {
-                    device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort("HDMI0");
-                    if(isValidAudioPort) {
-                        aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                    }
-                    if (aPort.isConnected()) {
-                        aPort.getSinkDeviceAtmosCapability (atmosCapability);
-                        response["atmos_capability"] = (int)atmosCapability;
-                    }
-                    else {
-                        LOGERR("getSinkAtmosCapability failure: %s not connected!\n", aPort.getName().c_str());
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->SetAudioGain(audioHandle, newGain);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioGain failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
+                    success = false;
                 }
-                else { //TV
-                    if(isValidAudioPort) {
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                        if ( (aPort.getName() == "HDMI_ARC0" && aPort.isConnected() && m_arcEarcAudioEnabled == true) || (aPort.getName() != "HDMI_ARC0" && aPort.isConnected()) )  {
-                            aPort.getSinkDeviceAtmosCapability (atmosCapability);
-                            response["atmos_capability"] = (int)atmosCapability;
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setMuted(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "muted");
+        string sMuted = parameters["muted"].String();
+        bool muted = false;
+        static bool cache_muted = false;
+        // DS_IARM: TryGetBoolParam accepts true/false/TRUE/FALSE/1/0
+        if (!TryGetBoolParam(parameters, "muted", muted)) {
+            LOGWARN("muted invalid: '%s' (expected true/false)", sMuted.c_str());
+            returnResponse(false);
+        }
+
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        LOGWARN("DisplaySettings::setMuted called Audio Port :%s muted:%d\n", audioPort.c_str(), muted);
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->SetAudioMute(audioHandle, muted);
+                    if (comResult == Core::ERROR_NONE) {
+                        if (cache_muted != muted) {
+                            cache_muted = muted;
+                            JsonObject params;
+                            params["muted"] = muted;
+                            sendNotify("muteStatusChanged", params);
                         }
-                        else {
-                            LOGERR("getSinkAtmosCapability failure: %s not connected!\n", audioPort.c_str());
+                    } else {
+                        LOGERR("SetAudioMute failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available for audioPort='%s'", audioPort.c_str());
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setVolumeLevel(const JsonObject& parameters, JsonObject& response)
+    {
+        // LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "volumeLevel");
+        string sLevel = parameters["volumeLevel"].String();
+        // DS_IARM: TryParseIntInRange(sLevel, 0, 100, level) — validates int [0,100]
+        // DS_IARM also reads live HW level before set for accurate change-detection
+        int level = 0;
+        if (!TryParseIntInRange(sLevel, 0, 100, level)) {
+            LOGWARN("volumeLevel invalid: '%s' (expected range [0, 100])", sLevel.c_str());
+            returnResponse(false);
+        }
+
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    // DS_IARM: reads current_volumelevel = aPort.getLevel() before set
+                    float currentLevel = -1.0f;
+                    Core::hresult comResult = audio->GetAudioLevel(audioHandle, currentLevel);
+                    if (comResult == Core::ERROR_NONE) {
+                        comResult = audio->SetAudioLevel(audioHandle, static_cast<float>(level));
+                        if (comResult == Core::ERROR_NONE) {
+                            if (static_cast<int>(currentLevel) != level) {
+                                JsonObject params;
+                                params["volumeLevel"] = level;
+                                sendNotify("volumeLevelChanged", params);
+                            }
+                        } else {
+                            LOGERR("SetAudioLevel failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                             success = false;
                         }
+                    } else {
+                        LOGERR("GetAudioLevel failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
                     }
-                    else {
-                        device::Host::getInstance().getSinkDeviceAtmosCapability (atmosCapability);
-                        response["atmos_capability"] = (int)atmosCapability;
-                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
                 }
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
-            returnResponse(success);
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setDRCMode(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "DRCMode");
+        string sDRCMode = parameters["DRCMode"].String();
+        int DRCMode = 0;
+        // DS_IARM: TryParseIntInRange(sDRCMode, 0, 1, DRCMode) — only 0 (Line) or 1 (RF)
+        if (!TryParseIntInRange(sDRCMode, 0, 1, DRCMode)) {
+            LOGWARN("DRCMode invalid: '%s' (expected 0 for Line or 1 for RF)", sDRCMode.c_str());
+            returnResponse(false);
+        }
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->SetAudioDRCMode(audioHandle, DRCMode);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioDRCMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setMS12AudioCompression(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "compresionLevel");
+
+        string sCompresionLevel = parameters["compresionLevel"].String();
+        int compresionLevel = 0;
+        // DS_IARM: TryParseIntInRange(sCompresionLevel, 0, 10, compresionLevel)
+        if (!TryParseIntInRange(sCompresionLevel, 0, 10, compresionLevel)) {
+            LOGWARN("compresionLevel invalid: '%s' (expected range [0, 10])", sCompresionLevel.c_str());
+            returnResponse(false);
         }
 
-        uint32_t DisplaySettings::setAudioAtmosOutputMode (const JsonObject& parameters, JsonObject& response) 
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-            returnIfParamNotFound(parameters, "enable");
-
-            string sEnable = parameters["enable"].String();
-            bool enable = false;
-            if (!TryGetBoolParam(parameters, "enable", enable)) {
-                LOGWARN("enable invalid: '%s' (expected true/false)", sEnable.c_str());
-                returnResponse(false);
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->SetAudioCompression(audioHandle, compresionLevel);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioCompression failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
             }
+        }
+        returnResponse(success);
+    }
 
-            bool success = true;
-            try
-            {
-                if (device::Host::getInstance().isHDMIOutPortPresent())
-                {
-                    device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort("HDMI0");
-                    if (aPort.isConnected()) {
-                        aPort.setAudioAtmosOutputMode (enable);
+    uint32_t DisplaySettings::getMS12AudioCompression(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        bool success = true;
+        int compressionlevel = 0;
+
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    int32_t level = 0;
+                    Core::hresult comResult = audio->GetAudioCompression(audioHandle, level);
+                    if (comResult == Core::ERROR_NONE) {
+                        compressionlevel = level;
+                        response["compressionlevel"] = compressionlevel;
+                        response["enable"] = (compressionlevel ? true : false);
+                    } else {
+                        // DS_IARM: catch sets error defaults
+                        response["compressionlevel"] = 0;
+                        response["enable"] = false;
+                        LOGERR("getMS12AudioCompression: GetAudioCompression failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setDolbyVolumeMode(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "dolbyVolumeMode");
+
+        string sDolbyVolumeMode = parameters["dolbyVolumeMode"].String();
+        bool dolbyVolumeMode = false;
+
+        try {
+            dolbyVolumeMode = parameters["dolbyVolumeMode"].Boolean();
+        } catch (const std::exception& err) {
+            LOGERR("Failed to parse dolbyVolumeMode '%s'", sDolbyVolumeMode.c_str());
+            returnResponse(false);
+        }
+
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->SetAudioDolbyVolumeMode(audioHandle, dolbyVolumeMode);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioDolbyVolumeMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getDolbyVolumeMode(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        bool success = true;
+
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    bool enabled = false;
+                    Core::hresult comResult = audio->GetAudioDolbyVolumeMode(audioHandle, enabled);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["dolbyVolumeMode"] = enabled;
+                    } else {
+                        LOGERR("GetAudioDolbyVolumeMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setDialogEnhancement(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "enhancerlevel");
+
+        string sEnhancerlevel = parameters["enhancerlevel"].String();
+        int enhancerlevel = 0;
+        // DS_IARM: TryParseIntInRange(sEnhancerlevel, 0, 16, enhancerlevel)
+        if (!TryParseIntInRange(sEnhancerlevel, 0, 16, enhancerlevel)) {
+            LOGWARN("enhancerlevel invalid: '%s' (expected range [0, 16])", sEnhancerlevel.c_str());
+            returnResponse(false);
+        }
+
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->SetAudioDialogEnhancement(audioHandle, enhancerlevel);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioDialogEnhancement failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("SetAudioDialogEnhancement failed for audioPort='%s'", audioPort.c_str());
+                    success = false;
+                }
+            } else {
+                LOGERR("SetAudioDialogEnhancement failed for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getDialogEnhancement(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        bool success = true;
+        int enhancerlevel = 0;
+
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    int32_t level = 0;
+                    Core::hresult comResult = audio->GetAudioDialogEnhancement(audioHandle, level);
+                    if (comResult == Core::ERROR_NONE) {
+                        enhancerlevel = level;
+                        response["enable"] = (enhancerlevel ? true : false);
+                        response["enhancerlevel"] = enhancerlevel;
+                    } else {
+                        // DS_IARM: catch sets these defaults
+                        response["enable"] = false;
+                        response["enhancerlevel"] = 0;
+                        LOGERR("GetAudioDialogEnhancement failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setIntelligentEqualizerMode(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "intelligentEqualizerMode");
+
+        string sIntelligentEqualizerMode = parameters["intelligentEqualizerMode"].String();
+        int intelligentEqualizerMode = 0;
+        try {
+            intelligentEqualizerMode = stoi(sIntelligentEqualizerMode);
+        } catch (const std::exception& err) {
+            LOGERR("Failed to parse intelligentEqualizerMode '%s'", sIntelligentEqualizerMode.c_str());
+            returnResponse(false);
+        }
+
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->SetAudioIntelligentEqualizerMode(audioHandle, intelligentEqualizerMode);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioIntelligentEqualizerMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("SetAudioIntelligentEqualizerMode failed for audioPort='%s'", audioPort.c_str());
+                    success = false;
+                }
+            } else {
+                LOGERR("SetAudioIntelligentEqualizerMode failed for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getIntelligentEqualizerMode(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        bool success = true;
+        int intelligentEqualizerMode = 0;
+
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    int32_t mode = 0;
+                    Core::hresult comResult = audio->GetAudioIntelligentEqualizerMode(audioHandle, mode);
+                    if (comResult == Core::ERROR_NONE) {
+                        intelligentEqualizerMode = mode;
+                        response["enable"] = (intelligentEqualizerMode ? true : false);
+                        response["mode"] = intelligentEqualizerMode;
+                    } else {
+                        // DS_IARM: catch sets these defaults
+                        response["enable"] = false;
+                        response["mode"] = 0;
+                        LOGERR("GetAudioIntelligentEqualizerMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setGraphicEqualizerMode(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "graphicEqualizerMode");
+
+        string sGraphicEqualizerMode = parameters["graphicEqualizerMode"].String();
+        int graphicEqualizerMode = 0;
+        try {
+            graphicEqualizerMode = stoi(sGraphicEqualizerMode);
+        } catch (const std::exception& err) {
+            LOGERR("Failed to parse graphicEqualizerMode '%s'", sGraphicEqualizerMode.c_str());
+            returnResponse(false);
+        }
+
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->SetAudioGraphicEqualizerMode(audioHandle, graphicEqualizerMode);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioGraphicEqualizerMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getGraphicEqualizerMode(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        bool success = true;
+        int graphicEqualizerMode = 0;
+
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    int32_t mode = 0;
+                    Core::hresult comResult = audio->GetAudioGraphicEqualizerMode(audioHandle, mode);
+                    if (comResult == Core::ERROR_NONE) {
+                        graphicEqualizerMode = mode;
+                        response["enable"] = (graphicEqualizerMode ? true : false);
+                        response["mode"] = graphicEqualizerMode;
+                    } else {
+                        // DS_IARM: catch sets these defaults
+                        response["enable"] = false;
+                        response["mode"] = 0;
+                        LOGERR("GetAudioGraphicEqualizerMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setMS12AudioProfile(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+
+        bool success = true;
+
+        returnIfParamNotFound(parameters, "ms12AudioProfile");
+        string audioProfileName = parameters["ms12AudioProfile"].String();
+
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->SetAudioMS12Profile(audioHandle, audioProfileName);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioMS12Profile failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setMS12ProfileSettingsOverride(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+
+        returnIfParamNotFound(parameters, "operation");
+        string audioProfileState = parameters["operation"].String();
+
+        returnIfParamNotFound(parameters, "profileName");
+        string audioProfileName = parameters["profileName"].String();
+
+        returnIfParamNotFound(parameters, "ms12SettingsName");
+        string audioProfileSettingsName = parameters["ms12SettingsName"].String();
+
+        returnIfParamNotFound(parameters, "ms12SettingsValue");
+        string audioProfileSettingValue = parameters["ms12SettingsValue"].String();
+
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            // Map "operation" string (ADD/REMOVE) to MS12ProfileState enum
+            Exchange::IDeviceSettingsAudio::MS12ProfileState profileState = Exchange::IDeviceSettingsAudio::MS12ProfileState::AUDIO_MS12_PROFILE_STATE_ADD;
+            if (audioProfileState == "REMOVE" || audioProfileState == "remove") {
+                profileState = Exchange::IDeviceSettingsAudio::MS12ProfileState::AUDIO_MS12_PROFILE_STATE_REMOVE;
+            }
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->SetAudioMS12SettingsOverride(audioHandle, audioProfileName, audioProfileSettingsName,
+                        audioProfileSettingValue, profileState);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioMS12SettingsOverride failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getMS12AudioProfile(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+
+        string audioProfileName;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->GetAudioMS12Profile(audioHandle, audioProfileName);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["ms12AudioProfile"] = audioProfileName;
+                    } else {
+                        // DS_IARM: sets "None" on error
+                        response["ms12AudioProfile"] = "None";
+                        LOGERR("getMS12AudioProfile: GetAudioMS12Profile failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    response["ms12AudioProfile"] = "None";
+                    LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                    success = false;
+                }
+            } else {
+                response["ms12AudioProfile"] = "None";
+                LOGERR("audio port '%s' handle not found", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getSupportedMS12AudioProfiles(const JsonObject& parameters, JsonObject& response)
+    { // sample response: {"success":true,"supportedMS12AudioProfiles":["Off","Music","Movie","Game","Voice","Night","User"]}
+        LOGINFOMETHOD();
+        vector<string> supportedProfiles;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Exchange::IDeviceSettingsAudio::IDeviceSettingsAudioMS12AudioProfileIterator* it2 = nullptr;
+                    Core::hresult comResult = audio->GetAudioMS12ProfileList(audioHandle, it2);
+                    if (comResult == Core::ERROR_NONE && it2 != nullptr) {
+                        Exchange::IDeviceSettingsAudio::MS12AudioProfile profile;
+                        while (it2->Next(profile)) {
+                            supportedProfiles.push_back(profile.audioProfile);
+                        }
+                        it2->Release();
                     }
                     else {
-					    LOGERR("setAudioAtmosOutputMode failure: HDMI0 not connected!\n");
+                        LOGERR("GetAudioMS12ProfileList failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                    }
+                    audio->Release();
+                }
+                else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                }
+            }
+            else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+            }
+        }
+        setResponseArray(response, "supportedMS12AudioProfiles", supportedProfiles);
+        returnResponse(true);
+    }
+
+    uint32_t DisplaySettings::setAssociatedAudioMixing(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "mixing");
+        string sMixing = parameters["mixing"].String();
+        bool mixing = false;
+        // DS_IARM: TryGetBoolParam accepts true/false/TRUE/FALSE/1/0
+        if (!TryGetBoolParam(parameters, "mixing", mixing)) {
+            LOGWARN("mixing invalid: '%s' (expected true/false)", sMixing.c_str());
+            returnResponse(false);
+        }
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                // DS_IARM: STB → aPort.setAssociatedAudioMixing() (per-port handle)
+                //          TV  → Host::setAssociatedAudioMixing() (NULL handle)
+                if (DSHelper::isHDMIAudioOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
+                    // STB path: use specified audioPort handle
+                    const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+                    if (INVALID_DS_HANDLE != audioHandle) {
+                        Core::hresult comResult = audio->SetAssociatedAudioMixing(audioHandle, mixing);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetAssociatedAudioMixing failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                            success = false;
+                        }
+                    } else {
+                        LOGERR("port '%s' not found", audioPort.c_str());
+                        success = false;
+                    }
+                } else {
+                    LOGINFO("HdmiOutPort NOT present");
+                    // TV path: DS_IARM Host::setAssociatedAudioMixing() — NULL handle (0)
+                    Core::hresult comResult = audio->SetAssociatedAudioMixing(0, mixing);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAssociatedAudioMixing failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                         success = false;
                     }
                 }
-                else {
-                    device::Host::getInstance().setAudioAtmosOutputMode (enable);
-                }
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION2(string("HDMI0"), sEnable);
+                audio->Release();
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
                 success = false;
             }
-            returnResponse(success);
         }
+        returnResponse(success);
+    }
 
-	uint32_t DisplaySettings::setForceHDRMode (const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-            returnIfParamNotFound(parameters, "hdr_mode");
-
-            string sMode = parameters["hdr_mode"].String();
-            dsHDRStandard_t mode = getVideoFormatTypeFromString(sMode.c_str());
-            LOGINFO("setForceHDRMode entry hdr_mode :%s mode:%d  !\n",sMode.c_str(),mode);
-
-            bool success = false;
-            try
-            {
-		std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
-                if (isDisplayConnected(vPort.getName())) {
-                   if(vPort.setForceHDRMode (mode) == true)
-		    {
-                        success = true;
-			LOGINFO("setForceHDRMode set successfully \n");
-		    }
-                }
-                else {
-                    LOGERR("setForceHDRMode failure: HDMI0 not connected!\n");
-                }
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION2(string("HDMI0"), sMode);
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getPreferredColorDepth(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:{"colorDepth":"10 Bit","success":true}
-            LOGINFOMETHOD();
-            std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
-            bool persist = parameters.HasLabel("persist") ? parameters["persist"].Boolean() : true;
-
-            bool success = true;
-            try
-            {
-                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
-                unsigned int colorDepth = vPort.getPreferredColorDepth(persist);
-		switch (colorDepth) {
-			case dsDISPLAY_COLORDEPTH_8BIT:
-				response["colorDepth"] = "8 Bit";
-				break;
-			case dsDISPLAY_COLORDEPTH_10BIT:
-				response["colorDepth"] = "10 Bit";
-				break;
-			case dsDISPLAY_COLORDEPTH_12BIT:
-				response["colorDepth"] = "12 Bit";
-				break;
-			case dsDISPLAY_COLORDEPTH_AUTO:
-				response["colorDepth"] = "Auto";
-				break;
-			default :
-				success = false;
-				break;
-		}
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(videoDisplay);
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setPreferredColorDepth(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response: {"success":true}
-            LOGINFOMETHOD();
-            returnIfParamNotFound(parameters, "videoDisplay");
-            returnIfParamNotFound(parameters, "colorDepth");
-
-            string videoDisplay = parameters["videoDisplay"].String();
-            string strColorDepth = parameters["colorDepth"].String();
-
-            bool persist = parameters.HasLabel("persist") ? parameters["persist"].Boolean() : true;
-
-            bool success = true;
-            try
-            {
-                dsDisplayColorDepth_t colorDepth = dsDISPLAY_COLORDEPTH_UNKNOWN;
-                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
-		if (0==strncmp(strColorDepth.c_str(), "8 Bit", 5)){
-                        colorDepth = dsDISPLAY_COLORDEPTH_8BIT;
-		} else if (0==strncmp(strColorDepth.c_str(), "10 Bit", 6)){
-                        colorDepth = dsDISPLAY_COLORDEPTH_10BIT;
-		} else if (0==strncmp(strColorDepth.c_str(), "12 Bit", 6)){
-                        colorDepth = dsDISPLAY_COLORDEPTH_12BIT;
-		} else if (0==strncmp(strColorDepth.c_str(), "Auto", 4)){
-                        colorDepth = dsDISPLAY_COLORDEPTH_AUTO;
-		} else {
-			//UNKNOWN color depth
-			LOGERR("UNKNOWN color depth: %s", strColorDepth.c_str());
-			success = false;
-		}
-                if (dsDISPLAY_COLORDEPTH_UNKNOWN!=colorDepth) {
-                    vPort.setPreferredColorDepth(colorDepth, persist);
-                }
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION2(videoDisplay, strColorDepth);
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setAudioDucking(const JsonObject& parameters, JsonObject& response)
+    uint32_t DisplaySettings::getAssociatedAudioMixing(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+        bool mixing = false;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
-            LOGINFOMETHOD();
-            returnIfStringParamNotFound(parameters, "mode"); // "mute" | "attenuate" | "raw"
-
-            std::string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            std::string mode = parameters["mode"].String();
-
-            dsAudioDuckingAction_t action = dsAUDIO_DUCKINGACTION_STOP;
-            dsAudioDuckingType_t type = dsAUDIO_DUCKINGTYPE_ABSOLUTE;
-            uint8_t level = 100;
-
-            if (mode == "mute")
-            {
-                returnIfBooleanParamNotFound(parameters, "mute");
-                bool mute = parameters["mute"].Boolean();
-
-                action = mute ? dsAUDIO_DUCKINGACTION_START : dsAUDIO_DUCKINGACTION_STOP;
-                type = dsAUDIO_DUCKINGTYPE_ABSOLUTE;
-                level = mute ? 0 : 100;
-            }
-            else if (mode == "attenuate")
-            {
-                returnIfBooleanParamNotFound(parameters, "enable");
-                returnIfBooleanParamNotFound(parameters, "relative");
-                returnIfNumberParamNotFound(parameters, "volume"); // 0.0..1.0
-
-                bool enable = parameters["enable"].Boolean();
-                bool relative = parameters["relative"].Boolean();
-                double volume = parameters["volume"].Number();
-
-                if (volume < 0.0 || volume > 1.0)
-                {
-                    LOGERR("Invalid volume %f", volume);
-                    returnResponse(false);
-                }
-
-                action = enable ? dsAUDIO_DUCKINGACTION_START : dsAUDIO_DUCKINGACTION_STOP;
-                type = relative ? dsAUDIO_DUCKINGTYPE_RELATIVE : dsAUDIO_DUCKINGTYPE_ABSOLUTE;
-                level = static_cast<uint8_t>((volume * 100.0) + 0.5);
-            }
-            else if (mode == "raw")
-            {
-                returnIfStringParamNotFound(parameters, "action");      // "start" | "stop"
-                returnIfStringParamNotFound(parameters, "duckingType"); // "absolute" | "relative"
-                returnIfNumberParamNotFound(parameters, "level");       // 0..100
-
-                std::string actionStr = parameters["action"].String();
-                std::string typeStr = parameters["duckingType"].String();
-                
-                std::string levelStr = parameters["level"].String();
-                LOGINFO("setAudioDucking raw: level Content-type=%d String='%s' Number=%s",
-                        (int)parameters["level"].Content(),
-                        levelStr.c_str(),
-                        std::to_string(parameters["level"].Number()).c_str());
-
-                // String() preserves the original token text in this Thunder version.
-                // Validate it is actually an unsigned integer before using Number().
-                if (!Utils::isValidUnsignedInt((char*)levelStr.c_str()))
-                {
-                    LOGERR("Invalid level value '%s': must be a non-negative integer 0..100", levelStr.c_str());
-                    returnResponse(false);
-                }
-
-                int reqLevel = static_cast<int>(std::round(parameters["level"].Number()));
-
-                if (reqLevel < 0 || reqLevel > 100)
-                {
-                    LOGERR("Invalid level %d", reqLevel);
-                    returnResponse(false);
-                }
-
-                if (actionStr == "start") {
-                    action = dsAUDIO_DUCKINGACTION_START;
-                } else if (actionStr == "stop") {
-                    action = dsAUDIO_DUCKINGACTION_STOP;
-                } else {
-                    LOGERR("Invalid action %s", actionStr.c_str());
-                    returnResponse(false);
-                }
-
-                if (typeStr == "absolute") {
-                    type = dsAUDIO_DUCKINGTYPE_ABSOLUTE;
-                } else if (typeStr == "relative") {
-                    type = dsAUDIO_DUCKINGTYPE_RELATIVE;
-                } else {
-                    LOGERR("Invalid duckingType %s", typeStr.c_str());
-                    returnResponse(false);
-                }
-
-                level = static_cast<uint8_t>(reqLevel);
-            }
-            else
-            {
-                LOGERR("Invalid mode %s", mode.c_str());
-                returnResponse(false);
-            }
-
-            bool success = true;
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.setAudioDucking(action, type, level);
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setEnableVideoPort(const JsonObject& parameters, JsonObject& response)
-        {
-            LOGINFOMETHOD();
-
-            returnIfParamNotFound(parameters, "videoDisplay");        // e.g. "HDMI0"
-			returnIfBooleanParamNotFound(parameters, "enable");       // true | false
-
-            string videoDisplay = parameters["videoDisplay"].String();
-            bool enable = parameters["enable"].Boolean();
-
-            bool success = false;
-            try
-            {
-                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
-                if (!vPort.isDisplayConnected())
-                {
-                    LOGERR("setEnableVideoPort: display NOT connected on port %s", videoDisplay.c_str());
-                }
-				else
-				{
-					if (enable)
-					{
-						vPort.enable();
-					}
-                	else
-					{
-						vPort.disable();
-					}
-					success = true;
-				}
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(videoDisplay);
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getEnableVideoPort(const JsonObject& parameters, JsonObject& response)
-        {
-            LOGINFOMETHOD();
-            returnIfStringParamNotFound(parameters, "videoDisplay");
-
-            string videoDisplay = parameters["videoDisplay"].String();
-            bool success = false;
-            try
-            {
-                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
-                response["enable"] = vPort.isEnabled();
-                success = true;
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(videoDisplay);
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getSupportedVideoCodingFormats(const JsonObject& parameters, JsonObject& response)
-        {   //sample response: {"supportedFormats":["HEVC","H264","MPEG2"],"success":true}
-            LOGINFOMETHOD();
-            JsonArray supportedFormats;
-            bool success = false;
-            try
-            {
-                auto videoDevices = device::Host::getInstance().getVideoDevices();
-                if (videoDevices.size() < 1)
-                {
-                        LOGINFO("DSMGR_NOT_RUNNING");
-                        returnResponse(false);
-                }
-				else
-				{
-					device::VideoDevice decoder = videoDevices.at(0);
-	                unsigned int formats = decoder.getSupportedVideoCodingFormats();
-	
-	                if (formats & dsVIDEO_CODEC_MPEGHPART2)
-	                    supportedFormats.Add("HEVC");
-	                if (formats & dsVIDEO_CODEC_MPEG4PART10)
-	                    supportedFormats.Add("H264");
-	                if (formats & dsVIDEO_CODEC_MPEG2)
-	                    supportedFormats.Add("MPEG2");
-				}
-                success = true;
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-            }
-            catch (const std::exception& err)
-            {
-                LOGERR("exception: %s", err.what());
-            }
-            catch (...)
-            {
-                LOGWARN("Unknown exception occurred");
-            }
-            response["supportedFormats"] = supportedFormats;
-            returnResponse(success);
-        }
-
-        static bool codecStringToEnum(const string& codec, dsVideoCodingFormat_t& out)
-        {
-            if (codec == "MPEGH-Part2" || codec == "HEVC") {
-                out = dsVIDEO_CODEC_MPEGHPART2;
-            }
-            else if (codec == "MPEG4-Part10" || codec == "H264") {
-                out = dsVIDEO_CODEC_MPEG4PART10;
-            }
-            else if (codec == "MPEG2") {
-                out = dsVIDEO_CODEC_MPEG2;
-            }
-            else {
-                LOGERR("Unsupported codec string: %s", codec.c_str());
-                return false;
-            }
-            return true;
-        }
-
-        static const char* hevcProfileToString(dsVideoCodecHevcProfiles_t profile)
-        {
-            switch (profile)
-            {
-                case dsVIDEO_CODEC_HEVC_PROFILE_MAIN:
-                    return "MAIN";
-                case dsVIDEO_CODEC_HEVC_PROFILE_MAIN10:
-                    return "MAIN 10";
-                case dsVIDEO_CODEC_HEVC_PROFILE_MAINSTILLPICTURE:
-                    return "MAIN STILL PICTURE";
-                default:
-                    return "UNKNOWN";
-            }
-        }
-
-        uint32_t DisplaySettings::getVideoCodecInfo(const JsonObject& parameters, JsonObject& response)
-        {
-            LOGINFOMETHOD();
-
-            string codec = "MPEGH-Part2"; // default keeps TR-069 behavior
-            if (parameters.HasLabel("codec")) {
-                codec = parameters["codec"].String();
-            }
-
-            bool success = false;
-            dsVideoCodingFormat_t codecFmt = dsVIDEO_CODEC_MPEGHPART2;
-            if (!codecStringToEnum(codec, codecFmt)) {
-                LOGERR("Unsupported codec: %s. Allowed: MPEGH-Part2, HEVC, MPEG4-Part10, H264, MPEG2", codec.c_str());
-                returnResponse(success);
-            }
-
-            try
-            {
-                device::List<device::VideoDevice> videoDevices = device::Host::getInstance().getVideoDevices();
-                if (videoDevices.size() < 1)
-                {
-                    LOGINFO("DSMGR_NOT_RUNNING");
-                    returnResponse(success);
-                }
-
-                device::VideoDevice &decoder = videoDevices.at(0);
-                dsVideoCodecInfo_t info = decoder.getVideoCodecInfo(codecFmt);
-
-                JsonArray entries;
-                unsigned int count = info.num_entries;
-
-                const auto profileToString = [&codecFmt](const decltype(info.entries[0].profile) profile) -> string {
-                    if (codecFmt == dsVIDEO_CODEC_MPEGHPART2) {
-                        return hevcProfileToString(profile);
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                // DS_IARM: STB → aPort.getAssociatedAudioMixing(); TV → Host::getAssociatedAudioMixing()
+                if (DSHelper::isHDMIAudioOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
+                    // STB path: use specified audioPort handle
+                    const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+                    if (INVALID_DS_HANDLE != audioHandle) {
+                        Core::hresult comResult = audio->GetAssociatedAudioMixing(audioHandle, mixing);
+                        if (comResult == Core::ERROR_NONE) {
+                            response["mixing"] = mixing;
+                        } else {
+                            LOGERR("GetAssociatedAudioMixing failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                            success = false;
+                        }
+                    } else {
+                        LOGERR("audio port '%s' handle not found", audioPort.c_str());
+                        success = false;
                     }
-
-                    // Do not apply HEVC-specific profile mapping to non-HEVC codecs.
-                    // Until dedicated per-codec profile mappers are available, expose the
-                    // raw profile value so callers still receive accurate codec information.
-                    return std::to_string(static_cast<int>(profile));
-                };
-
-                for (unsigned int i = 0; i < count; ++i)
-                {
-                    JsonObject item;
-                    item["index"] = i + 1; // 1-based index to match TR-069 usage
-                    item["profile"] = profileToString(info.entries[i].profile);
-                    item["level"] = info.entries[i].level;
-                    entries.Add(item);
+                } else {
+                    LOGINFO("HdmiOutPort NOT present");
+                    // TV path: DS_IARM Host::getAssociatedAudioMixing() — NULL handle (0)
+                    Core::hresult comResult = audio->GetAssociatedAudioMixing(0, mixing);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["mixing"] = mixing;
+                    } else {
+                        LOGERR("GetAssociatedAudioMixing failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
                 }
-
-                response["numberOfEntries"] = count;
-                response["entries"] = entries;
-                success = true;
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-            }
-            catch (const std::exception& err)
-            {
-                LOGERR("exception: %s", err.what());
-            }
-            catch (...)
-            {
-                LOGWARN("Unknown exception occurred");
-            }
-            returnResponse(success);
-        }
-
-        static const char* encodingToString(int enc)
-        {
-            switch (enc)
-            {
-                case dsAUDIO_ENC_NONE:    return "NONE";
-                case dsAUDIO_ENC_DISPLAY: return "DISPLAY";
-                case dsAUDIO_ENC_PCM:     return "PCM";
-                case dsAUDIO_ENC_AC3:     return "AC3";
-                default:                  return "UNKNOWN";
+                audio->Release();
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
+                success = false;
             }
         }
+        returnResponse(success);
+    }
 
-        static bool isValidAudioPort(const string& audioPort)
+    uint32_t DisplaySettings::setFaderControl(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "mixerBalance");
+        string sMixerBalance = parameters["mixerBalance"].String();
+        int mixerBalance = 0;
+        // DS_IARM: TryParseIntInRange(sMixerBalance, -32, 32, mixerBalance) — rejects outside [-32, 32]
+        if (!TryParseIntInRange(sMixerBalance, -32, 32, mixerBalance)) {
+            LOGWARN("mixerBalance invalid: '%s' (expected range [-32, 32])", sMixerBalance.c_str());
+            returnResponse(false);
+        }
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
         {
-            bool returnValue = false;
-            try
-            {
-                device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
-                for (size_t i = 0; i < aPorts.size(); ++i)
-                {
-                    if (aPorts.at(i).getName() == audioPort) {
-                        returnValue = true;
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                // DS_IARM: STB → aPort.setFaderControl(); TV → Host::setFaderControl() (NULL handle)
+                if (DSHelper::isHDMIAudioOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
+                    // STB path: use specified audioPort handle
+                    const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+                    if (INVALID_DS_HANDLE != audioHandle) {
+                        Core::hresult comResult = audio->SetAudioFaderControl(audioHandle, mixerBalance);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetAudioFaderControl failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                            success = false;
+                        }
+                    } else {
+                        LOGERR("port '%s' not found", audioPort.c_str());
+                        success = false;
+                    }
+                } else {
+                    LOGINFO("HdmiOutPort NOT present");
+                    // TV path: DS_IARM Host::setFaderControl() — NULL handle (0)
+                    Core::hresult comResult = audio->SetAudioFaderControl(0, mixerBalance);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioFaderControl failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                }
+                audio->Release();
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getFaderControl(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        int mixerBalance = 0;
+        {
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                // DS_IARM: STB → aPort.getFaderControl(); TV → Host::getFaderControl() (NULL handle)
+                if (DSHelper::isHDMIAudioOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
+                    // STB path: use specified audioPort handle
+                    const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+                    if (INVALID_DS_HANDLE != audioHandle) {
+                        int32_t balance = 0;
+                        Core::hresult comResult = audio->GetAudioFaderControl(audioHandle, balance);
+                        if (comResult == Core::ERROR_NONE) {
+                            mixerBalance = balance;
+                            response["mixerBalance"] = mixerBalance;
+                        } else {
+                            LOGERR("GetAudioFaderControl failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                            success = false;
+                        }
+                    } else {
+                        LOGERR("audio port '%s' handle not found", audioPort.c_str());
+                        success = false;
+                    }
+                } else {
+                    LOGINFO("HdmiOutPort NOT present");
+                    // TV path: DS_IARM Host::getFaderControl() — NULL handle (0)
+                    int32_t balance = 0;
+                    Core::hresult comResult = audio->GetAudioFaderControl(0, balance);
+                    if (comResult == Core::ERROR_NONE) {
+                        mixerBalance = balance;
+                        response["mixerBalance"] = mixerBalance;
+                    } else {
+                        LOGERR("GetAudioFaderControl failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                }
+                audio->Release();
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setPrimaryLanguage(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+
+        bool success = true;
+
+        returnIfParamNotFound(parameters, "lang");
+        string primaryLanguage = parameters["lang"].String();
+
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                // DS_IARM: STB → aPort.setPrimaryLanguage(); TV → Host::setPrimaryLanguage() (NULL handle)
+                if (DSHelper::isHDMIAudioOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
+                    // STB path: use specified audioPort handle
+                    const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+                    if (INVALID_DS_HANDLE != audioHandle) {
+                        Core::hresult comResult = audio->SetAudioPrimaryLanguage(audioHandle, primaryLanguage);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetAudioPrimaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                            success = false;
+                        }
+                    } else {
+                        LOGERR("port '%s' not found", audioPort.c_str());
+                        success = false;
+                    }
+                } else {
+                    LOGINFO("HdmiOutPort NOT present");
+                    // TV path: DS_IARM Host::setPrimaryLanguage() — NULL handle (0)
+                    Core::hresult comResult = audio->SetAudioPrimaryLanguage(0, primaryLanguage);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioPrimaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                }
+                audio->Release();
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
+                success = false;
+            }
+        }
+
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getPrimaryLanguage(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+
+        string primaryLanguage;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                // DS_IARM: STB → aPort.getPrimaryLanguage(); TV → Host::getPrimaryLanguage() (NULL handle)
+                if (DSHelper::isHDMIAudioOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
+                    // STB path: use specified audioPort handle
+                    const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+                    if (INVALID_DS_HANDLE != audioHandle) {
+                        Core::hresult comResult = audio->GetAudioPrimaryLanguage(audioHandle, primaryLanguage);
+                        if (comResult == Core::ERROR_NONE) {
+                            response["lang"] = primaryLanguage;
+                        } else {
+                            // DS_IARM: catch sets response["lang"] = "None"
+                            response["lang"] = "None";
+                            LOGERR("GetAudioPrimaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                            success = false;
+                        }
+                    } else {
+                        LOGERR("audio port '%s' handle not found", audioPort.c_str());
+                        success = false;
+                    }
+                } else {
+                    LOGINFO("HdmiOutPort NOT present");
+                    // TV path: DS_IARM Host::getPrimaryLanguage() — NULL handle (0)
+                    Core::hresult comResult = audio->GetAudioPrimaryLanguage(0, primaryLanguage);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["lang"] = primaryLanguage;
+                    } else {
+                        response["lang"] = "None";
+                        LOGERR("GetAudioPrimaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                }
+                audio->Release();
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setSecondaryLanguage(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+
+        bool success = true;
+
+        returnIfParamNotFound(parameters, "lang");
+        string secondaryLanguage = parameters["lang"].String();
+
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                // DS_IARM: STB → aPort.setSecondaryLanguage(); TV → Host::setSecondaryLanguage() (NULL handle)
+                if (DSHelper::isHDMIAudioOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
+                    // STB path: use specified audioPort handle
+                    const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+                    if (INVALID_DS_HANDLE != audioHandle) {
+                        Core::hresult comResult = audio->SetAudioSecondaryLanguage(audioHandle, secondaryLanguage);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetAudioSecondaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                            success = false;
+                        }
+                    } else {
+                        LOGERR("port '%s' not found", audioPort.c_str());
+                        success = false;
+                    }
+                } else {
+                    LOGINFO("HdmiOutPort NOT present");
+                    // TV path: DS_IARM Host::setSecondaryLanguage() — NULL handle (0)
+                    Core::hresult comResult = audio->SetAudioSecondaryLanguage(0, secondaryLanguage);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioSecondaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                }
+                audio->Release();
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
+                success = false;
+            }
+        }
+
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getSecondaryLanguage(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+
+        string secondaryLanguage;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                // DS_IARM: STB → aPort.getSecondaryLanguage(); TV → Host::getSecondaryLanguage() (NULL handle)
+                if (DSHelper::isHDMIAudioOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
+                    // STB path: use specified audioPort handle
+                    const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+                    if (INVALID_DS_HANDLE != audioHandle) {
+                        Core::hresult comResult = audio->GetAudioSecondaryLanguage(audioHandle, secondaryLanguage);
+                        if (comResult == Core::ERROR_NONE) {
+                            response["lang"] = secondaryLanguage;
+                        } else {
+                            // DS_IARM: catch sets response["lang"] = "None"
+                            response["lang"] = "None";
+                            LOGERR("GetAudioSecondaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                            success = false;
+                        }
+                    } else {
+                        LOGERR("audio port '%s' handle not found", audioPort.c_str());
+                        success = false;
+                    }
+                } else {
+                    LOGINFO("HdmiOutPort NOT present");
+                    // TV path: DS_IARM Host::getSecondaryLanguage() — NULL handle (0)
+                    Core::hresult comResult = audio->GetAudioSecondaryLanguage(0, secondaryLanguage);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["lang"] = secondaryLanguage;
+                    } else {
+                        response["lang"] = "None";
+                        LOGERR("GetAudioSecondaryLanguage failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                }
+                audio->Release();
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getAudioDelay(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        bool success = true;
+        string audioPort = parameters["audioPort"].String(); // empty value will browse all ports
+
+        if (!checkPortName(audioPort))
+            audioPort = "HDMI0";
+
+        // DS_IARM: empty-port discovery — HDMI0 if connected, else iterate for any connected VP
+        if (audioPort.empty()) {
+            const std::string defaultVP = DSHelper::getDefaultVideoPortName();
+            if (isDisplayConnected(defaultVP)) {
+                audioPort = "HDMI0";
+            } else {
+                // DS_IARM: default to HDMI0, switch to SPDIF0 only if another display is connected
+                audioPort = "HDMI0";
+                for (const auto& vp : DSHelper::getVideoPortHandleEntries()) {
+                    if (isDisplayConnected(vp.first)) {
+                        audioPort = "SPDIF0";
                         break;
                     }
                 }
             }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
-            }
-            return returnValue;
         }
 
-        uint32_t DisplaySettings::getAudioEncoding(const JsonObject& parameters, JsonObject& response)
+        LOGINFO("Current Mapped AudioPort='%s'", audioPort.c_str());
+
+        uint32_t audioDelayMs = 0;
         {
-            LOGINFOMETHOD();
-
-            string audioPort;
-            audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            if (audioPort.empty()) {
-                LOGERR("Invalid audioPort");
-                returnResponse(false);
-            }
-
-            bool success = false;
-            try
-            {
-                if (!isValidAudioPort(audioPort))
-				{
-                    LOGERR("Invalid audioPort");
-                }
-                else
-				{
-                    device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                    int enc = aPort.getEncoding().getId();
-
-                    response["audioPort"] = audioPort;
-                    response["encoding"] = encodingToString(enc);
-                    response["encodingId"] = enc;
-                    success = true;
-                }
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
-            }
-            catch (const std::exception& err)
-            {
-                LOGERR("exception: %s", err.what());
-            }
-            catch (...)
-            {
-                LOGWARN("Unknown exception occurred");
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setAudioEncoding(const JsonObject& parameters, JsonObject& response)
-        {
-            LOGINFOMETHOD();
-
-            returnIfStringParamNotFound(parameters, "encoding");
-            string encoding = parameters["encoding"].String();
-
-            bool success = false;
-
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            if (audioPort.empty()) {
-                returnResponse(success);
-            }
-
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-
-                LOGINFO("Setting audio encoding '%s' on port '%s'", encoding.c_str(), audioPort.c_str());
-
-                // Call the libds string version of setEncoding
-                aPort.setEncoding(encoding);
-
-                // Get the actual encoding value set for response
-                int encValue = aPort.getEncoding().getId();
-
-                response["audioPort"] = audioPort;
-                response["encoding"] = encodingToString(encValue);
-                response["encodingId"] = encValue;
-                success = true;
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION2(audioPort, encoding);
-            }
-            catch (const std::exception& err)
-            {
-                LOGERR("std::exception: %s", err.what());
-            }
-            catch (...)
-            {
-                LOGWARN("Unknown exception occurred");
-            }
-
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getDisplayAspectRatio(const JsonObject& parameters, JsonObject& response)
-        {
-            LOGINFOMETHOD();
-
-            bool success = false;
-            std::string defaultVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            std::string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(defaultVideoPort);
-
-            try
-            {
-                device::VideoOutputPort &vPort = device::VideoOutputPortConfig::getInstance().getPort(videoDisplay.c_str());
-
-                if (!isDisplayConnected(videoDisplay))
-                {
-                    LOGWARN("Display not connected on port: %s", videoDisplay.c_str());
-                }
-                else
-                {
-                    const device::AspectRatio aspectRatio = vPort.getDisplay().getAspectRatio();
-                    response["aspectRatio"] = aspectRatio.getName();   // e.g. "16x9", "4x3"
-                    response["aspectRatioValue"] = aspectRatio.getId(); // numeric enum value
-                    success = true;
-                }
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(videoDisplay);
-            }
-            catch (const std::exception& err)
-            {
-                LOGERR("std::exception: %s", err.what());
-            }
-            catch (...)
-            {
-                LOGWARN("Unknown exception occurred");
-            }
-
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::getColorDepthCapabilities(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:{"success":true,"capabilities":["8 Bit","10 Bit","12 Bit","Auto"]}
-            LOGINFOMETHOD();
-            std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : std::move(strVideoPort);
-            vector<string> colorDepthCapabilities;
-            try
-            {
-                unsigned int capabilities = 0;
-                device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
-                vPort.getColorDepthCapabilities(&capabilities);
-                if(!capabilities) colorDepthCapabilities.emplace_back("none");
-                if(capabilities & dsDISPLAY_COLORDEPTH_8BIT)colorDepthCapabilities.emplace_back("8 Bit");
-                if(capabilities & dsDISPLAY_COLORDEPTH_10BIT)colorDepthCapabilities.emplace_back("10 Bit");
-                if(capabilities & dsDISPLAY_COLORDEPTH_12BIT)colorDepthCapabilities.emplace_back("12 Bit");
-                if(capabilities & dsDISPLAY_COLORDEPTH_AUTO)colorDepthCapabilities.emplace_back("Auto");
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(videoDisplay);
-            }
-            setResponseArray(response, "capabilities", colorDepthCapabilities);
-            returnResponse(true);
-        }
-
-	uint32_t DisplaySettings::getSupportedMS12Config(const JsonObject& parameters, JsonObject& response)
-       {
-           LOGINFOMETHOD();
-           bool success = true;
-           std::string type;
-           try {
-               device::Host::getInstance().getMS12ConfigDetails(type);
-               LOGINFO("Platform supports MS12 Config Z\n");
-               response["ms12config"] = std::move(type);
-           }
-           catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(string("MS12ConfigType"));
-                success = false;
-            }
-           returnResponse(success);
-       }
-
-        bool DisplaySettings::setUpHdmiCecSinkArcRouting (bool arcEnable)
-        {
-            bool success = true;
-
-            PluginHost::IShell::state state;
-            if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
-                LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
-
-                getHdmiCecSinkPlugin();
-                if (!m_client) {
-                    LOGERR("HdmiCecSink Initialisation failed\n");
-                }
-                else {
-                    JsonObject hdmiCecSinkResult;
-                    JsonObject param;
-
-                    if(arcEnable) {
-                        param["enabled"] = true;
-                    }else {
-                        param["enabled"] = false;
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->GetAudioDelay(audioHandle, audioDelayMs);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("GetAudioDelay failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
                     }
-
-                    LOGINFO("ARC Routing - %d \n", arcEnable);
-                    {
-                        Utils::Synchro::UnlockApiGuard<DisplaySettings> unlockApi;
-                        m_client->Invoke<JsonObject, JsonObject>(2000, "setupARCRouting", param, hdmiCecSinkResult);
-                    }
-                    if (!hdmiCecSinkResult["success"].Boolean()) {
-			success = false;
-                        LOGERR("HdmiCecSink Plugin returned error\n");
-                    }
-                }
-            }
-	    else {
-		success = false;
-                LOGERR("HdmiCecSink plugin not ready\n");
-            }
-
-            return success;
-	}
-	
-	bool DisplaySettings::getHdmiCecSinkCecEnableStatus ()
-        {
-            bool cecEnable = false;
-
-            PluginHost::IShell::state state;
-            if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
-                LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
-
-                getHdmiCecSinkPlugin();
-                if (!m_client) {
-                    LOGERR("HdmiCecSink Initialisation failed\n");
-                }
-                else {
-                    JsonObject hdmiCecSinkResult;
-                    JsonObject param;
-                    {
-                        Utils::Synchro::UnlockApiGuard<DisplaySettings> unlockApi;
-                        m_client->Invoke<JsonObject, JsonObject>(2000, "getEnabled", param, hdmiCecSinkResult);
-                    }
-
-		    cecEnable = hdmiCecSinkResult["enabled"].Boolean();
-		    LOGINFO("get-cecEnabled [%d]\n",cecEnable);
-
-                    if (!hdmiCecSinkResult["success"].Boolean()) {
-                        LOGERR("HdmiCecSink Plugin returned error\n");
-                    }
-                }
-            }
-            else {
-                LOGERR("HdmiCecSink plugin not ready\n");
-            }
-            return cecEnable;
-        }
-
-	bool DisplaySettings::getHdmiCecSinkAudioDeviceConnectedStatus ()
-        {
-            bool hdmiAudioDeviceDetected = false;
-
-            PluginHost::IShell::state state;
-            if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
-                LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
-
-                getHdmiCecSinkPlugin();
-                if (!m_client) {
-                    LOGERR("HdmiCecSink Initialisation failed\n");
-                }
-                else {
-                    JsonObject hdmiCecSinkResult;
-                    JsonObject param;
-
-                    {
-                        Utils::Synchro::UnlockApiGuard<DisplaySettings> unlockApi;
-                        m_client->Invoke<JsonObject, JsonObject>(2000, "getAudioDeviceConnectedStatus", param, hdmiCecSinkResult);
-                    }
-
-                    hdmiAudioDeviceDetected = hdmiCecSinkResult["connected"].Boolean();
-                    LOGINFO("getAudioDeviceConnectedStatus [%d]\n",hdmiAudioDeviceDetected);
-
-                    if (!hdmiCecSinkResult["success"].Boolean()) {
-                        LOGERR("HdmiCecSink Plugin returned error\n");
-                    }
-                }
-            }
-            else {
-                LOGERR("HdmiCecSink plugin not ready\n");
-            }
-            return hdmiAudioDeviceDetected;
-        }
-
-        bool DisplaySettings::sendHdmiCecSinkAudioDevicePowerOn ()
-        {
-            bool success = true;
-
-            PluginHost::IShell::state state;
-            if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
-                LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
-
-                getHdmiCecSinkPlugin();
-                if (!m_client) {
-                    LOGERR("HdmiCecSink Initialisation failed\n");
-                }
-                else {
-                    JsonObject hdmiCecSinkResult;
-                    JsonObject param;
-
-                    LOGINFO("Send Audio Device Power On !!!\n");
-                    {
-                        Utils::Synchro::UnlockApiGuard<DisplaySettings> unlockApi;
-                        m_client->Invoke<JsonObject, JsonObject>(2000, "sendAudioDevicePowerOnMessage", param, hdmiCecSinkResult);
-                    }
-                    if (!hdmiCecSinkResult["success"].Boolean()) {
-                        success = false;
-                        LOGERR("HdmiCecSink Plugin returned error\n");
-                    }
-                }
-            }
-            else {
-                success = false;
-                LOGERR("HdmiCecSink plugin not ready\n");
-            }
-
-            return success;
-        }
-
-        bool DisplaySettings::requestShortAudioDescriptor()
-        {
-            bool success = true;
-
-            PluginHost::IShell::state state;
-            if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
-                LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
-
-                getHdmiCecSinkPlugin();
-                if (!m_client) {
-                    LOGERR("HdmiCecSink plugin not accessible\n");
-                }
-                else {
-                    JsonObject hdmiCecSinkResult;
-                    JsonObject param;
-
-                    LOGINFO("Requesting Short Audio Descriptor \n");
-                    {
-                        Utils::Synchro::UnlockApiGuard<DisplaySettings> unlockApi;
-                        m_client->Invoke<JsonObject, JsonObject>(2000, "requestShortAudioDescriptor", param, hdmiCecSinkResult);
-                    }
-                    if (!hdmiCecSinkResult["success"].Boolean()) {
-                        success = false;
-                        LOGERR("HdmiCecSink Plugin returned error\n");
-                    }
-                }
-            }
-            else {
-                success = false;
-                LOGERR("HdmiCecSink plugin not ready\n");
-            }
-
-            return success;
-        }
-
-        bool DisplaySettings::requestAudioDevicePowerStatus()
-        {
-            bool success = true;
-
-            PluginHost::IShell::state state;
-            if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
-                LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
-
-                getHdmiCecSinkPlugin();
-                if (!m_client) {
-                    LOGERR("HdmiCecSink plugin not accessible\n");
-                }
-                else {
-                    JsonObject hdmiCecSinkResult;
-                    JsonObject param;
-
-                    LOGINFO("Requesting Audio Device power Status \n");
-                    {
-                        Utils::Synchro::UnlockApiGuard<DisplaySettings> unlockApi;
-                        m_client->Invoke<JsonObject, JsonObject>(2000, "requestAudioDevicePowerStatus", param, hdmiCecSinkResult);
-                    }
-                    if (!hdmiCecSinkResult["success"].Boolean()) {
-                        success = false;
-                        LOGERR("HdmiCecSink Plugin returned error\n");
-                    }
-                }
-            }
-            else {
-                success = false;
-                LOGERR("HdmiCecSink plugin not ready\n");
-            }
-
-            return success;
-        }
-        
-	bool DisplaySettings::requestDeviceAudioStatus()
-        {
-            bool success = true;
-
-            PluginHost::IShell::state state;
-            if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
-                LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
-
-                getHdmiCecSinkPlugin();
-                if (!m_client) {
-                    LOGERR("HdmiCecSink plugin not accessible\n");
-                }
-                else {
-                    JsonObject hdmiCecSinkResult;
-                    JsonObject param;
-
-                    LOGINFO("Requesting Audio Status \n");
-                    {
-                        Utils::Synchro::UnlockApiGuard<DisplaySettings> unlockApi;
-                        m_client->Invoke<JsonObject, JsonObject>(2000, "sendGetAudioStatusMessage", param, hdmiCecSinkResult);
-                    }
-                    if (!hdmiCecSinkResult["success"].Boolean()) {
-                        success = false;
-                        LOGERR("HdmiCecSink Plugin returned error\n");
-                    }
-                }
-            }
-            else {
-                success = false;
-                LOGERR("HdmiCecSink plugin not ready\n");
-            }
-
-            return success;
-        }
-
-        bool DisplaySettings::sendUserControlPressCommand(int keyCode)
-        {
-            bool success = true;
-
-            PluginHost::IShell::state state;
-            if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
-                LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
-
-                getHdmiCecSinkPlugin();
-                if (!m_client) {
-                    LOGERR("HdmiCecSink plugin not accessible\n");
-                }
-                else {
-                    JsonObject hdmiCecSinkResult;
-                    JsonObject param;
-                    param["logicalAddress"] = 5;
-                    param["keyCode"] = keyCode;
-
-                    LOGINFO(" Send mute key code \n");
-                    {
-                        Utils::Synchro::UnlockApiGuard<DisplaySettings> unlockApi;
-                        m_client->Invoke<JsonObject, JsonObject>(2000, "sendUserControlPressed", param, hdmiCecSinkResult);
-                    }
-                    if (!hdmiCecSinkResult["success"].Boolean()) {
-                        success = false;
-                        LOGERR("HdmiCecSink Plugin returned error\n");
-                    }
-                }
-            }
-            else {
-                success = false;
-                LOGERR("HdmiCecSink plugin not ready\n");
-            }
-
-            return success;
-        }
-
-        uint32_t DisplaySettings::setEnableAudioPort (const JsonObject& parameters, JsonObject& response)
-        {   //TODO: Handle other audio ports. Currently only supports HDMI ARC/eARC
-            LOGINFOMETHOD();
-            returnIfParamNotFound(parameters, "audioPort");
-
-            bool success = true;
-            string audioPort = parameters["audioPort"].String();
-
-            returnIfParamNotFound(parameters, "enable");
-            string spEnable = parameters["enable"].String();
-            bool pEnable = false;
-            if (!TryGetBoolParam(parameters, "enable", pEnable)) {
-                LOGWARN("enable invalid: '%s' (expected true/false)", spEnable.c_str());
-                returnResponse(false);
-            }
-
-            if (true == pEnable && WPEFramework::Exchange::IPowerManager::POWER_STATE_STANDBY == getSystemPowerState()) {
-                LOGWARN("Ignoring the setEnableAudioPort(true) request based on the power state");
-                returnResponse(false);
-            }
-
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                //Save the user settings irrespective of actual call passed or failed.
-                aPort.setEnablePersist(pEnable);
-                dsError_t eRet = dsERR_GENERAL;
-                LOGWARN("Calling DisplaySettings::setEnableAudioPort audioPort:%s pEnable:%d \n", audioPort.c_str(), pEnable);
-                //if not HDMI_ARC port
-                if(audioPort.compare("HDMI_ARC0")) {
-                    eRet = aPort.setEnablePort (pEnable);                    
-                    if (dsERR_NONE != eRet) {
-                        LOGWARN("DisplaySettings::setEnableAudioPort aPort.setEnablePort retuned %04x \n", eRet);
-                        success = false;
-                    } else if (aPort.isMuted()) {
-                        LOGWARN("DisplaySettings::setEnableAudioPort aPort.isMuted() \n");
-                        aPort.setMuted(true);
-                    }
-                }
-                else /* for HDMI_ARC0 audio port */ 
-		{
-			// Capture shared state under lock to avoid TOCTOU race
-			bool deviceConnected = false;
-			dsAudioARCTypes_t deviceType = dsAUDIOARCSUPPORT_NONE;
-			{
-			    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-			    deviceConnected = m_hdmiInAudioDeviceConnected;
-			    deviceType = m_hdmiInAudioDeviceType;
-			}
-			LOGINFO(" %s: m_hdmiInAudioDeviceConnected: %d , pEnable: %d \n",__FUNCTION__,deviceConnected, pEnable);
-
-			device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-			device::AudioStereoMode mode = device::AudioStereoMode::kStereo;  //default to stereo
-                    	mode = aPort.getStereoMode(); //get Last User set stereo mode and set
-			if(pEnable) 
-			{
-                            if(deviceConnected == true)
-			    {
-			       if(deviceType == dsAUDIOARCSUPPORT_eARC)
-			       {  // EARC case
-				  if(m_arcEarcAudioEnabled == false) 
-				  {
-				     LOGINFO("DisplaySettings::setEnableAudioPort Enable eARC !!!");
-                                     aPort.enableARC(dsAUDIOARCSUPPORT_eARC, true);
-                                     m_arcEarcAudioEnabled = true;
-				  } else {
-				     LOGINFO("eARC is already enabled. Value of m_arcEarcAudioEnabled is %d: \n", m_arcEarcAudioEnabled);
-				  }
-			       }/* EARC case end */
-			       else if (deviceType == dsAUDIOARCSUPPORT_ARC) 
-			       {
-				   if(m_arcEarcAudioEnabled == false ) 
-			 	   {
-                                        LOGINFO("%s: Audio Port : [HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n", __FUNCTION__);
-                                        sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
-					/* Check SAD for passthru and Auto mode only */
-					if ((mode == device::AudioStereoMode::kPassThru)  || (aPort.getStereoAuto() == true))
-					{
-					  {
-					    /* Take actions according to SAD udpate state */
-					    int currentSADState = getAudioDeviceSADState();
-					    switch(currentSADState)
-					    {
-						case  AUDIO_DEVICE_SAD_UPDATED: 						   
-						{
-							LOGINFO("%s: Enable ARC... \n",__FUNCTION__);
-					 	        aPort.enableARC(dsAUDIOARCSUPPORT_ARC, true);
-							m_arcEarcAudioEnabled = true;
-						}
-						break;
-
-						case AUDIO_DEVICE_SAD_RECEIVED: 
-						{
-							LOGINFO("%s: Update Audio device SAD\n", __FUNCTION__);
-							setAudioDeviceSADState(AUDIO_DEVICE_SAD_UPDATED);
-							aPort.setSAD(sad_list);
-
-							if(aPort.getStereoAuto() == true) {
-								aPort.setStereoAuto(true,true);
-							} else {
-								/* passthrough */
-								aPort.setStereoMode(mode.toString(), true);
-							}
-												
-							LOGINFO("%s: Enable ARC... \n",__FUNCTION__);
-							aPort.enableARC(dsAUDIOARCSUPPORT_ARC, true); // enable  ARC
-							m_arcEarcAudioEnabled = true;
-						}
-						break; 
-											
-						case AUDIO_DEVICE_SAD_REQUESTED: 
-						{
-							// SAD is not yet received so start a timer to wait for SAD update
-							if ( !(m_SADDetectionTimer.isActive()))
-							{ 			    
-								m_SADDetectionTimer.start(SAD_UPDATE_CHECK_TIME_IN_MILLISECONDS);
-							        LOGINFO("%s: Audio device SAD is not received yet, so starting timer for %d milliseconds", \
-									__FUNCTION__, SAD_UPDATE_CHECK_TIME_IN_MILLISECONDS);
-						        }
-							LOGINFO("%s: Audio Device SAD is pending, Route audio after SAD update\n", __FUNCTION__);
-						}
-						break;
-											
-						default: 
-						{
-							LOGINFO("Incorrect Audio Deivce SAD state %d\n", currentSADState); // should not hit this case
-						}
-						break;
-					    }
-					  } /* End of sad mutex scope */
-					}/*End of mode == passthru and Auto mode operation */
-					else
-					{
-					    //PCM
-					    aPort.enableARC(dsAUDIOARCSUPPORT_ARC, true);
-                                            m_arcEarcAudioEnabled = true;
-					    LOGINFO("%s: Enable ARC... \n",__FUNCTION__);
-                                        }
-                                   }
-                                   else /* m_arcEarcAudioEnabled == true */
-				   {
-					// audio already routed.
-                                        LOGINFO("ARC/eARC is audio already enabled. Value of m_arcEarcAudioEnabled is %d: \n", m_arcEarcAudioEnabled);
-				   }/*End of if(m_arcEarcAudioEnabled == false ) */
-				}/* ARC Case end*/
-			        else
-				{
-				    LOGWARN("DisplaySettings::setEnableAudioPort Connected device doesn't have ARC/eARC capability \n");
-				}
-			    }
-			    else /*m_hdmiInAudioDeviceConnected == false */
-			    {
-				LOGWARN("Audio device may be unplugged, not routing returning failure, m_hdmiInAudioDeviceConnected is %d: \n", deviceConnected);
-                                success = false; /* Returning failure since m_hdmiInAudioDeviceConnected=flase (HPD unplug case), but received call to enable audio*/
-			    }/* End of (m_hdmiInAudioDeviceConnected == true) */
-
-			}/* End of pEnable = true */			
-			else
-			{   //pEnable == false
-			    if(m_arcEarcAudioEnabled == true ) 
-			    {
-				/* stop ARC/eARC */
-				if(deviceType == dsAUDIOARCSUPPORT_eARC)
-				{
-					aPort.enableARC(dsAUDIOARCSUPPORT_eARC, false);
-					m_arcEarcAudioEnabled = false;
-					LOGINFO("Disable eARC \n");
-	                {
-	                	// Read shared state under lock to avoid TOCTOU race
-	                    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-	                    if (m_hdmiInAudioDeviceConnected == false) {
-							/* Update Arctype only when device is disconneced */
-						   	m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
-						}
-	                }
-				}
-				else if (deviceType == dsAUDIOARCSUPPORT_ARC)
-				{				   
-					aPort.enableARC(dsAUDIOARCSUPPORT_ARC, false);
-					m_arcEarcAudioEnabled = false;  
-					LOGINFO("Disable ARC \n");
-	                {
-	                	// Read shared state under lock to avoid TOCTOU race
-	                	std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-	                	if (m_hdmiInAudioDeviceConnected == false) {
-							/* Update Arctype only when device is disconnected */
-							m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
-						}
-					}
-				}else {
-					LOGWARN("DisplaySettings::setEnableAudioPort Connected device doesn't have ARC/eARC capability to Disable \n");
-				}
-			    }	
-			    else
-			    {
-				LOGWARN(" ARC/eARC Audio already disbaled m_arcEarcAudioEnabled is %d: \n", m_arcEarcAudioEnabled);
-			    }
-			}/* End of pEnable*/
-			
-			m_audioOutputPortConfig["HDMI_ARC"] = pEnable;
-		}
-
-	    }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
-                success = false;
-            }
-            if(audioPortEnableStatusMap[audioPort] != pEnable)
-            {
-                JsonObject params;
-                audioPortEnableStatusMap[audioPort] = pEnable;
-                params["audioPort"] = audioPort;
-                params["enable"] = pEnable;
-                sendNotify("audioPortEnableStatusChanged", params);
-            }
-            returnResponse(success);
-        }
-        
-	void  DisplaySettings::checkSADUpdate() {
-		//Timer will be invoked if SAD update is delayed
-		LOGINFO("Inside checkSADUpdate\n");
-		std::lock_guard<std::mutex> lock(m_SadMutex);
-		device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort("HDMI_ARC0");
-		bool arcEarcAudioEnabled;
-		bool hdmiInAudioDeviceConnected;
-		{
-			std::lock_guard<std::mutex> arcLock(m_AudioDeviceStatesUpdateMutex);
-			arcEarcAudioEnabled = m_arcEarcAudioEnabled;
-			hdmiInAudioDeviceConnected = m_hdmiInAudioDeviceConnected;
-		}
-		LOGINFO("m_AudioDeviceSADState = %d, m_arcEarcAudioEnabled = %d, m_hdmiInAudioDeviceConnected = %d\n",m_AudioDeviceSADState, arcEarcAudioEnabled, hdmiInAudioDeviceConnected);
-		
-		if (m_SADDetectionTimer.isActive()) {
-			m_SADDetectionTimer.stop();
-		}
-		if (arcEarcAudioEnabled == false && hdmiInAudioDeviceConnected == true){
-			if (m_AudioDeviceSADState == AUDIO_DEVICE_SAD_RECEIVED)
-			{
-                           m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UPDATED;
-			   aPort.setSAD(sad_list);
-        		   if(aPort.getStereoAuto() == true) {
-            			aPort.setStereoAuto(true,true);
-        		   }
-        		   else{
-            			device::AudioStereoMode mode = device::AudioStereoMode::kStereo;  //default to stereo
-            			mode = aPort.getStereoMode(); //get Last User set stereo mode and set
-            			aPort.setStereoMode(mode.toString(), true);
-        		   }
-                           LOGINFO("SAD is updated m_AudioDeviceSADState = %d\n", m_AudioDeviceSADState);
-			}else{
-				if( m_requestSadRetrigger == false )
-                               {
-                                       LOGINFO("Not recieved SAD update after 3sec timeout, retriggering the SAD request and starting the timer for 3 seconds\n");
-                                       m_requestSadRetrigger = true;
-                                       sendMsgToQueue(REQUEST_SHORT_AUDIO_DESCRIPTOR, NULL);
-                                       m_AudioDeviceSADState  = AUDIO_DEVICE_SAD_REQUESTED;
-                                       m_SADDetectionTimer.start(SAD_UPDATE_CHECK_TIME_IN_MILLISECONDS);
-                               }
-                               else
-                               {
-                                       LOGINFO("Not recieved SAD update even after retriggering the SAD request, proceeding with default SAD\n");
-                                       m_requestSadRetrigger = false;
-                               }
-			}
-			if (!m_requestSadRetrigger)
-			{
-				LOGINFO("%s: Enable ARC... \n",__FUNCTION__);
-				aPort.enableARC(dsAUDIOARCSUPPORT_ARC, true);
-				m_arcEarcAudioEnabled = true;
-
-			}
-		}
-	}
-
-        uint32_t DisplaySettings::getEnableAudioPort (const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-                       bool success = true;
-
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-		bool isEnabled =  false;
-		//Devicesettings returns exact HDMI ARC audio routing enable status
-		//From thunder plugin's perspective HDMI ARC status must be the last user set value
-		// even if ARC device is not connected. Audio routing will automatically start when the device is connected.
-		if(!audioPort.compare("HDMI_ARC0")) {
-                    JsonObject aPortConfig;
-                    aPortConfig = getAudioOutputPortConfig();
-		    isEnabled = aPortConfig["HDMI_ARC"].Boolean();
-	        }
-		else {
-                    device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                    isEnabled = aPort.isEnabled();
-		}
-                response["enable"] = isEnabled;
-                LOGWARN ("Thunder sending response to get state enable for audioPort %s is: %s", audioPort.c_str(), (isEnabled?("TRUE"):("FALSE"))); 
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-
-        // Thunder plugins communication
-        void DisplaySettings::getHdmiCecSinkPlugin()
-        {
-            if(m_client == nullptr)
-            {
-                string token;
-
-                // TODO: use interfaces and remove token
-                auto security = m_service->QueryInterfaceByCallsign<PluginHost::IAuthenticate>("SecurityAgent");
-                if (security != nullptr) {
-                    string payload = "http://localhost";
-                    if (security->CreateToken(
-                            static_cast<uint16_t>(payload.length()),
-                            reinterpret_cast<const uint8_t*>(payload.c_str()),
-                            token)
-                        == Core::ERROR_NONE) {
-                        std::cout << "DisplaySettings got security token" << std::endl;
-                    } else {
-                        std::cout << "DisplaySettings failed to get security token" << std::endl;
-                    }
-                    security->Release();
+                    response["audioDelay"] = std::to_string(audioDelayMs);
+                    audio->Release();
                 } else {
-                    std::cout << "No security agent" << std::endl;
-                }
-
-                string query = "token=" + token;
-                Core::SystemInfo::SetEnvironment(_T("THUNDER_ACCESS"), (_T("127.0.0.1:9998")));
-                m_client = new WPEFramework::JSONRPC::LinkType<Core::JSON::IElement>(_T(HDMICECSINK_CALLSIGN_VER), (_T(HDMICECSINK_CALLSIGN_VER)), false, query);
-                LOGINFO("DisplaySettings getHdmiCecSinkPlugin init m_client\n");
-            }
-        }
-
-
-        PowerState DisplaySettings::getSystemPowerState()
-        {
-            PowerState pwrStateCur = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
-            PowerState pwrStatePrev = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
-            Core::hresult retStatus = Core::ERROR_GENERAL;
-
-            ASSERT (_powerManagerPlugin);
-            if (_powerManagerPlugin){
-                retStatus = _powerManagerPlugin->GetPowerState(pwrStateCur, pwrStatePrev);
-            }
-            if (Core::ERROR_NONE == retStatus)
-            {
-                m_powerState = pwrStateCur;
-                LOGWARN("DisplaySettings::m_powerState: %d", m_powerState);
-            }
-
-            else
-            {
-                LOGWARN("GetPowerState failed");
-            }
-
-            return m_powerState;
-        }
-
-        void DisplaySettings::initAudioPortsWorker(void)
-        {
-            audioPortInitActive = true;
-            DisplaySettings::_instance->InitAudioPorts();
-            audioPortInitActive = false;
-        }
-
-        void DisplaySettings::onPowerModeChanged(const PowerState currentState, const PowerState newState)
-        {
-            LOGWARN("onPowerModeChanged: State Changed %d --> %d\r",
-                         currentState, newState);
-            m_powerState = newState;
-            if (newState == WPEFramework::Exchange::IPowerManager::POWER_STATE_ON){
-                isResCacheUpdated = false;
-                isDisplayConnectedCacheUpdated = false;
-                isStbHDRcapabilitiesCache = false;
-            try
-                {
-            LOGWARN("creating worker thread for initAudioPortsWorker ");
-            std::thread audioPortInitThread = std::thread(initAudioPortsWorker);
-        audioPortInitThread.detach();
-                }
-                catch(const std::system_error& e)
-                {
-                    LOGERR("system_error exception in thread creation: %s", e.what());
-                }
-                catch(const std::exception& e)
-                {
-                    LOGERR("exception in thread creation : %s", e.what());
-                }
-            }
-
-        else {
-            LOGINFO("%s: Current Power state: %d\n",__FUNCTION__,newState);
-            try
-            {
-                device::List<device::AudioOutputPort> aPorts = device::Host::getInstance().getAudioOutputPorts();
-                bool hdmi_arc_supported = false;
-                for (size_t i = 0; i < aPorts.size(); i++)
-                {
-                    device::AudioOutputPort &aPort = aPorts.at(i);
-                    string portName  = aPort.getName();
-                    if(portName == "HDMI_ARC0") {
-                        hdmi_arc_supported = true;
-                        break;    
-                    }
-                }
-
-                if(hdmi_arc_supported) {
-                  {
-                    std::lock_guard<std::mutex> lock(DisplaySettings::_instance->m_AudioDeviceStatesUpdateMutex);
-				    LOGINFO("Current Arc/eArc states m_currentArcRoutingState = %d, m_hdmiInAudioDeviceConnected =%d, m_arcEarcAudioEnabled =%d, m_hdmiInAudioDeviceType = %d\n", DisplaySettings::_instance->m_currentArcRoutingState, DisplaySettings::_instance->m_hdmiInAudioDeviceConnected, \
-                    DisplaySettings::_instance->m_arcEarcAudioEnabled, DisplaySettings::_instance->m_hdmiInAudioDeviceType);  
-                        LOGINFO("%s: Cleanup ARC/eARC state\n",__FUNCTION__);
-                        if(DisplaySettings::_instance->m_currentArcRoutingState != ARC_STATE_ARC_TERMINATED)
-                            DisplaySettings::_instance->m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
-            DisplaySettings::_instance->m_requestSadRetrigger = false;
-              {
-                        if(DisplaySettings::_instance->m_hdmiInAudioDeviceConnected !=  false) {
-                            DisplaySettings::_instance->m_hdmiInAudioDeviceConnected =  false;
-                DisplaySettings::_instance->connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, false);
-                DisplaySettings::_instance->m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
-                DisplaySettings::_instance->m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
-             }
-                    
-                if(DisplaySettings::_instance->m_arcEarcAudioEnabled == true) {
-                            device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort("HDMI_ARC0");
-                            LOGINFO("%s: Disable ARC/eARC Audio\n",__FUNCTION__);
-                            aPort.enableARC(dsAUDIOARCSUPPORT_ARC, false);
-                            DisplaySettings::_instance->m_arcEarcAudioEnabled = false;
-                        }
-            if((DisplaySettings::_instance->m_hdmiInAudioDeviceType != dsAUDIOARCSUPPORT_NONE))
-                DisplaySettings::_instance->m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
-
-              }
-                  }//Release Mutex m_AudioDeviceStatesUpdateMutex
-          {
-                    std::lock_guard<mutex> lck(DisplaySettings::_instance->m_callMutex);
-                    if ( DisplaySettings::_instance->m_timer.isActive()) {
-                        DisplaySettings::_instance->m_timer.stop();
-                    }
-
-                    if ( DisplaySettings::_instance->m_AudioDeviceDetectTimer.isActive()) {
-                        DisplaySettings::_instance->m_AudioDeviceDetectTimer.stop();
-                    }
-                    if ( DisplaySettings::_instance->m_SADDetectionTimer.isActive()) {
-                        DisplaySettings::_instance->m_SADDetectionTimer.stop();
-                    }
-                    if ( DisplaySettings::_instance->m_ArcDetectionTimer.isActive()) {
-                        DisplaySettings::_instance->m_ArcDetectionTimer.stop();
-                    }
-                    if ( DisplaySettings::_instance->m_AudioDevicePowerOnStatusTimer.isActive()) {
-                        DisplaySettings::_instance->m_AudioDevicePowerOnStatusTimer.stop();
-                    }
-                  }
-
-                }
-              }
-              catch(const device::Exception& err)
-              {
-                LOG_DEVICE_EXCEPTION0();
-              }
-        }
-
-
-        }
-
-
-	/* Message wrapper function to push the message to queue  */
-	void DisplaySettings::sendMsgToQueue(msg_t msg, void *param )
-	{
-		SendMsgInfo msgInfo;
-
-                msgInfo.msg = msg;
-		msgInfo.param = param;
-		std::unique_lock<std::mutex> lock(DisplaySettings::_instance->m_sendMsgMutex);
-        	DisplaySettings::_instance->m_sendMsgQueue.push(msgInfo);
-        	DisplaySettings::_instance->m_sendMsgThreadRun = true;
-        	DisplaySettings::_instance->m_sendMsgCV.notify_one();
-	}
-		
-void DisplaySettings::sendMsgThread()
-{
-	LOGINFO("%s: message Thread Start\n",__FUNCTION__);
-	bool result = false;
-        SendMsgInfo msgInfo;
-	
-	if(!DisplaySettings::_instance)
-                 return;
-
-	while(true) 
-	{
-		msgInfo.msg = -1;
-        	msgInfo.param = NULL;
-		
-		{
-			LOGINFO("%s: Debug: Wait for message \n",__FUNCTION__);
-			std::unique_lock<std::mutex> lock(DisplaySettings::_instance->m_sendMsgMutex);
-			auto* inst = _instance;
-                       _instance->m_sendMsgCV.wait(lock, [inst]{
-                               // Lock is held while evaluating predicate (unique_lock passed to wait maintains lock)
-                               return (inst->m_sendMsgThreadRun == true || inst->m_sendMsgThreadExit == true);
-			});
-			
-			//Check exit condition first while holding mutex
-			if (_instance->m_sendMsgThreadExit == true)
-			{
-				LOGINFO(" sendCecMessageThread Exiting");
-				_instance->m_sendMsgThreadRun = false;
-				break;
-			}
-			
-			if (_instance->m_sendMsgQueue.empty()) {
-				_instance->m_sendMsgThreadRun = false;
-				continue;
-			}
-			
-			msgInfo = DisplaySettings::_instance->m_sendMsgQueue.front();
-			DisplaySettings::_instance->m_sendMsgQueue.pop();
-		}		
-			switch(msgInfo.msg)
-			{
-				case SEND_AUDIO_DEVICE_POWERON_MSG:
-				{
-					LOGINFO(" sendHdmiCecSinkAudioDevicePowerOn");
-					result = DisplaySettings::_instance->sendHdmiCecSinkAudioDevicePowerOn();
-				}
-				break;
-				
-				case REQUEST_SHORT_AUDIO_DESCRIPTOR:
-				{
-					LOGINFO(" Request Short Audio descriptor");
-					result = DisplaySettings::_instance->requestShortAudioDescriptor();
-				}
-				break;
-				
-				case REQUEST_AUDIO_DEVICE_POWER_STATUS:
-				{
-					LOGINFO(" Request Audio Device Power Status");
-					result = DisplaySettings::_instance->requestAudioDevicePowerStatus();
-				}
-				break;
-
-				case SEND_MUTE_KEY_EVENT:
-                                {
-                                        LOGINFO(" Send Mute code ");
-                                        result = DisplaySettings::_instance->sendUserControlPressCommand(67);
-                                }
-                                break;
-				case SEND_DEVICE_AUDIO_STATUS:
-                                {
-                                        LOGINFO(" Send Device Audio Status message");
-                                        result = DisplaySettings::_instance->requestDeviceAudioStatus();
-                                }
-                                break;
-
-				case SEND_REQUEST_ARC_INITIATION: // spearte initiation and termination cases
-				{
-					LOGINFO(" Send request for ARC INITIATION");
-					result = DisplaySettings::_instance->setUpHdmiCecSinkArcRouting(true);
-				}
-				break;
-				
-				case SEND_REQUEST_ARC_TERMINATION:
-				{
-					LOGINFO(" Send request for ARC TERMINATION");
-					result = DisplaySettings::_instance->setUpHdmiCecSinkArcRouting(false);
-				}
-                break;
-		
-				default:
-				{
-					LOGINFO(" Requested invalid message");
-				}
-				break;
-				
-			}
-			
-			if (result == true) {
-			    LOGINFO(" send cec msg [%d] success \n",msgInfo.msg);
-			}else{
-			    LOGERR(" send cec msg [%d] failed \n",msgInfo.msg);
-			}
-						
-	}
-}
-
-        // Event management
-        // 1.
-        uint32_t DisplaySettings::subscribeForHdmiCecSinkEvent(const char* eventName)
-        {
-            uint32_t err = Core::ERROR_NONE;
-            LOGINFO("Attempting to subscribe for event: %s\n", eventName);
-            Core::SystemInfo::SetEnvironment(_T("THUNDER_ACCESS"), (_T(SERVER_DETAILS)));
-            if (nullptr == m_client) {
-                getHdmiCecSinkPlugin();
-                if (nullptr == m_client) {
-                    LOGERR("JSONRPC: %s: client initialization failed", HDMICECSINK_CALLSIGN_VER);
-                    err = Core::ERROR_UNAVAILABLE;
-                } 
-            }
-
-	    if(err == Core::ERROR_NONE) {
-                /* Register handlers for Event reception. */
-                if(strcmp(eventName, HDMICECSINK_ARC_INITIATION_EVENT) == 0) {
-                    err =m_client->Subscribe<JsonObject>(1000, eventName
-                            , &DisplaySettings::onARCInitiationEventHandler, this);
-                    m_clientRegisteredEventNames.push_back(eventName);
-                } else if(strcmp(eventName, HDMICECSINK_ARC_TERMINATION_EVENT) == 0) {
-                    err =m_client->Subscribe<JsonObject>(1000, eventName
-                            , &DisplaySettings::onARCTerminationEventHandler, this);
-                    m_clientRegisteredEventNames.push_back(eventName);
-                } else if(strcmp(eventName, HDMICECSINK_SHORT_AUDIO_DESCRIPTOR_EVENT) == 0) {
-                    err =m_client->Subscribe<JsonObject>(1000, eventName
-                            , &DisplaySettings::onShortAudioDescriptorEventHandler, this);
-                    m_clientRegisteredEventNames.push_back(eventName);
-                } else if(strcmp(eventName, HDMICECSINK_SYSTEM_AUDIO_MODE_EVENT) == 0) {
-                    err =m_client->Subscribe<JsonObject>(1000, eventName
-                            , &DisplaySettings::onSystemAudioModeEventHandler, this);
-                    m_clientRegisteredEventNames.push_back(eventName);
-                } else if(strcmp(eventName, HDMICECSINK_ARC_AUDIO_STATUS_EVENT) == 0) {
-                    err =m_client->Subscribe<JsonObject>(1000, eventName
-                            , &DisplaySettings::onArcAudioStatusEventHandler, this);
-                    m_clientRegisteredEventNames.push_back(eventName);
-                } else if(strcmp(eventName, HDMICECSINK_AUDIO_DEVICE_CONNECTED_STATUS_EVENT) == 0) {
-                    err =m_client->Subscribe<JsonObject>(1000, eventName
-                            , &DisplaySettings::onAudioDeviceConnectedStatusEventHandler, this);
-                    m_clientRegisteredEventNames.push_back(eventName);
-                } else if(strcmp(eventName, HDMICECSINK_CEC_ENABLED_EVENT) == 0) {
-                    err =m_client->Subscribe<JsonObject>(1000, eventName
-                            , &DisplaySettings::onCecEnabledEventHandler, this);
-                    m_clientRegisteredEventNames.push_back(eventName);
-                } else if(strcmp(eventName, HDMICECSINK_AUDIO_DEVICE_POWER_STATUS_EVENT) == 0) {
-                    err =m_client->Subscribe<JsonObject>(1000, eventName
-                            , &DisplaySettings::onAudioDevicePowerStatusEventHandler, this);
-                    m_clientRegisteredEventNames.push_back(eventName);
-		} else {
-                     err = Core::ERROR_UNAVAILABLE;
-                     LOGERR("Unsupported Event: %s ", eventName);
-                }
-                if ( err  == Core::ERROR_NONE) {
-                    LOGINFO("Subscribed for %s", eventName);
-                } else {
-                    LOGERR("Failed to subscribe for %s with code %d", eventName, err);
-                }
-            }
-            return err;
-        }
-
-        // 2.
-        void DisplaySettings::onARCInitiationEventHandler(const JsonObject& parameters) {
-            string message;
-	    string value;
-
-            parameters.ToString(message);
-            LOGINFO("[ARC Initiation Event], %s : %s", __FUNCTION__, C_STR(message));
-
-            if (!parameters.HasLabel("status")) {
-                LOGERR("Field 'status' could not be found in the event's payload.");
-                return;
-            }
-            int currentrcRoutingState = getCurrentArcRoutingState();
-	    LOGINFO("ARC routing state before update m_currentArcRoutingState=%d\n ", currentrcRoutingState);
-	    // AVR power status is not checked here assuming that ARC init request will happen only when AVR is in ON state
-            if ((currentrcRoutingState != ARC_STATE_ARC_INITIATED) && (m_systemAudioMode_Power_RequestedAndReceived == true)) {
-                value = parameters["status"].String();
-
-		if( !value.compare("success") ) {
-		    //Update Arc state
-                    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-                    m_currentArcRoutingState = ARC_STATE_ARC_INITIATED;
-		    //Request SAD
-		    // We will get Arc initiation request only if port is connected and Audio device is detected
-		    // So no need to explicitly check for that
-	            LOGINFO("ARC routing state after update m_currentArcRoutingState=%d\n ", m_currentArcRoutingState);
-		    device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort("HDMI_ARC0");
-		    device::AudioStereoMode mode = device::AudioStereoMode::kStereo;  //default to stereo
-                    mode = aPort.getStereoMode(); //get Last User set stereo mode and set
-		    if ((m_AudioDeviceSADState == AUDIO_DEVICE_SAD_CLEARED || m_AudioDeviceSADState == AUDIO_DEVICE_SAD_UNKNOWN) && \
-				    ((mode == device::AudioStereoMode::kPassThru) || aPort.getStereoAuto() == true)) {
-			   LOGINFO("Initiate SAD request\n");
-			   m_AudioDeviceSADState = AUDIO_DEVICE_SAD_REQUESTED;
-			   sendMsgToQueue(REQUEST_SHORT_AUDIO_DESCRIPTOR, NULL);
-		    } else {
-			    LOGINFO("SAD not requested m_AudioDeviceSADState =%d, soundmode = %s", m_AudioDeviceSADState, mode.toString().c_str());
-		    }
-		    //update device type in case we receive ARC init before power ON request
-		    if (m_hdmiInAudioDeviceType == dsAUDIOARCSUPPORT_NONE) {
-			    LOGINFO("Updating Audio device type to Arc\n");
-			    m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_ARC;
-		    } else {
-			    LOGINFO("m_hdmiInAudioDeviceType is already updated %d\n", m_hdmiInAudioDeviceType);
-		    }
-                    try
-                    {
-			if(m_hdmiInAudioDeviceConnected ==  false) {
-            	m_hdmiInAudioDeviceConnected = true;
-			    if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_DISCONNECTED) {
-				LOGINFO("Arc Initiation sucess, Notify UI\n");
-			        connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, true);
-			        m_arcEarcConnectionNotifiedToUI = ARC_EARC_CONNECTED;
-			    } else {
-				    LOGINFO("not notified to UI since m_arcEarcConnectionNotifiedToUI =%d\n", m_arcEarcConnectionNotifiedToUI);
-			    }
-			}
-			else {
-                            LOGINFO("onARCInitiationEventHandler: not notifying the UI as m_hdmiInAudioDeviceConnected = true !!!\n");
-                        }
-
-                    }
-                    catch (const device::Exception& err)
-                    {
-                        LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
-                    }
-		} //Release Mutex m_AudioDeviceStatesUpdateMutex if Arc is Success
-		else{
-                    LOGERR("CEC ARC Initiaition Failed !!!");
-                    {
-                      std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-                      m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
-                    }//Release Mutex m_AudioDeviceStatesUpdateMutex if Arc failure
-		}
-            } else {
-                LOGINFO("%s: The ARC initiation already done or m_systemAudioMode_Power_RequestedAndReceived [%d]", __FUNCTION__, m_systemAudioMode_Power_RequestedAndReceived);
-            }
-        }
-
-        // 3.
-        void DisplaySettings::onARCTerminationEventHandler(const JsonObject& parameters) {
-            string message;
-	    string value;
-
-            parameters.ToString(message);
-            LOGINFO("[ARC Termination Event], %s : %s", __FUNCTION__, C_STR(message));
-
-	    if (m_AudioDeviceSADState != AUDIO_DEVICE_SAD_CLEARED) {
-		m_AudioDeviceSADState = AUDIO_DEVICE_SAD_CLEARED;
-		m_requestSadRetrigger = false;
-		LOGINFO("%s: Clearing Audio device SAD\n", __FUNCTION__);
-		//clear the SAD list
-		sad_list.clear();
-	    } else {
-		LOGINFO("SAD already cleared\n");
-	    }
-
-        int currentrcRoutingState = getCurrentArcRoutingState();
-	    LOGINFO("Current ARC routing state before update m_currentArcRoutingState=%d\n ", currentrcRoutingState);
-	    if (currentrcRoutingState != ARC_STATE_ARC_TERMINATED) {
-                if (parameters.HasLabel("status")) {
-                    value = parameters["status"].String();
-                    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-                    m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
-		    m_requestSadRetrigger = false;
-	            LOGINFO("Current ARC routing state after update m_currentArcRoutingState=%d\n ", m_currentArcRoutingState);
-                    if(!value.compare("success")) {
-		        try 
-		        {
-			    if(m_hdmiInAudioDeviceConnected ==  true) {
-				m_hdmiInAudioDeviceConnected = false;
-				if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_CONNECTED) {
-                                    connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, false);
-				    m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
-				} else {
-				    LOGINFO("Not notifying UI since m_arcEarcConnectionNotifiedToUI = %d", m_arcEarcConnectionNotifiedToUI);
-                                }
-			    }
-			    else {
-			        LOGINFO("onARCTerminationEventHandler: Skip Disable ARC and not notifying the UI as  m_hdmiInAudioDeviceConnected = false\n");
-			    }
-	                }
-                        catch (const device::Exception& err)
-                        {
-                            LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
-                        }
-                    }
-                    else{
-                        LOGERR("CEC onARCTerminationEventHandler Failed !!!");
-                    }
-                }//Release mutex m_AudioDeviceStatesUpdateMutex 
-		else {
-                    LOGERR("Field 'status' could not be found in the event's payload.");
-                }
-	    }
-        }
-
-        // 4.
-        void DisplaySettings::onShortAudioDescriptorEventHandler(const JsonObject& parameters) {
-            string message;
-
-            parameters.ToString(message);
-	    JsonArray shortAudioDescriptorList;
-            LOGINFO("[Short Audio Descriptor Event], %s : %s", __FUNCTION__, C_STR(message));
-
-            if (parameters.HasLabel("shortAudioDescriptor")) {
-                shortAudioDescriptorList = parameters["shortAudioDescriptor"].Array();
-                int currentSADState = getAudioDeviceSADState();
-		if (currentSADState == AUDIO_DEVICE_SAD_REQUESTED) {
-                    try
-                    {
-            setAudioDeviceSADState(AUDIO_DEVICE_SAD_RECEIVED);
-			m_requestSadRetrigger = false;
-                        device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort("HDMI_ARC0");
-			LOGINFO("Total Short Audio Descriptors received from connected ARC device: %d\n",shortAudioDescriptorList.Length());
-			if(shortAudioDescriptorList.Length() <= 0) {
-			    LOGERR("Not setting SAD. No SAD returned by connected ARC device\n");
-			    return;
-			}
-
-			for (int i=0; i<shortAudioDescriptorList.Length(); i++) {
-                            LOGINFO("Short Audio Descriptor[%d]: %lld \n",i, shortAudioDescriptorList[i].Number());
-                            sad_list.push_back(shortAudioDescriptorList[i].Number());
-                        }
-
-			bool wasSADTimerActive = false;
-
-			int arcRoutingState;
-			{
-				std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-				arcRoutingState = m_currentArcRoutingState;
-			}
-			if (arcRoutingState == ARC_STATE_ARC_INITIATED) {
-			    if (m_SADDetectionTimer.isActive()) {
-			        //Timer is active, so stop the timer and if audio is not routed set SAD and route the audio
-			        LOGINFO("%s: Stopping the SAD timer\n", __FUNCTION__);
-			        m_SADDetectionTimer.stop();
-				
-				wasSADTimerActive = true;
-			    }
-
-			    if (wasSADTimerActive == true && m_arcEarcAudioEnabled == false ) { /*setEnableAudioPort is called, Timer has started, got SAD before Timer Expiry*/
-			        LOGINFO("%s: Updating SAD \n", __FUNCTION__);
-                                setAudioDeviceSADState(AUDIO_DEVICE_SAD_UPDATED);
-                                aPort.setSAD(sad_list);
-                                if(aPort.getStereoAuto() == true) {
-                                    aPort.setStereoAuto(true,true);
-                                }
-                                else{
-                                    device::AudioStereoMode mode = device::AudioStereoMode::kStereo;  //default to stereo
-                                    mode = aPort.getStereoMode(); //get Last User set stereo mode and set
-                                    aPort.setStereoMode(mode.toString(), true);
-                                }
-				LOGINFO("%s: Routing the audio since m_arcEarcAudioEnabled = %d\n", __FUNCTION__, m_arcEarcAudioEnabled);
-				LOGINFO("%s: Enable ARC... \n",__FUNCTION__);
-				aPort.enableARC(dsAUDIOARCSUPPORT_ARC, true);
-				m_arcEarcAudioEnabled = true;
-			    } else if (m_arcEarcAudioEnabled == true) { /*setEnableAudioPort is called,Timer started and Expired, arc is routed -- or for both wasSADTimerActive == true/false*/
-				LOGINFO("%s: Updating SAD since audio is already routed and ARC is initiated\n", __FUNCTION__);
-				setAudioDeviceSADState(AUDIO_DEVICE_SAD_UPDATED);
-				    aPort.setSAD(sad_list);
-                        	    if(aPort.getStereoAuto() == true) {
-                    	            	aPort.setStereoAuto(true,true);
-                            	    }
-                            	    else{
-                                	device::AudioStereoMode mode = device::AudioStereoMode::kStereo;  //default to stereo
-                                	mode = aPort.getStereoMode(); //get Last User set stereo mode and set
-                                	aPort.setStereoMode(mode.toString(), true);
-                            	    }
-			      } else { // SAD received before setEnableAudioPort
-			            LOGINFO("%s: Not updating SAD now since arc routing has not yet happened and SAD timer is not active -> Routing and SAD is updated when setEnableAudioPort is called \n", __FUNCTION__);
-			      }
-			}else {
-				int arcState;
-				bool arcEarcEnabled;
-				{
-					std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-					arcState = m_currentArcRoutingState;
-					arcEarcEnabled = m_arcEarcAudioEnabled;
-				}
-				LOGINFO("%s: m_currentArcRoutingState = %d, m_arcEarcAudioEnabled = %d", __FUNCTION__, arcState, arcEarcEnabled);
-			}/*End of m_currentArcRoutingState check */
-                    }
-                    catch (const device::Exception& err)
-                    {
-                        LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
-                    }
-            }  else {
-                LOGERR("Invalid SAD state m_AudioDeviceSADState =%d", m_AudioDeviceSADState);
-               }/*End of (m_AudioDeviceSADState == AUDIO_DEVICE_SAD_REQUESTED) */
-			}
-		    else {
-                LOGERR("Field 'ShortAudioDescriptor' could not be found in the event's payload.");
-            }/*End of (m_AudioDeviceSADState == AUDIO_DEVICE_SAD_REQUESTED) */
-        }
-
-        // 5.
-        void DisplaySettings::onSystemAudioModeEventHandler(const JsonObject& parameters) {
-            string message;
-            string value;
-
-            parameters.ToString(message);
-            LOGINFO("[System Audio Mode Event], %s : %s", __FUNCTION__, C_STR(message));
-
-            if (parameters.HasLabel("audioMode")) {
-                value = parameters["audioMode"].String();
-                if(!value.compare("On")) {
-	                m_systemAudioMode_Power_RequestedAndReceived = true; // system audio mode ON is received
-			LOGINFO("Requesting power status of AVR as system audio mode is %s\n", C_STR(message));
-	                m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_REQUEST;//Should we send power request irrespective of System audio mode status
-                        sendMsgToQueue(REQUEST_AUDIO_DEVICE_POWER_STATUS, NULL);
-                }
-		else if(!value.compare("Off")) {
-                    LOGINFO("%s :  audioMode OFF !!!\n", __FUNCTION__);
-		    try {
-			std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-                        m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
-
-   		        if(m_hdmiInAudioDeviceConnected == true) {
-			    LOGINFO("SystemAudio mode off disable Arc\n");
-			    m_hdmiInAudioDeviceConnected = false;
-			    if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_CONNECTED) {
-				LOGINFO("System Audio mode is off and m_arcEarcConnectionNotifiedToUI %d, Notify UI to disbale Arc", m_arcEarcConnectionNotifiedToUI);
-		            	connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, false);
-				m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
-			    } else {
-				LOGINFO("Not notifying UI since m_arcEarcConnectionNotifiedToUI =%d\n", m_arcEarcConnectionNotifiedToUI);
-			    }
-                            {
-			      // Arc termination happens from HdmiCecSink plugin so just update the state here
-                              m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
-			      m_requestSadRetrigger = false;
-			      LOGINFO("Updating ARC routing state to ARC terminated\n");
-                            }
-
-		        }
-                        else {
-                            LOGINFO("onSystemAudioModeEventHandler: Skip Disable ARC and not notifying the UI as  m_hdmiInAudioDeviceConnected = false\n");
-                        }
-		    }//Release mutex m_AudioDeviceStatesUpdateMutex
-		    catch(const device::Exception& err)
-                    {
-		        LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
-                    }
-                }
-                else{
-                    LOGERR("%s: Invalid audio mode sent by HdmiCecSink !!!\n",__FUNCTION__);
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
                 }
             } else {
-                LOGERR("Field 'audioMode' could not be found in the event's payload.");
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
             }
         }
 
-        void DisplaySettings::onArcAudioStatusEventHandler(const JsonObject& parameters) {
-            string message;
-            parameters.ToString(message);
-            LOGINFO("[ARC Audio Status Event], %s : %s", __FUNCTION__, C_STR(message));
-
-            if (parameters.HasLabel("muteStatus") && parameters.HasLabel("volumeLevel")) {
-                int iArcVolumeLevel = 0;
-                const string volumeLevelStr = parameters["volumeLevel"].String();
-                if (!TryParseIntInRange(volumeLevelStr, 0, 100, iArcVolumeLevel)) {
-                    LOGWARN("Invalid volumeLevel in ARC Audio Status Event");
-                    return;
-                }
-                if(iArcVolumeLevel != hdmiArcVolumeLevel)
-		{
-		    hdmiArcVolumeLevel = iArcVolumeLevel;
-                    JsonObject volParams;
-                    volParams["volumeLevel"] = (int)hdmiArcVolumeLevel;
-                    sendNotify("volumeLevelChanged", volParams);
-		}
-
-		int muteStatusInt = 0;
-                const string muteStatusStr = parameters["muteStatus"].String();
-                if (!TryParseIntInRange(muteStatusStr, 0, 1, muteStatusInt)) {
-                    LOGWARN("Invalid muteStatus in ARC Audio Status Event");
-                    return;
-                }
-		bool bMuteStatus = (muteStatusInt != 0);
-                if( bMuteStatus != hdmiArcMuteStatus )
-		{
-                    hdmiArcMuteStatus = bMuteStatus;
-		    JsonObject params;
-                    params["muted"] = hdmiArcMuteStatus;
-                    sendNotify("muteStatusChanged", params);
-		}
-            } else {
-                LOGERR("Field 'muteStatus' and 'volumeLevel' could not be found in the event's payload.");
-            }
-        }
-
-	/* Event handler when Audio Device is Added/Removed     */
-	void DisplaySettings::onAudioDeviceConnectedStatusEventHandler(const JsonObject& parameters)
-	{
-	    string value;
-
-	    if (parameters.HasLabel("audioDeviceConnected"))
-		value = parameters["audioDeviceConnected"].String();
-	    
-	    if(!value.compare("true")) {
-	        m_hdmiCecAudioDeviceDetected = true;
-            } else{
-	            m_hdmiCecAudioDeviceDetected = false;
-				bool hdmiAudioConnected;
-	            int arcState;
-	            {
-	                std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-	                hdmiAudioConnected = m_hdmiInAudioDeviceConnected;
-	                arcState = m_currentArcRoutingState;
-	            }
-			    if (hdmiAudioConnected == true) {
-					LOGINFO("Audio device removed event Handler, clearing the states m_hdmiInAudioDeviceConnected =%d, m_currentArcRoutingState =%d", \
-                    hdmiAudioConnected, arcState);
-					{
-						std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-						m_hdmiInAudioDeviceConnected = false;	
-						m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
-						m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
-						m_requestSadRetrigger = false;
-					}
-				    connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, false);
-				    m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
-			    }
-		        if (m_AudioDeviceSADState != AUDIO_DEVICE_SAD_CLEARED && m_AudioDeviceSADState != AUDIO_DEVICE_SAD_UNKNOWN) {
-		            LOGINFO("%s: Clearing Audio device SAD previous state= %d current state = %d\n", __FUNCTION__, m_AudioDeviceSADState, AUDIO_DEVICE_SAD_CLEARED);
-		            //clear the SAD list
-		            sad_list.clear();
-		            m_AudioDeviceSADState = AUDIO_DEVICE_SAD_CLEARED;
-			    m_requestSadRetrigger = false;
-		        } else {
-		            LOGINFO("SAD already cleared\n");
-	            }
-                //if m_arcEarcAudioEnabled == true(case where arc/earc is already routed) we will not reset device type because it will be done from setEnableAudioPort during disable from the connectedAudioPort update
-				{
-                    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-                    if (m_arcEarcAudioEnabled == false && m_hdmiInAudioDeviceType != dsAUDIOARCSUPPORT_NONE) {
-                        LOGINFO("Reset m_hdmiInAudioDeviceType since m_arcEarcAudioEnabled = %d", m_arcEarcAudioEnabled);
-                        m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
-                        }
-				}
-
-            }
-	    LOGINFO("updated m_hdmiCecAudioDeviceDetected status [%d] ... \n", m_hdmiCecAudioDeviceDetected);
-
-		if (m_hdmiCecAudioDeviceDetected)
-		{
-                    LOGINFO("Trigger Audio Device Power State Request status ... \n");
-                    sendMsgToQueue(SEND_DEVICE_AUDIO_STATUS, NULL);
-		    m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_REQUEST;
-                    sendMsgToQueue(REQUEST_AUDIO_DEVICE_POWER_STATUS, NULL);
-
-		} else {
-                    LOGINFO("Audio Device is removed \n");
-		}
-                hdmiArcVolumeLevel = 0;
-		hdmiArcMuteStatus = false;
+        returnResponse(success);
     }
 
-	void DisplaySettings::onAudioDevicePowerStatusEventHandler(const JsonObject& parameters) {
-            string value;
-            if (parameters.HasLabel("powerStatus"))
-                value = parameters["powerStatus"].String();
+    uint32_t DisplaySettings::setAudioDelay(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
 
-             int pState = 1;//STANDBY
-             if (!TryParseIntInRange(value, INT_MIN, INT_MAX, pState)) {
-                 LOGWARN("powerStatus is not a valid int\n");
-                 return;
-             }
+        returnIfParamNotFound(parameters, "audioDelay");
 
-	     LOGINFO("Audio Device Power State [%d] ... \n", pState);
-
-             if(pState == AVR_POWER_STATE_ON) {//ON
-                m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_ON;
-	        m_systemAudioMode_Power_RequestedAndReceived = true; // received power ON msg from AVR.
-
-                if (m_AudioDevicePowerOnStatusTimer.isActive()) {
-	           LOGINFO("Stopping timer, Audio Device power status - m_hdmiInAudioDevicePowerState [%d]!!!\n", m_hdmiInAudioDevicePowerState);
-                   retryPowerRequestCount = 0;
-                   m_AudioDevicePowerOnStatusTimer.stop();
-                }
-
-                try {
-                    int types = dsAUDIOARCSUPPORT_NONE;
-                    device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort("HDMI_ARC0");
-                    aPort.getSupportedARCTypes(&types);
-                    bool isArcConnected = false;
-                    {
-                        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-                        isArcConnected = m_hdmiInAudioDeviceConnected;
-                    }
-                    if((types & dsAUDIOARCSUPPORT_eARC) && (isArcConnected == false)) {
-                           LOGINFO("%s: Audio device is eArc m_hdmiInAudioDeviceConnected =%d",__FUNCTION__,isArcConnected);
-                        {
-                            std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-                            m_hdmiInAudioDeviceConnected = true;
-                            m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_eARC;
-                        }
-			if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_DISCONNECTED) {
-			    // Notify UI that Audio device is connected and is in ON state
-                            LOGINFO("Triggered from HPD: eARC audio device power on: Notify UI !!! \n");
-                            connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, true);
-			    m_arcEarcConnectionNotifiedToUI = ARC_EARC_CONNECTED;
-			} else {
-				LOGINFO("eARC connection notification is already sent m_arcEarcConnectionNotifiedToUI =%d", m_arcEarcConnectionNotifiedToUI);
-			}
-                    } else {
-			std::lock_guard<std::mutex> lock(m_callMutex);			
-			bool hdmiAudioDeviceConnected;
-			{
-			    std::lock_guard<std::mutex> arcLock(m_AudioDeviceStatesUpdateMutex);
-			    hdmiAudioDeviceConnected = m_hdmiInAudioDeviceConnected;
-			}
-			if ((hdmiAudioDeviceConnected == false) && !(m_ArcDetectionTimer.isActive())) {
-			    // tinymix commad to detect eArc is failed, start the timer for 3 seconds
-			    LOGINFO("Starting timer to detect eArc for %d milli seconds", ARC_DETECTION_CHECK_TIME_IN_MILLISECONDS);
-		            m_ArcDetectionTimer.start(ARC_DETECTION_CHECK_TIME_IN_MILLISECONDS);
-			}
-		    }
-                }
-                catch(const device::Exception& err)
-                {
-                    LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
-                }
-             }
-             else if(pState == AVR_POWER_STATE_STANDBY) {
-                 m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_STANDBY;
-             } else if (pState == AVR_POWER_STATE_STANDBY_TO_ON_TRANSITION) {
-		     //Start a timer to re check the power status of AVR?
-		     LOGINFO("Audio device  power status IN TRANSITION from STANDBY to ON, Requesting power status again pState=%d\n", pState);
-		     m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_REQUEST;
-                     sendMsgToQueue(REQUEST_AUDIO_DEVICE_POWER_STATUS, NULL);
-	     }
+        string sAudioDelayMs = parameters["audioDelay"].String();
+        int audioDelayMs = 0;
+        try {
+            audioDelayMs = stoi(sAudioDelayMs);
+        } catch (const std::exception& err) {
+            LOGERR("Failed to parse audioDelay '%s'", sAudioDelayMs.c_str());
+            returnResponse(false);
         }
 
-	/*Arc detection timer*/
-        void DisplaySettings::checkArcDeviceConnected() {
-	    //Timer is invoked in case of delayed HPD
-	    LOGINFO("Inside checkArcDeviceConnected\n");
-	    static int retryArcCount = 0;
-	    std::lock_guard<std::mutex> lock(m_callMutex);
-            int types = dsAUDIOARCSUPPORT_NONE;
-	    try{
-            device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort("HDMI_ARC0");
-            aPort.getSupportedARCTypes(&types);
-	    int arcRoutingState;
-	    {
-		    std::lock_guard<std::mutex> arcLock(m_AudioDeviceStatesUpdateMutex);
-		    arcRoutingState = m_currentArcRoutingState;
-	    }
-	    if(arcRoutingState != ARC_STATE_ARC_INITIATED) {
-	       bool isArcConnected = false;
-           {
-               std::lock_guard<std::mutex> arcLock(m_AudioDeviceStatesUpdateMutex);
-               isArcConnected = m_hdmiInAudioDeviceConnected;
-           }
-           if((types & dsAUDIOARCSUPPORT_eARC) && (isArcConnected == false)) {
-               {
-                   std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-                   m_hdmiInAudioDeviceConnected = true;
-                   m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_eARC;
-               }
-		       if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_DISCONNECTED) {
-                   LOGINFO("Triggered from HPD: eARC audio device power on: Notify UI !!! \n");
-                   connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, true);
-		       m_arcEarcConnectionNotifiedToUI = ARC_EARC_CONNECTED;
-		       } else {
-		           LOGINFO("Arc connection notification is already sent m_arcEarcConnectionNotifiedToUI = %d", m_arcEarcConnectionNotifiedToUI);
-		       }
+        if (audioDelayMs < 0) {
+            LOGERR("audioDelay '%s', Should be a postiive value", sAudioDelayMs.c_str());
+            returnResponse(false);
+        }
+
+        bool success = true;
+        string audioPort = parameters["audioPort"].String(); // empty value will browse all ports
+
+        if (!checkPortName(audioPort))
+            audioPort = "HDMI0";
+
+        // DS_IARM: empty-port discovery — HDMI0 if connected, else iterate for any connected VP
+        if (audioPort.empty()) {
+            const std::string defaultVP = DSHelper::getDefaultVideoPortName();
+            if (isDisplayConnected(defaultVP)) {
+                audioPort = "HDMI0";
             } else {
-                bool isArcNotConnected = false;
-                {
-                    std::lock_guard<std::mutex> arcLock(m_AudioDeviceStatesUpdateMutex);
-                    isArcNotConnected = (m_hdmiInAudioDeviceConnected == false);
-                }
-                if(isArcNotConnected) {
-		        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-		        retryArcCount ++;
-		        LOGINFO("device Type is ARC, checking if eARC - retryArcCount [%d]", retryArcCount);
-		        if (retryArcCount >= 3 )
-		        {
-		            m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_ARC;
-                    if((m_currentArcRoutingState == ARC_STATE_ARC_TERMINATED) && (isCecEnabled == true)) {
-			            LOGINFO("ARC_mode: Send dummy ARC initiation request... \n");
-                        LOGINFO("ARC_mode: Notify Arc routing with m_currentArcRoutingStat [%d] \n", DisplaySettings::_instance->m_currentArcRoutingState );
-                        m_currentArcRoutingState = ARC_STATE_REQUEST_ARC_INITIATION;
-                        sendMsgToQueue(SEND_REQUEST_ARC_INITIATION, NULL);
-                    } else {
-			            LOGINFO("Arc initiation request not sent\n");
-		            }
-	            }
-	            }//Release Mutex m_AudioDeviceStatesUpdateMutex
-		      }
-	        } else {
-		    int arcState;
-		    {
-		        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-		        arcState = m_currentArcRoutingState;
-		    }
-		    LOGINFO("Arc is already initiated m_currentArcRoutingState =%d", arcState);
-	    }
-
-        // coverity fix: MISSING_LOCK - acquire lock before reading state used in conditional/log
-        int arcStateCheck;
-        dsAudioARCTypes_t hdmiInTypeCheck;
-        {
-            std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-            arcStateCheck = m_currentArcRoutingState;
-            hdmiInTypeCheck = m_hdmiInAudioDeviceType;
-        }
-        if (m_ArcDetectionTimer.isActive() && ((retryArcCount >= 3) || (arcStateCheck == ARC_STATE_ARC_INITIATED) || (hdmiInTypeCheck != dsAUDIOARCSUPPORT_NONE))) {
-            retryArcCount = 0; /* reset counter */
-            LOGINFO("Stopping the eArc detection timer retryArcCount = %d, m_currentArcRoutingState = %d, m_hdmiInAudioDeviceType = %d", \
-                    retryArcCount, arcStateCheck, hdmiInTypeCheck);
-            m_ArcDetectionTimer.stop();
-        }
-	    }
-        catch(const device::Exception& err)
-        {
-            LOG_DEVICE_EXCEPTION1(string(" Exception in checkArcDeviceConnected"));
-	    }
-	}	
-	/* DisplaaySettings gets notified whenever CEC is made Enable or Disable  */
-	void DisplaySettings::onCecEnabledEventHandler(const JsonObject& parameters)
-	{
-             string value;
-
-             LOGINFO(" CEC Enable-Disable Event... \n");
-	     if (parameters.HasLabel("cecEnable"))
-                 value = parameters["cecEnable"].String();
-
-	     if(!value.compare("true")) {
-		isCecEnabled = true;
-	      } else{
-		isCecEnabled = false;
-		try
-                    {
-                        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
-                        //if m_arcEarcAudioEnabled == true(case where arc/earc is already routed) we will not reset device type because it will be done from setEnableAudioPort during disable from the connectedAudioPort update
-                        if (m_arcEarcAudioEnabled == false && m_hdmiInAudioDeviceType != dsAUDIOARCSUPPORT_NONE) {
-                           LOGINFO("Reset m_hdmiInAudioDeviceType since m_arcEarcAudioEnabled = %d", m_arcEarcAudioEnabled);
-                           m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
-                        }
-                        if(m_hdmiInAudioDeviceConnected ==  true) {
-                            m_hdmiInAudioDeviceConnected = false;
-                            connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, false);
-			    m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
-                            m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
-                        }
-                        else {
-                            LOGINFO("Skip Disable ARC and not notifying the UI as  m_hdmiInAudioDeviceConnected = false\n");
-                        }
+                // DS_IARM: default to HDMI0, switch to SPDIF0 only if another display is connected
+                audioPort = "HDMI0";
+                for (const auto& vp : DSHelper::getVideoPortHandleEntries()) {
+                    if (isDisplayConnected(vp.first)) {
+                        audioPort = "SPDIF0";
+                        break;
                     }
-                    catch (const device::Exception& err)
-                    {
-                        LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
-                    }
-	      }
-
-              LOGINFO("updated isCecEnabled [%d] ... \n", isCecEnabled);
-	}
-
-        void DisplaySettings::stopCecTimeAndUnsubscribeEvent() {
-            LOGINFO ("de-init cec timer and subscribbed event \n");
-            {
-                lock_guard<mutex> lck(m_callMutex);
-                if ( m_timer.isActive()) {
-                    m_timer.stop();
-                }
-
-                if ( m_AudioDeviceDetectTimer.isActive()) {
-                    m_AudioDeviceDetectTimer.stop();
-                }
-		if ( m_SADDetectionTimer.isActive()) {
-                        m_SADDetectionTimer.stop();
-                }
-                if ( m_ArcDetectionTimer.isActive()) {
-                    m_ArcDetectionTimer.stop();
-                }
-                if ( m_AudioDevicePowerOnStatusTimer.isActive()) {
-                    m_AudioDevicePowerOnStatusTimer.stop();
-                }
-
-                if (nullptr != m_client) {
-                    for (std::string eventName : m_clientRegisteredEventNames) {
-                        m_client->Unsubscribe(1000, _T(eventName));
-                        LOGINFO ("Unsubscribing event %s\n", eventName.c_str());
-                    }
-                    m_clientRegisteredEventNames.clear();
-
-                    LOGINFO ("deleting m_client \n");
-                    delete m_client; m_client = nullptr;
                 }
             }
         }
 
-        // 6.
-        void DisplaySettings::onTimer()
+        LOGINFO("Current Mapped AudioPort='%s'", audioPort.c_str());
+
         {
-            // lock to prevent: parallel onTimer runs, destruction during onTimer
-            lock_guard<mutex> lck(m_callMutex);
-
-            PluginHost::IShell::state state;
-            bool pluginActivated = false;
-
-            if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
-                LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
-                pluginActivated = true;
-            }
-
-            LOGWARN ("DisplaySettings::onTimer pluginActivated:%d line:%d", pluginActivated, __LINE__);
-            if(!m_subscribed) {
-                if (pluginActivated && (subscribeForHdmiCecSinkEvent(HDMICECSINK_ARC_INITIATION_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_ARC_TERMINATION_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_SHORT_AUDIO_DESCRIPTOR_EVENT)== Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_SYSTEM_AUDIO_MODE_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_AUDIO_DEVICE_CONNECTED_STATUS_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_CEC_ENABLED_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_AUDIO_DEVICE_POWER_STATUS_EVENT) == Core::ERROR_NONE)&& (subscribeForHdmiCecSinkEvent(HDMICECSINK_ARC_AUDIO_STATUS_EVENT) == Core::ERROR_NONE))
-                {
-                    m_subscribed = true;
-                    if (m_timer.isActive()) {
-                        m_timer.stop();
-                        LOGINFO("Timer stopped.");
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->SetAudioDelay(audioHandle, static_cast<uint32_t>(audioDelayMs));
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioDelay failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
                     }
-                    LOGINFO("Subscription completed.");
-		    sleep(WARMING_UP_TIME_IN_SECONDS);
-
+                    audio->Release();
                 } else {
-                    LOGERR("Could not subscribe this time, one more attempt in %d msec. Plugin is %s", RECONNECTION_TIME_IN_MILLISECONDS, pluginActivated ? "ACTIVE" : "BLOCKED");
-                }
-            } else {
-                //Standby ON transitions case
-                LOGINFO("Already subscribed. Stopping the timer.");
-                if (m_timer.isActive()) {
-                    m_timer.stop();
-                }
-            }
-	    
-	    if(!isCecEnabled){
-		try {
-		    isCecEnabled = getHdmiCecSinkCecEnableStatus();
-		}
-		catch (const device::Exception& err){
-		    LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
-		}
-	    }
-
-            if(m_subscribed) {
-         	//Need to send power on request as this timer might have started based on standby out or boot up scenario
-                LOGINFO("%s: Audio Port : [HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n", __FUNCTION__);
-                sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
-		// Some AVR's and SB are not sending response for power on message even though it is in ON state
-                // Send power request immediately to query power status of the AVR
-                m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_REQUEST;
-                sendMsgToQueue(REQUEST_AUDIO_DEVICE_POWER_STATUS, NULL);
-                LOGINFO("[HDMI_ARC0] sendAudioDevicePowerStatusRequestMsg!!!\n");
-            }
-        }
-
-        void DisplaySettings::checkAudioDeviceDetectionTimer()
-        {
-            // lock to prevent: parallel onTimer runs, destruction during onTimer
-            lock_guard<mutex> lck(m_callMutex);
-            if (m_subscribed && m_hdmiCecAudioDeviceDetected)
-            {
-               //Connected Audio Ports status update is necessary on bootup / power state transitions
-	       m_systemAudioMode_Power_RequestedAndReceived = false;
-               LOGINFO("%s: Audio Port : [HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n", __FUNCTION__);
-               sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
-	       LOGINFO("[HDMI_ARC0] Starting the timer to check audio device power status after power on msg!!!\n");
-	       m_AudioDevicePowerOnStatusTimer.start(AUDIO_DEVICE_POWER_TRANSITION_TIME_IN_MILLISECONDS);
-            } else {
-		    LOGINFO("%s: No Audio device detected even after timeout\n", __FUNCTION__);
-	    }
-
-            if (m_AudioDeviceDetectTimer.isActive()) {
-               m_AudioDeviceDetectTimer.stop();
-            }
-        }
-
- void DisplaySettings::checkAudioDevicePowerStatusTimer()
- {
-
-    lock_guard<mutex> lck(m_callMutex);
-           if (m_subscribed && m_hdmiCecAudioDeviceDetected)
-           {
-                // Some AVR's and SB are not sending response for power on message even though it is in ON state
-                // Send power request immediately to query power status of the AVR
-                LOGINFO("[HDMI_ARC0] m_hdmiInAudioDevicePowerState [%d] \n", m_hdmiInAudioDevicePowerState);
-		if (m_hdmiInAudioDevicePowerState != AUDIO_DEVICE_POWER_STATE_ON)
-		{
-                   m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_REQUEST;
-		   if ((retryPowerRequestCount == 2) || (retryPowerRequestCount == 4)) // Send Power On msg again for 3rd and 4th iteration
-		   {
-                        LOGINFO("[HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n");
-                        sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
-		   }
-                   sendMsgToQueue(REQUEST_AUDIO_DEVICE_POWER_STATUS, NULL);
-		   retryPowerRequestCount++;
-                   LOGINFO("[HDMI_ARC0] sendAudioDevicePowerStatusRequestMsg, retryPowerRequestCount [%d]\n", retryPowerRequestCount);
-		}
-            } else {
-                LOGINFO("%s: No Audio device detected\n", __FUNCTION__);
-            }
-
-//            if (((m_hdmiInAudioDevicePowerState == AUDIO_DEVICE_POWER_STATE_ON) || (retryPowerRequestCount >= 5)) && m_AudioDevicePowerOnStatusTimer.isActive()) {
-            if ((retryPowerRequestCount >= 5) && m_AudioDevicePowerOnStatusTimer.isActive()) {
-	       m_systemAudioMode_Power_RequestedAndReceived = true; // resetting the Variable if power status not received.
-	       LOGINFO("Stopping timer, Audio Device power status - m_hdmiInAudioDevicePowerState [%d]!!!\n", m_hdmiInAudioDevicePowerState);
-               retryPowerRequestCount = 0;
-               m_AudioDevicePowerOnStatusTimer.stop();
-            }
- }
-        // Event management end
-
-        // Thunder plugins communication end
-
-
-        uint32_t DisplaySettings::getTVHDRCapabilities (const JsonObject& parameters, JsonObject& response) 
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-			bool success = true;
-			int capabilities = dsHDRSTANDARD_NONE;
-            try
-            {
-                std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
-                if (isDisplayConnected(vPort.getName())) {
-                    vPort.getTVHDRCapabilities(&capabilities);
-                    response["capabilities"] = capabilities;
-                }
-                else {
-					LOGERR("getTVHDRCapabilities failure: HDMI0 not connected!\n");
+                    LOGERR("IDeviceSettingsAudio not available");
                     success = false;
                 }
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(string("HDMI0"));
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
                 success = false;
             }
-            returnResponse(success);
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getSinkAtmosCapability(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        bool success = true;
+        bool isValidAudioPort = false;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "NULL";
+
+        // DS_IARM: validate audioPort if specified — return error for unknown ports
+        if (audioPort != "NULL") {
+            isValidAudioPort = DSHelper::hasAudioPortHandle(audioPort);
+            if (!isValidAudioPort) {
+                LOGERR("getSinkAtmosCapability failure: Unsupported Audio Port!!!");
+                returnResponse(false);
+            }
         }
 
-        uint32_t DisplaySettings::isConnectedDeviceRepeater (const JsonObject& parameters, JsonObject& response) 
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-            bool success = true;
-            bool isConnectedDeviceRepeater = false;
-            try
-            {
-                std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
-                if (isDisplayConnected(vPort.getName())) {
-                    isConnectedDeviceRepeater = vPort.getDisplay().isConnectedDeviceRepeater();
-                }
-                else {
-                    LOGERR("isConnectedDeviceRepeater failure: HDMI0 not connected!\n");
-                    success = false;
-                }
-                response["HdcpRepeater"] = isConnectedDeviceRepeater;
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(string("HDMI0"));
-                success = false;
-            }
-            returnResponse(success);
-        }
+        auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+        if (audio != nullptr) {
+            Exchange::IDeviceSettingsAudio::DolbyAtmosCapability caps =
+                Exchange::IDeviceSettingsAudio::DolbyAtmosCapability::AUDIO_DOLBY_ATMOS_NOT_SUPPORTED;
 
-        uint32_t DisplaySettings::getDefaultResolution (const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-			bool success = true;
-            try
-            {
-                std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
-                if (isDisplayConnected(vPort.getName())) {
-                    response["defaultResolution"] = vPort.getDefaultResolution().getName();
-                }
-                else {
-					LOGERR("getDefaultResolution failure: HDMI0 not connected!\n");
-                    success = false;
-                }
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(string("HDMI0"));
-                success = false;
-            }
-            returnResponse(success);
-        }
-
-        uint32_t DisplaySettings::setScartParameter (const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:
-            LOGINFOMETHOD();
-            returnIfParamNotFound(parameters, "scartParameter");
-            returnIfParamNotFound(parameters, "scartParameterData");
-
-            string sScartParameter = parameters["scartParameter"].String();
-            string sScartParameterData = parameters["scartParameterData"].String();
-
-            bool success = true;
-            try
-            {
-                device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort("SCART0");
-                success = vPort.setScartParameter(sScartParameter, sScartParameterData);
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION2(sScartParameter, sScartParameterData);
-                success = false;
-            }
-            returnResponse(success);
-        }
-        //End methods
-
-        //Begin events
-        void DisplaySettings::resolutionPreChange()
-        {
-            sendNotify("resolutionPreChange", JsonObject());
-        }
-
-        void DisplaySettings::resolutionChanged(int width, int height)
-        {
-            vector<string> connectedDisplays;
-            getConnectedVideoDisplaysHelper(connectedDisplays);
-
-            string firstDisplay = "";
-            string firstResolution = "";
-            bool firstResolutionSet = false;
-            for (int i = 0; i < (int)connectedDisplays.size(); i++)
-            {
-                string resolution;
-                string display = connectedDisplays.at(i);
-                try
-                {
-                    resolution = device::Host::getInstance().getVideoOutputPort(display).getResolution().getName();
-                }
-                catch(const device::Exception& err)
-                {
-                    LOG_DEVICE_EXCEPTION1(display);
-                }
-                if (!resolution.empty())
-                {
-                    std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                    std::string videoPortName = strVideoPort.substr(0, strVideoPort.size()-1);
-                    if (Utils::String::stringContains(display, videoPortName.c_str()))
-                    {
-                        // only report first HDMI connected device is HDMI is connected
-                        JsonObject params;
-                        params["width"] = width;
-                        params["height"] = height;
-                        params["videoDisplayType"] = std::move(display);
-                        params["resolution"] = std::move(resolution);
-                        sendNotify("resolutionChanged", params);
-                        return;
+            if (DSHelper::isHDMIAudioOutPortPresent()) {
+                LOGINFO("HdmiOutPort present");
+                // DS_IARM STB path: default HDMI0; override with specified valid port
+                const string usePort = isValidAudioPort ? audioPort : "HDMI0";
+                int32_t audioHandle = -1;
+                bool connected = DSHelper::isAudioOutputPortConnected(audio, usePort, audioHandle);
+                if (INVALID_DS_HANDLE != audioHandle) {
+                    if (connected) {
+                        Core::hresult comResult = audio->GetAudioSinkDeviceAtmosCapability(audioHandle, caps);
+                        if (comResult == Core::ERROR_NONE) {
+                            response["atmos_capability"] = static_cast<int>(caps);
+                        } else {
+                            LOGERR("GetAudioSinkDeviceAtmosCapability failed for audioPort='%s', Error=%d", usePort.c_str(), static_cast<int>(comResult));
+                            success = false;
+                        }
+                    } else {
+                        LOGERR("getSinkAtmosCapability failure: %s not connected!", usePort.c_str());
+                        success = false;
                     }
-                    else if (!firstResolutionSet)
-                    {
-                        firstDisplay = std::move(display);
-                        firstResolution = std::move(resolution);
-                        firstResolutionSet = true;
+                } else {
+                    LOGERR("audio port '%s' handle not found", audioPort.c_str());
+                    success = false;
+                }
+            } else {
+                LOGINFO("HdmiOutPort NOT present");
+                // DS_IARM TV path
+                if (isValidAudioPort) {
+                    int32_t audioHandle = -1;
+                    bool connected = DSHelper::isAudioOutputPortConnected(audio, audioPort, audioHandle);
+                    // DS_IARM: HDMI_ARC0 additionally requires m_arcEarcAudioEnabled == true
+                    bool portReady = (audioPort == "HDMI_ARC0")
+                        ? (connected && m_arcEarcAudioEnabled)
+                        : connected;
+                    if (INVALID_DS_HANDLE != audioHandle && portReady) {
+                        Core::hresult comResult = audio->GetAudioSinkDeviceAtmosCapability(audioHandle, caps);
+                        if (comResult == Core::ERROR_NONE) {
+                            response["atmos_capability"] = static_cast<int>(caps);
+                        } else {
+                            LOGERR("GetAudioSinkDeviceAtmosCapability failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                            success = false;
+                        }
+                    } else {
+                        LOGERR("getSinkAtmosCapability failure: %s not connected!", audioPort.c_str());
+                        success = false;
+                    }
+                } else {
+                    // DS_IARM: device::Host::getInstance().getSinkDeviceAtmosCapability() — NULL handle (0)
+                    Core::hresult comResult = audio->GetAudioSinkDeviceAtmosCapability(0, caps);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["atmos_capability"] = static_cast<int>(caps);
+                    } else {
+                        LOGERR("GetAudioSinkDeviceAtmosCapability failed (TV host-level), Error=%d", static_cast<int>(comResult));
+                        success = false;
                     }
                 }
             }
-            if (firstResolutionSet)
-            {
-                //if HDMI is not connected then notify the server of first connected device
-                JsonObject params;
-                params["width"] = width;
-                params["height"] = height;
-                params["videoDisplayType"] = std::move(firstDisplay);
-                params["resolution"] = std::move(firstResolution);
-                sendNotify("resolutionChanged", params);
-            }
+            audio->Release();
+        } else {
+            LOGERR("IDeviceSettingsAudio not available");
+            success = false;
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setAudioAtmosOutputMode(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "enable");
+
+        string sEnable = parameters["enable"].String();
+        bool enable = false;
+        // DS_IARM: TryGetBoolParam validates true/false/TRUE/FALSE/1/0 strings
+        if (!TryGetBoolParam(parameters, "enable", enable)) {
+            LOGWARN("enable invalid: '%s' (expected true/false)", sEnable.c_str());
+            returnResponse(false);
         }
 
-        void DisplaySettings::zoomSettingUpdated(const string& zoomSetting)
-        {//servicemanager sample: {"name":"zoomSettingUpdated","params":{"zoomSetting":"None","success":true,"videoDisplayType":"all"}
-         //servicemanager sample: {"name":"zoomSettingUpdated","params":{"zoomSetting":"Full","success":true,"videoDisplayType":"all"}
-            JsonObject params;
-            params["zoomSetting"] = zoomSetting;
-            params["videoDisplayType"] = "all";
-            sendNotify("zoomSettingUpdated", params);
-        }
-
-        void DisplaySettings::activeInputChanged(bool activeInput)
+        bool success = true;
         {
-            JsonObject params;
-            params["activeInput"] = activeInput;
-            sendNotify("activeInputChanged", params);
-        }
-
-        void DisplaySettings::connectedVideoDisplaysUpdated(int hdmiHotPlugEvent)
-        {
-            static int previousStatus = HDMI_HOT_PLUG_EVENT_CONNECTED;
-            static int firstTime = 1;
-
-            if (firstTime || previousStatus != hdmiHotPlugEvent)
-            {
-                firstTime = 0;
-                JsonArray connectedDisplays;
-                if (HDMI_HOT_PLUG_EVENT_CONNECTED == hdmiHotPlugEvent)
-                {
-                    connectedDisplays.Add("HDMI0");
+            auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+            if (audio != nullptr) {
+                if (DSHelper::isHDMIAudioOutPortPresent()) {
+                    LOGINFO("HdmiOutPort present");
+                    // DS_IARM STB path: HDMI0 port, check connectivity before setting
+                    int32_t audioHandle = -1;
+                    bool connected = DSHelper::isAudioOutputPortConnected(audio, "HDMI0", audioHandle);
+                    if (INVALID_DS_HANDLE != audioHandle) {
+                        if (!connected) {
+                            LOGERR("setAudioAtmosOutputMode failure: HDMI0 not connected!\n");
+                            success = false;
+                        } else {
+                            Core::hresult comResult = audio->SetAudioAtmosOutputMode(audioHandle, enable);
+                            if (comResult != Core::ERROR_NONE) {
+                                LOGERR("SetAudioAtmosOutputMode failed, Error=%d", static_cast<int>(comResult));
+                                success = false;
+                            }
+                        }
+                    } else {
+                        LOGERR("audio port handle not found");
+                        success = false;
+                    }
+                } else {
+                    LOGINFO("HdmiOutPort NOT present");
+                    // DS_IARM TV path: device::Host::getInstance().setAudioAtmosOutputMode() — NULL handle (0)
+                    Core::hresult comResult = audio->SetAudioAtmosOutputMode(0, enable);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioAtmosOutputMode failed (TV), Error=%d", static_cast<int>(comResult));
+                        success = false;
+                    }
                 }
-                else
-                {
-                    /* notify Empty list on HDMI-output-disconnect hotplug */
+                audio->Release();
+            } else {
+                LOGERR("IDeviceSettingsAudio not available");
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setForceHDRMode(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "hdr_mode");
+
+        string sMode = parameters["hdr_mode"].String();
+        bool success = false;
+        {
+            uint32_t mode = getVideoFormatTypeFromString(sMode.c_str());
+            // DS_IARM: always uses DSHelper::getDefaultVideoPortName(); no videoPort parameter in original
+            string videoPort = parameters.HasLabel("videoPort") ? parameters["videoPort"].String() : DSHelper::getDefaultVideoPortName();
+            // DS_IARM: checks isDisplayConnected before calling setForceHDRMode
+            if (!isDisplayConnected(videoPort)) {
+                LOGERR("setForceHDRMode failure: display not connected on %s!\n", videoPort.c_str());
+            } else {
+                const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(videoPort);
+                if (INVALID_DS_HANDLE != videoHandle) {
+                    auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                    if (vp != nullptr) {
+                        Core::hresult comResult = vp->SetForceHDRMode(videoHandle, static_cast<Exchange::IDeviceSettingsVideoPort::HDRStandard>(mode));
+                        if (comResult == Core::ERROR_NONE) {
+                            success = true;
+                            LOGINFO("setForceHDRMode set successfully \n");
+                        } else {
+                            LOGERR("setForceHDRMode failed, Error=%d", static_cast<int>(comResult));
+                        }
+                        vp->Release();
+                    }
+                    else {
+                        LOGERR("IDeviceSettingsVideoPort not available");
+                    }
+                } else {
+                    LOGERR("setForceHDRMode failure: port %s not found!\n", videoPort.c_str());
                 }
-
-                JsonObject params;
-                params["connectedVideoDisplays"] = connectedDisplays;
-                sendNotify("connectedVideoDisplaysUpdated", params);
-
-            }
-            previousStatus = hdmiHotPlugEvent;
-            
-	    //If HDMI hotplug event occurs, DisplaySettings  re-evaluate whether it should be signalling ALLM output of the HDMI port
-	    std::string currentAllmState = "";
-            Utils::String::getSystemModePropertyValue("DEVICE_OPTIMIZE" ,"currentstate" , currentAllmState);
-            if(currentAllmState == "VIDEO" || currentAllmState == "GAME")
-            {
-                    Request(currentAllmState);
             }
         }
+        returnResponse(success);
+    }
 
-        void DisplaySettings::connectedAudioPortUpdated (int iAudioPortType, bool isPortConnected)
+    uint32_t DisplaySettings::getPreferredColorDepth(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:{"colorDepth":"10 Bit","success":true}
+        LOGINFOMETHOD();
+        // DS_IARM: device::Host::getInstance().DSHelper::getDefaultVideoPortName() for default
+        string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : DSHelper::getDefaultVideoPortName();
+        bool persist = parameters.HasLabel("persist") ? parameters["persist"].Boolean() : true;
+        bool success = true;
         {
-            JsonObject params;
-            string sPortName;
-            string sPortStatus;
-            switch (iAudioPortType)
-            {
-                case dsAUDIOPORT_TYPE_HDMI_ARC:
-                    params["HotpluggedAudioPort"] = "HDMI_ARC0";
-                    sPortName.assign ("HDMI_ARC0");
-                    break;
-                case dsAUDIOPORT_TYPE_HEADPHONE:
-                    params["HotpluggedAudioPort"] = "HEADPHONE0";
-                    sPortName.assign ("HEADPHONE0");
-                    break;
-
-                default:
-                    //do nothing
-                	break;
-            }
-
-            if (1 == isPortConnected)
-            {
-                params["isConnected"] = "connected";
-                sPortStatus.assign ("connected");
-            }
-            else
-            {
-                params["isConnected"] = "disconnected";
-                sPortStatus.assign ("disconnected");
-            }
-            LOGWARN ("Thunder sends notification %s audio port hotplug status %s", sPortName.c_str(), sPortStatus.c_str());
-            sendNotify("connectedAudioPortUpdated", params);
-        }
-
-        //End events
-
-        void DisplaySettings::getConnectedVideoDisplaysHelper(vector<string>& connectedDisplays)
-        {
-            try
-            {
-                device::List<device::VideoOutputPort> vPorts = device::Host::getInstance().getVideoOutputPorts();
-                for (size_t i = 0; i < vPorts.size(); i++)
-                {
-                    device::VideoOutputPort &vPort = vPorts.at(i);
-                    if (isDisplayConnected(vPort.getName()))
-                    {
-                        string displayName = vPort.getName();
-                        if (strncasecmp(displayName.c_str(), "hdmi", 4)==0)
-                        {
-                            connectedDisplays.clear();
-                            connectedDisplays.emplace_back(displayName);
+            const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(videoDisplay);
+            if (INVALID_DS_HANDLE != videoHandle) {
+                auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    DisplayColorDepth colorDepth = DisplayColorDepth::DS_DISPLAY_COLORDEPTH_UNKNOWN;
+                    Core::hresult comResult = vp->GetPreferredColorDepth(videoHandle, colorDepth, persist);
+                    if (comResult == Core::ERROR_NONE) {
+                        switch (colorDepth) {
+                        case DisplayColorDepth::DS_DISPLAY_COLORDEPTH_8BIT:
+                            response["colorDepth"] = "8 Bit";
+                            break;
+                        case DisplayColorDepth::DS_DISPLAY_COLORDEPTH_10BIT:
+                            response["colorDepth"] = "10 Bit";
+                            break;
+                        case DisplayColorDepth::DS_DISPLAY_COLORDEPTH_12BIT:
+                            response["colorDepth"] = "12 Bit";
+                            break;
+                        case DisplayColorDepth::DS_DISPLAY_COLORDEPTH_AUTO:
+                            response["colorDepth"] = "Auto";
+                            break;
+                        default:
+                            LOGERR("Unknown color depth value %d", static_cast<int>(colorDepth));
+                            success = false;
                             break;
                         }
-                        else
-                        {
-                            vectorSet(connectedDisplays, displayName);
+                    } else {
+                        LOGERR("GetPreferredColorDepth failed for '%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    vp->Release();
+                } else {
+                    LOGERR("IDeviceSettingsVideoPort not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("IDeviceSettingsVideoPort not available");
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setPreferredColorDepth(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response: {"success":true}
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "videoDisplay");
+        returnIfParamNotFound(parameters, "colorDepth");
+
+        string videoDisplay = parameters["videoDisplay"].String();
+        string strColorDepth = parameters["colorDepth"].String();
+
+        bool persist = parameters.HasLabel("persist") ? parameters["persist"].Boolean() : true;
+
+        bool success = true;
+        try {
+            const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(videoDisplay);
+            if (INVALID_DS_HANDLE != videoHandle) {
+                auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    Exchange::IDeviceSettingsVideoPort::DisplayColorDepth cd = Exchange::IDeviceSettingsVideoPort::DisplayColorDepth::DS_DISPLAY_COLORDEPTH_UNKNOWN;
+                    if (strColorDepth == "8 Bit")
+                        cd = Exchange::IDeviceSettingsVideoPort::DisplayColorDepth::DS_DISPLAY_COLORDEPTH_8BIT;
+                    else if (strColorDepth == "10 Bit")
+                        cd = Exchange::IDeviceSettingsVideoPort::DisplayColorDepth::DS_DISPLAY_COLORDEPTH_10BIT;
+                    else if (strColorDepth == "12 Bit")
+                        cd = Exchange::IDeviceSettingsVideoPort::DisplayColorDepth::DS_DISPLAY_COLORDEPTH_12BIT;
+                    else if (strColorDepth == "Auto")
+                        cd = Exchange::IDeviceSettingsVideoPort::DisplayColorDepth::DS_DISPLAY_COLORDEPTH_AUTO;
+
+                    if (cd != Exchange::IDeviceSettingsVideoPort::DisplayColorDepth::DS_DISPLAY_COLORDEPTH_UNKNOWN) {
+                        Core::hresult comResult = vp->SetPreferredColorDepth(videoHandle, cd, persist);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetPreferredColorDepth failed for videoDisplay='%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comResult));
+                            success = false;
                         }
+                    } else {
+                        LOGERR("UNKNOWN color depth: %s", strColorDepth.c_str());
+                        success = false;
+                    }
+                    vp->Release();
+                } else {
+                    LOGERR("IDeviceSettingsVideoPort not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get video port handle for videoDisplay='%s'", videoDisplay.c_str());
+                success = false;
+            }
+        } catch (const std::exception& err) {
+            LOGERR("setPreferredColorDepth exception: %s", err.what());
+            success = false;
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setAudioDucking(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        returnIfStringParamNotFound(parameters, "mode"); // "mute" | "attenuate" | "raw"
+
+        std::string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        std::string mode = parameters["mode"].String();
+
+        uint32_t action = 0; // STOP
+        uint32_t type = 0; // ABSOLUTE
+        uint8_t level = 100;
+
+        if (mode == "mute") {
+            returnIfBooleanParamNotFound(parameters, "mute");
+            bool mute = parameters["mute"].Boolean();
+
+            action = mute ? 0 : 1; // START(0) : STOP(1) — matches AUDIO_DUCKINGACTION_START=0
+            type = 0; // ABSOLUTE
+            level = mute ? 0 : 100;
+        } else if (mode == "attenuate") {
+            returnIfBooleanParamNotFound(parameters, "enable");
+            returnIfBooleanParamNotFound(parameters, "relative");
+            returnIfNumberParamNotFound(parameters, "volume"); // 0.0..1.0
+
+            bool enable = parameters["enable"].Boolean();
+            bool relative = parameters["relative"].Boolean();
+            double volume = parameters["volume"].Number();
+
+            if (volume < 0.0 || volume > 1.0) {
+                LOGERR("Invalid volume %f", volume);
+                returnResponse(false);
+            }
+
+            action = enable ? 0 : 1; // START(0) : STOP(1) — matches AUDIO_DUCKINGACTION_START=0
+            type = relative ? 1 : 0; // RELATIVE : ABSOLUTE
+            level = static_cast<uint8_t>((volume * 100.0) + 0.5);
+        } else if (mode == "raw") {
+            returnIfStringParamNotFound(parameters, "action"); // "start" | "stop"
+            returnIfStringParamNotFound(parameters, "duckingType"); // "absolute" | "relative"
+            returnIfNumberParamNotFound(parameters, "level"); // 0..100
+
+            std::string actionStr = parameters["action"].String();
+            std::string typeStr = parameters["duckingType"].String();
+
+            std::string levelStr = parameters["level"].String();
+            LOGINFO("setAudioDucking raw: level Content-type=%d String='%s' Number=%s",
+                (int)parameters["level"].Content(),
+                levelStr.c_str(),
+                std::to_string(parameters["level"].Number()).c_str());
+
+            // String() preserves the original token text in this Thunder version.
+            // Validate it is actually an unsigned integer before using Number().
+            if (!Utils::isValidUnsignedInt((char*)levelStr.c_str())) {
+                LOGERR("Invalid level value '%s': must be a non-negative integer 0..100", levelStr.c_str());
+                returnResponse(false);
+            }
+
+            int reqLevel = static_cast<int>(std::round(parameters["level"].Number()));
+
+            if (reqLevel < 0 || reqLevel > 100) {
+                LOGERR("Invalid level %d", reqLevel);
+                returnResponse(false);
+            }
+
+            if (actionStr == "start") {
+                action = 0; // AUDIO_DUCKINGACTION_START=0
+            } else if (actionStr == "stop") {
+                action = 1; // AUDIO_DUCKINGACTION_STOP=1
+            } else {
+                LOGERR("Invalid action %s", actionStr.c_str());
+                returnResponse(false);
+            }
+
+            if (typeStr == "absolute") {
+                type = 0; // ABSOLUTE
+            } else if (typeStr == "relative") {
+                type = 1; // RELATIVE
+            } else {
+                LOGERR("Invalid duckingType %s", typeStr.c_str());
+                returnResponse(false);
+            }
+
+            level = static_cast<uint8_t>(reqLevel);
+        } else {
+            LOGERR("Invalid mode %s", mode.c_str());
+            returnResponse(false);
+        }
+
+        bool success = true;
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->SetAudioDucking(audioHandle,
+                        static_cast<AudioDuckingType>(type),
+                        static_cast<AudioDuckingAction>(action),
+                        level);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioDucking failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setEnableVideoPort(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+
+        returnIfParamNotFound(parameters, "videoDisplay"); // e.g. "HDMI0"
+        returnIfBooleanParamNotFound(parameters, "enable"); // true | false
+
+        string videoDisplay = parameters["videoDisplay"].String();
+        bool enable = parameters["enable"].Boolean();
+
+        bool success = false;
+        {
+            // DS_IARM: only enable/disable if display is connected
+            if (!isDisplayConnected(videoDisplay)) {
+                LOGERR("display NOT connected on port %s", videoDisplay.c_str());
+            } else {
+                const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(videoDisplay);
+                if (INVALID_DS_HANDLE != videoHandle) {
+                    auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                    if (vp != nullptr) {
+                        Core::hresult comResult = vp->EnableVideoPort(videoHandle, enable);
+                        if (comResult == Core::ERROR_NONE) {
+                            success = true;
+                        } else {
+                            LOGERR("EnableVideoPort failed for videoDisplay='%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comResult));
+                        }
+                        vp->Release();
                     }
                 }
             }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getEnableVideoPort(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        returnIfStringParamNotFound(parameters, "videoDisplay");
+
+        string videoDisplay = parameters["videoDisplay"].String();
+        bool success = false;
+        {
+            const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(videoDisplay);
+            if (INVALID_DS_HANDLE != videoHandle) {
+                auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    bool enabled = false;
+                    Core::hresult comResult = vp->IsVideoPortEnabled(videoHandle, enabled);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["enable"] = enabled;
+                        success = true;
+                    }
+                    else {
+                        LOGERR("IsVideoPortEnabled failed for videoDisplay='%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comResult));
+                    }
+                    vp->Release();
+                }
+                else {
+                    LOGERR("IDeviceSettingsVideoPort not available");
+                }
+            }
+            else {
+                LOGERR("Failed to get video port handle for videoDisplay='%s'", videoDisplay.c_str());
             }
         }
+        returnResponse(success);
+    }
 
-        bool DisplaySettings::checkPortName(std::string& name) const
+    uint32_t DisplaySettings::getSupportedVideoCodingFormats(const JsonObject& parameters, JsonObject& response)
+    { // sample response: {"supportedFormats":["HEVC","H264","MPEG2"],"success":true}
+        LOGINFOMETHOD();
+        JsonArray supportedFormats;
+        bool success = false;
         {
-            if (Utils::String::stringContains(name,"HDMI")) {
-		if(Utils::String::stringContains(name,"HDMI_ARC"))
-                    name = "HDMI_ARC0";
-		else
-		    name = "HDMI0";
+            auto* vd = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+            if (vd != nullptr) {
+                int32_t formats = 0;
+                int videoDeviceHandle = DSHelper::getCachedVideoDeviceHandle(0); // DS_IARM: device::Host::getInstance().getVideoDeviceHandle(0)
+                if (INVALID_DS_HANDLE == videoDeviceHandle) {
+                    LOGERR("Failed to get video device handle for index 0");
+                }
+                else {
+                    Core::hresult comResult = vd->GetSupportedVideoCodingFormats(videoDeviceHandle, formats);
+                    if (comResult == Core::ERROR_NONE) {
+                        if (formats & static_cast<int32_t>(VideoCodec::DS_VIDEO_CODEC_MPEGHPART2))
+                            supportedFormats.Add("HEVC");
+                        if (formats & static_cast<int32_t>(VideoCodec::DS_VIDEO_CODEC_MPEG4PART10))
+                            supportedFormats.Add("H264");
+                        if (formats & static_cast<int32_t>(VideoCodec::DS_VIDEO_CODEC_MPEG2))
+                            supportedFormats.Add("MPEG2");
+                        success = true;
+                    }
+                    else {
+                        LOGERR("GetSupportedVideoCodingFormats failed, Error=%d", static_cast<int>(comResult));
+                    }
+                }
+                vd->Release();
             }
-            else if (Utils::String::stringContains(name,"SPDIF"))
-                name = "SPDIF0";
-            else if (Utils::String::stringContains(name,"IDLR"))
-                name = "IDLR0";
-            else if (Utils::String::stringContains(name,"SPEAKER"))
-                name = "SPEAKER0";
-            else if (Utils::String::stringContains(name,"HEADPHONE"))
-                name = "HEADPHONE0";
-            else if (!name.empty()) // Empty is allowed
-                return false;
+            else {
+                LOGERR("IDeviceSettingsVideoDevice not available");
+            }
+        }
+        response["supportedFormats"] = supportedFormats;
+        returnResponse(success);
+    }
 
-            return true;
+    // DS_IARM: mirrors static isValidCodecString() — maps codec name string to COM-RPC VideoCodec enum
+    static bool isValidCodecString(const string& codec, Exchange::IDeviceSettingsVideoDevice::VideoCodec& out)
+    {
+        if (codec == "MPEGH-Part2" || codec == "HEVC") {
+            out = Exchange::IDeviceSettingsVideoDevice::VideoCodec::DS_VIDEO_CODEC_MPEGHPART2;
+        } else if (codec == "MPEG4-Part10" || codec == "H264") {
+            out = Exchange::IDeviceSettingsVideoDevice::VideoCodec::DS_VIDEO_CODEC_MPEG4PART10;
+        } else if (codec == "MPEG2") {
+            out = Exchange::IDeviceSettingsVideoDevice::VideoCodec::DS_VIDEO_CODEC_MPEG2;
+        } else {
+            LOGERR("Unsupported codec string: %s", codec.c_str());
+            return false;
+        }
+        return true;
+    }
+
+    uint32_t DisplaySettings::getVideoCodecInfo(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+
+        string codec = "MPEGH-Part2"; // default keeps TR-069 behavior
+        if (parameters.HasLabel("codec")) {
+            codec = parameters["codec"].String();
         }
 
-        uint32_t DisplaySettings::resetDialogEnhancement(const JsonObject& parameters, JsonObject& response)
+        bool success = false;
+        // DS_IARM: isValidCodecString() validates and converts codec string before HAL call
+        Exchange::IDeviceSettingsVideoDevice::VideoCodec vc = Exchange::IDeviceSettingsVideoDevice::VideoCodec::DS_VIDEO_CODEC_MPEGHPART2;
+        if (!isValidCodecString(codec, vc)) {
+            LOGERR("Unsupported codec: %s. Allowed: MPEGH-Part2, HEVC, MPEG4-Part10, H264, MPEG2", codec.c_str());
+            returnResponse(success);
+        }
         {
-            LOGINFOMETHOD();
-            bool success = true;
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.resetDialogEnhancement();
+            auto* vd = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+            if (vd != nullptr) {
+                Exchange::IDeviceSettingsVideoDevice::IDeviceSettingsVideoCodecProfileSupportIterator* iter = nullptr;
+                int videoDeviceHandle = DSHelper::getCachedVideoDeviceHandle(0); // DS_IARM: device::Host::getInstance().getVideoDeviceHandle(0)
+                if (INVALID_DS_HANDLE == videoDeviceHandle) {
+                    LOGERR("Failed to get video device handle for index 0");
+                }
+                else {
+                    JsonArray entries;
+                    Core::hresult comResult = vd->GetCodecInfo(videoDeviceHandle, vc, iter);
+                    if (comResult == Core::ERROR_NONE && iter != nullptr) {
+                        Exchange::IDeviceSettingsVideoDevice::VideoCodecProfileSupport ps{};
+                        int entryIndex = 0;
+                        while (iter->Next(ps)) {
+                            JsonObject item;
+                            item["index"] = entryIndex + 1; // 1-based index (matches DS_IARM TR-069 usage)
+                            // DS_IARM: hevcProfileToString() maps enum → "MAIN"/"MAIN 10"/"MAIN STILL PICTURE"
+                            // for non-HEVC returns std::to_string(profile)
+                            if (vc == Exchange::IDeviceSettingsVideoDevice::VideoCodec::DS_VIDEO_CODEC_MPEGHPART2) {
+                                switch (ps.profile) {
+                                case Exchange::IDeviceSettingsVideoDevice::VideoCodecHEVCProfile::DS_VIDEO_CODEC_HEVC_PROFILE_MAIN:
+                                    item["profile"] = string("MAIN");
+                                    break;
+                                case Exchange::IDeviceSettingsVideoDevice::VideoCodecHEVCProfile::DS_VIDEO_CODEC_HEVC_PROFILE_MAIN10:
+                                    item["profile"] = string("MAIN 10");
+                                    break;
+                                case Exchange::IDeviceSettingsVideoDevice::VideoCodecHEVCProfile::DS_VIDEO_CODEC_HEVC_PROFILE_MAIN_STILLPICTURE:
+                                    item["profile"] = string("MAIN STILL PICTURE");
+                                    break;
+                                default:
+                                    item["profile"] = string("UNKNOWN");
+                                    break;
+                                }
+                            } else {
+                                item["profile"] = std::to_string(static_cast<int>(ps.profile));
+                            }
+                            item["level"] = ps.level;
+                            entries.Add(item);
+                            entryIndex++;
+                        }
+                        iter->Release();
+                    }
+                    else {
+                        LOGERR("GetCodecInfo failed for codec='%s', Error=%d", codec.c_str(), static_cast<int>(comResult));
+                    }
+                    response["numberOfEntries"] = static_cast<int>(entries.Length());
+                    response["entries"] = entries;
+                    success = true;
+                }
+                vd->Release();
             }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
-                success = false;
+            else {
+                LOGERR("IDeviceSettingsVideoDevice not available");
             }
+        }
+        returnResponse(success);
+    }
+
+    // DS_IARM equivalent: encodingToString(int enc) — extended with EAC3 present in COM-RPC
+    static const char* encodingToString(Exchange::IDeviceSettingsAudio::AudioEncoding enc)
+    {
+        switch (enc) {
+        case Exchange::IDeviceSettingsAudio::AudioEncoding::AUDIO_ENCODING_NONE:
+            return "NONE";
+        case Exchange::IDeviceSettingsAudio::AudioEncoding::AUDIO_ENCODING_DISPLAY:
+            return "DISPLAY";
+        case Exchange::IDeviceSettingsAudio::AudioEncoding::AUDIO_ENCODING_PCM:
+            return "PCM";
+        case Exchange::IDeviceSettingsAudio::AudioEncoding::AUDIO_ENCODING_AC3:
+            return "AC3";
+        case Exchange::IDeviceSettingsAudio::AudioEncoding::AUDIO_ENCODING_EAC3:
+            return "EAC3";
+        default:
+            return "UNKNOWN";
+        }
+    }
+
+    uint32_t DisplaySettings::getAudioEncoding(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+
+        string audioPort;
+        audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        if (audioPort.empty()) {
+            LOGERR("Invalid audioPort");
+            returnResponse(false);
+        }
+
+        bool success = false;
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Exchange::IDeviceSettingsAudio::AudioEncoding enc = Exchange::IDeviceSettingsAudio::AudioEncoding::AUDIO_ENCODING_NONE;
+                    Core::hresult comResult = audio->GetAudioEncoding(audioHandle, enc);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["audioPort"] = audioPort;
+                        response["encoding"] = encodingToString(enc);
+                        response["encodingId"] = static_cast<int>(enc);
+                        success = true;
+                    }
+                    else {
+                        LOGERR("GetAudioEncoding failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                    }
+                    audio->Release();
+                }
+                else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                }
+            }
+            else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setAudioEncoding(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+
+        returnIfStringParamNotFound(parameters, "encoding");
+        string encoding = parameters["encoding"].String();
+
+        bool success = false;
+
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        if (audioPort.empty()) {
             returnResponse(success);
         }
 
-        uint32_t DisplaySettings::resetBassEnhancer(const JsonObject& parameters, JsonObject& response)
         {
-            LOGINFOMETHOD();
-            bool success = true;
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.resetBassEnhancer();
-            }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
-                success = false;
-            }
+            // SetAudioEncoding not available in COM-RPC interface
+            LOGWARN("[COMRPC Unavailable] setAudioEncoding: COM-RPC SetAudioEncoding not supported");
+            (void)encoding;
+            (void)audioPort;
+        }
+
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getDisplayAspectRatio(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+
+        bool success = false;
+        // DS_IARM: defaults to DSHelper::getDefaultVideoPortName(), checks isDisplayConnected before querying
+        const std::string defaultVP = DSHelper::getDefaultVideoPortName();
+        string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : defaultVP;
+        if (!isDisplayConnected(videoDisplay)) {
+            LOGWARN("getDisplayAspectRatio: display not connected on port: %s", videoDisplay.c_str());
             returnResponse(success);
         }
-
-        uint32_t DisplaySettings::resetSurroundVirtualizer(const JsonObject& parameters, JsonObject& response)
         {
-            LOGINFOMETHOD();
-            bool success = true;
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.resetSurroundVirtualizer();
+            const int32_t displayHandle = DSHelper::getCachedDisplayHandle(videoDisplay);
+            if (INVALID_DS_HANDLE != displayHandle) {
+                auto* disp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+                if (disp != nullptr) {
+                    Exchange::IDeviceSettingsDisplay::DisplayVideoAspectRatio ar = Exchange::IDeviceSettingsDisplay::DisplayVideoAspectRatio::DS_DISPLAY_ASPECT_RATIO_16X9;
+                    Core::hresult comResult = disp->GetDisplayAspectRatio(displayHandle, ar);
+                    if (comResult == Core::ERROR_NONE) {
+                        string aspectRatioName;
+                        switch (ar) {
+                        case Exchange::IDeviceSettingsDisplay::DisplayVideoAspectRatio::DS_DISPLAY_ASPECT_RATIO_4X3:
+                            aspectRatioName = "4x3";
+                            break;
+                        case Exchange::IDeviceSettingsDisplay::DisplayVideoAspectRatio::DS_DISPLAY_ASPECT_RATIO_16X9:
+                            aspectRatioName = "16x9";
+                            break;
+                        default:
+                            aspectRatioName = "Unknown";
+                            break;
+                        }
+                        response["aspectRatio"] = aspectRatioName;
+                        response["aspectRatioValue"] = static_cast<int>(ar);
+                        success = true;
+                    }
+                    else {
+                        LOGERR("GetDisplayAspectRatio failed for videoDisplay='%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comResult));
+                    }
+                    disp->Release();
+                }
+                else {
+                    LOGERR("IDeviceSettingsDisplay not available");
+                }
             }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
+            else {
+                LOGERR("Failed to get display handle for videoDisplay='%s'", videoDisplay.c_str());
+            }
+        }
+
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getColorDepthCapabilities(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:{"success":true,"capabilities":["8 Bit","10 Bit","12 Bit","Auto"]}
+        LOGINFOMETHOD();
+        // DS_IARM: device::Host::getInstance().DSHelper::getDefaultVideoPortName() for default
+        string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : DSHelper::getDefaultVideoPortName();
+        vector<string> colorDepthCapabilities;
+        {
+            const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(videoDisplay);
+            if (INVALID_DS_HANDLE != videoHandle) {
+                auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    uint32_t capabilities = 0;
+                    Core::hresult comResult = vp->GetColorDepthCapabilities(videoHandle, capabilities);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("GetColorDepthCapabilities failed for videoDisplay='%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comResult));
+                    }
+                    if (!capabilities)
+                        colorDepthCapabilities.emplace_back("none");
+                    if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_8BIT))
+                        colorDepthCapabilities.emplace_back("8 Bit");
+                    if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_10BIT))
+                        colorDepthCapabilities.emplace_back("10 Bit");
+                    if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_12BIT))
+                        colorDepthCapabilities.emplace_back("12 Bit");
+                    if (capabilities & static_cast<uint32_t>(DisplayColorDepth::DS_DISPLAY_COLORDEPTH_AUTO))
+                        colorDepthCapabilities.emplace_back("Auto");
+                    vp->Release();
+                }
+                else {
+                    LOGERR("IDeviceSettingsVideoPort not available");
+                }
+            }
+            else {
+                LOGERR("Failed to get video port handle for videoDisplay='%s'", videoDisplay.c_str());
+            }
+        }
+        setResponseArray(response, "capabilities", colorDepthCapabilities);
+        returnResponse(true);
+    }
+
+    uint32_t DisplaySettings::getSupportedMS12Config(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+        std::string type;
+        {
+            auto* host = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsHost>();
+            if (host != nullptr) {
+                Core::hresult comResult = host->GetMS12ConfigType(type);
+                if (comResult == Core::ERROR_NONE) {
+                    LOGINFO("Platform supports MS12 Config Z\n");
+                    response["ms12config"] = type;
+                } else {
+                    LOGERR("GetMS12ConfigType failed, Error=%d", static_cast<int>(comResult));
+                    success = false;
+                }
+                host->Release();
+            } else {
+                LOGERR("IDeviceSettingsHost not available");
                 success = false;
             }
-            returnResponse(success);
+        }
+        returnResponse(success);
+    }
+
+    bool DisplaySettings::setUpHdmiCecSinkArcRouting(bool arcEnable)
+    {
+        bool success = true;
+
+        PluginHost::IShell::state state;
+        if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
+            LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
+
+            getHdmiCecSinkPlugin();
+            if (!m_client) {
+                LOGERR("HdmiCecSink Initialisation failed\n");
+            } else {
+                JsonObject hdmiCecSinkResult;
+                JsonObject param;
+
+                if (arcEnable) {
+                    param["enabled"] = true;
+                } else {
+                    param["enabled"] = false;
+                }
+
+                LOGINFO("ARC Routing - %d \n", arcEnable);
+                {
+                    Utils::Synchro::UnlockApiGuard<DisplaySettings> unlockApi;
+                    m_client->Invoke<JsonObject, JsonObject>(2000, "setupARCRouting", param, hdmiCecSinkResult);
+                }
+                if (!hdmiCecSinkResult["success"].Boolean()) {
+                    success = false;
+                    LOGERR("HdmiCecSink Plugin returned error\n");
+                }
+            }
+        } else {
+            success = false;
+            LOGERR("HdmiCecSink plugin not ready\n");
         }
 
-        uint32_t DisplaySettings::resetVolumeLeveller(const JsonObject& parameters, JsonObject& response)
-        {
-            LOGINFOMETHOD();
-            bool success = true;
-            string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
-            try
-            {
-                device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-                aPort.resetVolumeLeveller();
+        return success;
+    }
+
+    bool DisplaySettings::getHdmiCecSinkCecEnableStatus()
+    {
+        bool cecEnable = false;
+
+        PluginHost::IShell::state state;
+        if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
+            LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
+
+            getHdmiCecSinkPlugin();
+            if (!m_client) {
+                LOGERR("HdmiCecSink Initialisation failed\n");
+            } else {
+                JsonObject hdmiCecSinkResult;
+                JsonObject param;
+                {
+                    Utils::Synchro::UnlockApiGuard<DisplaySettings> unlockApi;
+                    m_client->Invoke<JsonObject, JsonObject>(2000, "getEnabled", param, hdmiCecSinkResult);
+                }
+
+                cecEnable = hdmiCecSinkResult["enabled"].Boolean();
+                LOGINFO("get-cecEnabled [%d]\n", cecEnable);
+
+                if (!hdmiCecSinkResult["success"].Boolean()) {
+                    LOGERR("HdmiCecSink Plugin returned error\n");
+                }
             }
-            catch (const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION1(audioPort);
+        } else {
+            LOGERR("HdmiCecSink plugin not ready\n");
+        }
+        return cecEnable;
+    }
+
+    bool DisplaySettings::getHdmiCecSinkAudioDeviceConnectedStatus()
+    {
+        bool hdmiAudioDeviceDetected = false;
+
+        PluginHost::IShell::state state;
+        if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
+            LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
+
+            getHdmiCecSinkPlugin();
+            if (!m_client) {
+                LOGERR("HdmiCecSink Initialisation failed\n");
+            } else {
+                JsonObject hdmiCecSinkResult;
+                JsonObject param;
+
+                {
+                    Utils::Synchro::UnlockApiGuard<DisplaySettings> unlockApi;
+                    m_client->Invoke<JsonObject, JsonObject>(2000, "getAudioDeviceConnectedStatus", param, hdmiCecSinkResult);
+                }
+
+                hdmiAudioDeviceDetected = hdmiCecSinkResult["connected"].Boolean();
+                LOGINFO("getAudioDeviceConnectedStatus [%d]\n", hdmiAudioDeviceDetected);
+
+                if (!hdmiCecSinkResult["success"].Boolean()) {
+                    LOGERR("HdmiCecSink Plugin returned error\n");
+                }
+            }
+        } else {
+            LOGERR("HdmiCecSink plugin not ready\n");
+        }
+        return hdmiAudioDeviceDetected;
+    }
+
+    bool DisplaySettings::sendHdmiCecSinkAudioDevicePowerOn()
+    {
+        bool success = true;
+
+        PluginHost::IShell::state state;
+        if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
+            LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
+
+            getHdmiCecSinkPlugin();
+            if (!m_client) {
+                LOGERR("HdmiCecSink Initialisation failed\n");
+            } else {
+                JsonObject hdmiCecSinkResult;
+                JsonObject param;
+
+                LOGINFO("Send Audio Device Power On !!!\n");
+                {
+                    Utils::Synchro::UnlockApiGuard<DisplaySettings> unlockApi;
+                    m_client->Invoke<JsonObject, JsonObject>(2000, "sendAudioDevicePowerOnMessage", param, hdmiCecSinkResult);
+                }
+                if (!hdmiCecSinkResult["success"].Boolean()) {
+                    success = false;
+                    LOGERR("HdmiCecSink Plugin returned error\n");
+                }
+            }
+        } else {
+            success = false;
+            LOGERR("HdmiCecSink plugin not ready\n");
+        }
+
+        return success;
+    }
+
+    bool DisplaySettings::requestShortAudioDescriptor()
+    {
+        bool success = true;
+
+        PluginHost::IShell::state state;
+        if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
+            LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
+
+            getHdmiCecSinkPlugin();
+            if (!m_client) {
+                LOGERR("HdmiCecSink plugin not accessible\n");
+            } else {
+                JsonObject hdmiCecSinkResult;
+                JsonObject param;
+
+                LOGINFO("Requesting Short Audio Descriptor \n");
+                {
+                    Utils::Synchro::UnlockApiGuard<DisplaySettings> unlockApi;
+                    m_client->Invoke<JsonObject, JsonObject>(2000, "requestShortAudioDescriptor", param, hdmiCecSinkResult);
+                }
+                if (!hdmiCecSinkResult["success"].Boolean()) {
+                    success = false;
+                    LOGERR("HdmiCecSink Plugin returned error\n");
+                }
+            }
+        } else {
+            success = false;
+            LOGERR("HdmiCecSink plugin not ready\n");
+        }
+
+        return success;
+    }
+
+    bool DisplaySettings::requestAudioDevicePowerStatus()
+    {
+        bool success = true;
+
+        PluginHost::IShell::state state;
+        if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
+            LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
+
+            getHdmiCecSinkPlugin();
+            if (!m_client) {
+                LOGERR("HdmiCecSink plugin not accessible\n");
+            } else {
+                JsonObject hdmiCecSinkResult;
+                JsonObject param;
+
+                LOGINFO("Requesting Audio Device power Status \n");
+                {
+                    Utils::Synchro::UnlockApiGuard<DisplaySettings> unlockApi;
+                    m_client->Invoke<JsonObject, JsonObject>(2000, "requestAudioDevicePowerStatus", param, hdmiCecSinkResult);
+                }
+                if (!hdmiCecSinkResult["success"].Boolean()) {
+                    success = false;
+                    LOGERR("HdmiCecSink Plugin returned error\n");
+                }
+            }
+        } else {
+            success = false;
+            LOGERR("HdmiCecSink plugin not ready\n");
+        }
+
+        return success;
+    }
+
+    bool DisplaySettings::requestDeviceAudioStatus()
+    {
+        bool success = true;
+
+        PluginHost::IShell::state state;
+        if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
+            LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
+
+            getHdmiCecSinkPlugin();
+            if (!m_client) {
+                LOGERR("HdmiCecSink plugin not accessible\n");
+            } else {
+                JsonObject hdmiCecSinkResult;
+                JsonObject param;
+
+                LOGINFO("Requesting Audio Status \n");
+                {
+                    Utils::Synchro::UnlockApiGuard<DisplaySettings> unlockApi;
+                    m_client->Invoke<JsonObject, JsonObject>(2000, "sendGetAudioStatusMessage", param, hdmiCecSinkResult);
+                }
+                if (!hdmiCecSinkResult["success"].Boolean()) {
+                    success = false;
+                    LOGERR("HdmiCecSink Plugin returned error\n");
+                }
+            }
+        } else {
+            success = false;
+            LOGERR("HdmiCecSink plugin not ready\n");
+        }
+
+        return success;
+    }
+
+    bool DisplaySettings::sendUserControlPressCommand(int keyCode)
+    {
+        bool success = true;
+
+        PluginHost::IShell::state state;
+        if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
+            LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
+
+            getHdmiCecSinkPlugin();
+            if (!m_client) {
+                LOGERR("HdmiCecSink plugin not accessible\n");
+            } else {
+                JsonObject hdmiCecSinkResult;
+                JsonObject param;
+                param["logicalAddress"] = 5;
+                param["keyCode"] = keyCode;
+
+                LOGINFO(" Send mute key code \n");
+                {
+                    Utils::Synchro::UnlockApiGuard<DisplaySettings> unlockApi;
+                    m_client->Invoke<JsonObject, JsonObject>(2000, "sendUserControlPressed", param, hdmiCecSinkResult);
+                }
+                if (!hdmiCecSinkResult["success"].Boolean()) {
+                    success = false;
+                    LOGERR("HdmiCecSink Plugin returned error\n");
+                }
+            }
+        } else {
+            success = false;
+            LOGERR("HdmiCecSink plugin not ready\n");
+        }
+
+        return success;
+    }
+
+    uint32_t DisplaySettings::setEnableAudioPort(const JsonObject& parameters, JsonObject& response)
+    { // TODO: Handle other audio ports. Currently only supports HDMI ARC/eARC
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "audioPort");
+
+        bool success = true;
+        string audioPort = parameters["audioPort"].String();
+
+        returnIfParamNotFound(parameters, "enable");
+        string spEnable = parameters["enable"].String();
+        bool pEnable = false;
+        if (!TryGetBoolParam(parameters, "enable", pEnable)) {
+                LOGWARN("enable invalid: '%s' (expected true/false)", spEnable.c_str());
+            returnResponse(false);
+        }
+
+        if (true == pEnable && WPEFramework::Exchange::IPowerManager::POWER_STATE_STANDBY == getSystemPowerState()) {
+            LOGWARN("Ignoring the setEnableAudioPort(true) request based on the power state");
+            returnResponse(false);
+        }
+
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    // Always persist the user's intent (replaces libds aPort.setEnablePersist)
+                    Core::hresult comResult = audio->SetAudioEnablePersist(audioHandle, pEnable, audioPort);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAudioEnablePersist failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                    }
+
+                    LOGWARN("Calling DisplaySettings::setEnableAudioPort audioPort:%s pEnable:%d \n", audioPort.c_str(), pEnable);
+
+                    if (audioPort != "HDMI_ARC0") {
+                        // Non-ARC ports: direct enable/disable (replaces libds aPort.setEnablePort)
+                        comResult = audio->EnableAudioPort(audioHandle, pEnable);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGWARN("DisplaySettings::setEnableAudioPort EnableAudioPort failed, Error=%d\n", static_cast<int>(comResult));
+                            success = false;
+                        } else {
+                            // DS_IARM: re-applies mute state after successfully enabling a non-ARC port
+                            // (else if (aPort.isMuted()) { aPort.setMuted(true); })
+                            bool muted = false;
+                            comResult = audio->IsAudioMuted(audioHandle, muted);
+                            if (comResult == Core::ERROR_NONE && muted) {
+                                LOGWARN("DisplaySettings::setEnableAudioPort: re-applying mute state\n");
+                                comResult = audio->SetAudioMute(audioHandle, true);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGWARN("SetAudioMute failed, Error=%d\n", static_cast<int>(comResult));
+                                }
+                            }
+                            else {
+                                LOGWARN("IsAudioMuted failed, Error=%d\n", static_cast<int>(comResult));
+                            }
+                        }
+                    } else {
+                        // HDMI_ARC0: ARC/eARC routing logic (replaces libds aPort.enableARC)
+                        bool deviceConnected = false;
+                        int32_t deviceType = 0;
+                        {
+                            std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                            deviceConnected = m_hdmiInAudioDeviceConnected;
+                            deviceType = m_hdmiInAudioDeviceType;
+                        }
+                        LOGINFO(" %s: m_hdmiInAudioDeviceConnected: %d , pEnable: %d \n", __FUNCTION__, deviceConnected, pEnable);
+                        if (pEnable) {
+                            if (deviceConnected == true) {
+                                if (deviceType == static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_EARC)) {
+                                    // eARC case
+                                    if (m_arcEarcAudioEnabled == false) {
+                                        LOGINFO("DisplaySettings::setEnableAudioPort Enable eARC !!!");
+                                        Exchange::IDeviceSettingsAudio::AudioARCStatus arcSt;
+                                        arcSt.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_EARC;
+                                        arcSt.status = true;
+                                        comResult = audio->EnableARC(audioHandle, arcSt);
+                                        if (comResult != Core::ERROR_NONE) {
+                                            LOGWARN("EnableARC failed for eARC, Error=%d\n", static_cast<int>(comResult));
+                                        }
+                                        else {
+                                            LOGINFO("EnableARC success for eARC\n");
+                                        }
+                                        m_arcEarcAudioEnabled = true;
+                                    } else {
+                                        LOGINFO("eARC is already enabled. m_arcEarcAudioEnabled=%d\n", m_arcEarcAudioEnabled);
+                                    }
+                                } else if (deviceType == static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC)) {
+                                    // ARC case
+                                    if (m_arcEarcAudioEnabled == false) {
+                                        LOGINFO("%s: Audio Port : [HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n", __FUNCTION__);
+                                        sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
+                                        // Get stereo mode to decide if SAD is needed
+                                        Exchange::IDeviceSettingsAudio::StereoMode comRpcMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
+                                        int32_t comRpcStereoAuto = 0;
+                                        comResult = audio->GetStereoMode(audioHandle, comRpcMode, false);
+                                        if (comResult != Core::ERROR_NONE) {
+                                            LOGWARN("GetStereoMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                        }
+                                        comResult = audio->GetStereoAuto(audioHandle, comRpcStereoAuto);
+                                        if (comResult != Core::ERROR_NONE) {
+                                            LOGWARN("GetStereoAuto failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                        }
+                                        if ((comRpcMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH) || (comRpcStereoAuto != 0)) {
+                                            int currentSADState = getAudioDeviceSADState();
+                                            switch (currentSADState) {
+                                            case AUDIO_DEVICE_SAD_UPDATED: {
+                                                LOGINFO("%s: Enable ARC...\n", __FUNCTION__);
+                                                Exchange::IDeviceSettingsAudio::AudioARCStatus arcSt2;
+                                                arcSt2.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
+                                                arcSt2.status = true;
+                                                comResult = audio->EnableARC(audioHandle, arcSt2);
+                                                if (comResult != Core::ERROR_NONE) {
+                                                    LOGWARN("EnableARC failed for eARC, Error=%d\n", static_cast<int>(comResult));
+                                                } else {
+                                                    LOGINFO("EnableARC success for eARC\n");
+                                                    m_arcEarcAudioEnabled = true;
+                                                }
+                                                break;
+                                            }
+                                            case AUDIO_DEVICE_SAD_RECEIVED: {
+                                                LOGINFO("%s: Update Audio device SAD\n", __FUNCTION__);
+                                                setAudioDeviceSADState(AUDIO_DEVICE_SAD_UPDATED);
+                                                std::vector<uint8_t> sadBytes(sad_list.begin(), sad_list.end());
+                                                comResult = audio->SetSAD(audioHandle, sadBytes.data(), static_cast<uint8_t>(sadBytes.size()));
+                                                if (comResult != Core::ERROR_NONE) {
+                                                    LOGWARN("SetSAD failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                                }
+
+                                                if (comRpcStereoAuto != 0) {
+                                                    comResult = audio->SetStereoAuto(audioHandle, 1, true);
+                                                    if (comResult != Core::ERROR_NONE) {
+                                                        LOGWARN("SetStereoAuto failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                                    }
+                                                } else {
+                                                    comResult = audio->SetStereoMode(audioHandle, comRpcMode, true);
+                                                    if (comResult != Core::ERROR_NONE) {
+                                                        LOGWARN("SetStereoMode failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                                    }
+                                                }
+                                                LOGINFO("%s: Enable ARC...\n", __FUNCTION__);
+                                                Exchange::IDeviceSettingsAudio::AudioARCStatus arcSt3;
+                                                arcSt3.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
+                                                arcSt3.status = true;
+                                                comResult = audio->EnableARC(audioHandle, arcSt3);
+                                                if (comResult != Core::ERROR_NONE) {
+                                                    LOGWARN("EnableARC failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                                } else {
+                                                    LOGINFO("EnableARC success for audioPort='%s'\n", audioPort.c_str());
+                                                    m_arcEarcAudioEnabled = true;
+                                                }
+                                                break;
+                                            }
+                                            case AUDIO_DEVICE_SAD_REQUESTED: {
+                                                if (!m_SADDetectionTimer.isActive()) {
+                                                    m_SADDetectionTimer.start(SAD_UPDATE_CHECK_TIME_IN_MILLISECONDS);
+                                                    LOGINFO("%s: SAD pending, starting timer for %d ms", __FUNCTION__, SAD_UPDATE_CHECK_TIME_IN_MILLISECONDS);
+                                                }
+                                                LOGINFO("%s: Audio Device SAD is pending, route audio after SAD update\n", __FUNCTION__);
+                                                break;
+                                            }
+                                            default:
+                                                LOGINFO("Incorrect Audio Device SAD state %d\n", currentSADState);
+                                                break;
+                                            }
+                                        } else {
+                                            // PCM mode — no SAD needed, enable ARC directly
+                                            Exchange::IDeviceSettingsAudio::AudioARCStatus arcSt4;
+                                            arcSt4.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
+                                            arcSt4.status = true;
+                                            audio->EnableARC(audioHandle, arcSt4);
+                                            comResult = audio->EnableARC(audioHandle, arcSt4);
+                                            if (comResult != Core::ERROR_NONE) {
+                                                LOGWARN("EnableARC failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                            } else {
+                                                LOGINFO("EnableARC success for audioPort='%s'\n", audioPort.c_str());
+                                                m_arcEarcAudioEnabled = true;
+                                            }
+                                        }
+                                    } else {
+                                        LOGINFO("ARC/eARC audio already enabled. m_arcEarcAudioEnabled=%d\n", m_arcEarcAudioEnabled);
+                                    }
+                                } else {
+                                    LOGWARN("DisplaySettings::setEnableAudioPort Connected device doesn't have ARC/eARC capability\n");
+                                }
+                            } else { // m_hdmiInAudioDeviceConnected == false
+                                LOGWARN("Audio device may be unplugged, not routing, m_hdmiInAudioDeviceConnected=%d\n", deviceConnected);
+                                success = false;
+                            }
+                        } else { // pEnable == false
+                            if (m_arcEarcAudioEnabled == true) {
+                                if (deviceType == static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_EARC)) {
+                                    Exchange::IDeviceSettingsAudio::AudioARCStatus arcSt5;
+                                    arcSt5.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_EARC;
+                                    arcSt5.status = false;
+                                    comResult = audio->EnableARC(audioHandle, arcSt5);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGWARN("Disable eARC failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                    } else {
+                                        LOGINFO("Disable eARC success for audioPort='%s'\n", audioPort.c_str());
+                                        m_arcEarcAudioEnabled = false;
+                                    }
+                                    if (!deviceConnected) {
+                                        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                                        if (!m_hdmiInAudioDeviceConnected) {
+                                            m_hdmiInAudioDeviceType = 0; // dsAUDIOARCSUPPORT_NONE
+                                        }
+                                    }
+                                } else if (deviceType == static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC)) {
+                                    Exchange::IDeviceSettingsAudio::AudioARCStatus arcSt6;
+                                    arcSt6.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
+                                    arcSt6.status = false;
+                                    comResult = audio->EnableARC(audioHandle, arcSt6);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGWARN("Disable ARC failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                                    } else {
+                                        LOGINFO("Disable ARC success for audioPort='%s'\n", audioPort.c_str());
+                                        m_arcEarcAudioEnabled = false;
+                                    }
+                                    if (!deviceConnected) {
+                                        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                                        if (!m_hdmiInAudioDeviceConnected) {
+                                            m_hdmiInAudioDeviceType = 0; // dsAUDIOARCSUPPORT_NONE
+                                        }
+                                    }
+                                } else {
+                                    LOGWARN("DisplaySettings::setEnableAudioPort No ARC/eARC capability to disable\n");
+                                }
+                            } else {
+                                LOGWARN("ARC/eARC audio already disabled. m_arcEarcAudioEnabled=%d\n", m_arcEarcAudioEnabled);
+                            }
+                        }
+                        // Always update HDMI_ARC config (replaces libds m_audioOutputPortConfig update)
+                        m_audioOutputPortConfig["HDMI_ARC"] = pEnable;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("audio port '%s' handle not found", audioPort.c_str());
                 success = false;
             }
-            returnResponse(success);
         }
-        uint32_t DisplaySettings::getVideoFormat(const JsonObject& parameters, JsonObject& response)
-        {   //sample servicemanager response:{"currentVideoFormat":"SDR","supportedVideoFormat":["SDR","HDR10","HLG","DV","Technicolor Prime"],"success":true}
-            LOGINFOMETHOD();
+        if (audioPortEnableStatusMap[audioPort] != pEnable) {
+            JsonObject params;
+            audioPortEnableStatusMap[audioPort] = pEnable;
+            params["audioPort"] = audioPort;
+            params["enable"] = pEnable;
+            sendNotify("audioPortEnableStatusChanged", params);
+        }
+        returnResponse(success);
+    }
 
-            try
-            {
-                std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
-                device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
-                if (isDisplayConnected(vPort.getName()))
-                {
-                    int _eotf = vPort.getVideoEOTF();
-                    response["currentVideoFormat"] = getVideoFormatTypeToString((dsHDRStandard_t)_eotf);
+    void DisplaySettings::checkSADUpdate()
+    {
+        // COM-RPC path: replaces libds calls with IDeviceSettingsAudio COM-RPC methods
+        LOGINFO("Inside checkSADUpdate (COM-RPC)\n");
+        std::lock_guard<std::mutex> lock(m_SadMutex);
+        bool arcEarcAudioEnabled = false;
+        bool hdmiInAudioDeviceConnected = false;
+        {
+            std::lock_guard<std::mutex> arcLock(m_AudioDeviceStatesUpdateMutex);
+            arcEarcAudioEnabled = m_arcEarcAudioEnabled;
+            hdmiInAudioDeviceConnected = m_hdmiInAudioDeviceConnected;
+        }
+        LOGINFO("m_AudioDeviceSADState = %d, m_arcEarcAudioEnabled = %d, m_hdmiInAudioDeviceConnected = %d\n",
+            m_AudioDeviceSADState, arcEarcAudioEnabled, hdmiInAudioDeviceConnected);
+        if (m_SADDetectionTimer.isActive()) {
+            m_SADDetectionTimer.stop();
+        }
+        if (!arcEarcAudioEnabled && hdmiInAudioDeviceConnected) {
+            if (m_AudioDeviceSADState == AUDIO_DEVICE_SAD_RECEIVED) {
+                m_AudioDeviceSADState = AUDIO_DEVICE_SAD_UPDATED;
+                const int32_t audioHandle = DSHelper::getCachedAudioPortHandle("HDMI_ARC0");
+                if (INVALID_DS_HANDLE != audioHandle) {
+                    auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        // Build flat SAD array from sad_list
+                        std::vector<uint8_t> sadArray(sad_list.begin(), sad_list.end());
+                        Core::hresult comResult = audio->SetSAD(audioHandle, sadArray.data(), static_cast<uint8_t>(sadArray.size()));
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGWARN("SetSAD failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                        }
+
+                        int32_t stereoAutoMode = 0;
+                        comResult = audio->GetStereoAuto(audioHandle, stereoAutoMode);
+                        if (comResult == Core::ERROR_NONE && stereoAutoMode != 0) {
+                            comResult = audio->SetStereoAuto(audioHandle, 1, true);
+                            if (comResult != Core::ERROR_NONE) {
+                                LOGWARN("SetStereoAuto failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                            }
+                        } else {
+                            Exchange::IDeviceSettingsAudio::StereoMode mode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
+                            comResult = audio->GetStereoMode(audioHandle, mode, false);
+                            if (comResult == Core::ERROR_NONE) {
+                                comResult = audio->SetStereoMode(audioHandle, mode, true);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGWARN("SetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                                }
+                            } else {
+                                LOGWARN("GetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                            }
+                        }
+                        audio->Release();
+                    }
                 }
-                else
-                {
-                    response["currentVideoFormat"] = "NONE";
+                LOGINFO("SAD is updated m_AudioDeviceSADState = %d\n", m_AudioDeviceSADState);
+            } else {
+                if (m_requestSadRetrigger == false) {
+                    LOGINFO("Not recieved SAD update after 3sec timeout, retriggering the SAD request and starting the timer for 3 seconds\n");
+                    m_requestSadRetrigger = true;
+                    sendMsgToQueue(REQUEST_SHORT_AUDIO_DESCRIPTOR, NULL);
+                    m_AudioDeviceSADState = AUDIO_DEVICE_SAD_REQUESTED;
+                    m_SADDetectionTimer.start(SAD_UPDATE_CHECK_TIME_IN_MILLISECONDS);
+                } else {
+                    LOGINFO("Not recieved SAD update even after retriggering the SAD request, proceeding with default SAD\n");
+                    m_requestSadRetrigger = false;
                 }
-
-	    }
-	    catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-                response["currentVideoFormat"] = "NONE";
             }
-
-
-            response["supportedVideoFormat"] = getSupportedVideoFormats();
-            returnResponse(true);
-        }
-
-        JsonArray DisplaySettings::getSupportedVideoFormats()
-        {
-            JsonArray videoFormats;
-            int capabilities = dsHDRSTANDARD_NONE;
-
-            try
-            {
-                if (device::Host::getInstance().getVideoDevices().size() < 1)
-                {
-                    LOGINFO("DSMGR_NOT_RUNNING");
-                    return videoFormats;
+            if (!m_requestSadRetrigger) {
+                LOGINFO("%s: Enable ARC (COM-RPC)... \n", __FUNCTION__);
+                const int32_t audioHandle = DSHelper::getCachedAudioPortHandle("HDMI_ARC0");
+                if (INVALID_DS_HANDLE != audioHandle) {
+                    auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (audio != nullptr) {
+                        Exchange::IDeviceSettingsAudio::AudioARCStatus arcStatus{};
+                        arcStatus.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
+                        arcStatus.status = true;
+                        Core::hresult comResult = audio->EnableARC(audioHandle, arcStatus);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGWARN("EnableARC failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                        }
+                        else {
+                            LOGINFO("EnableARC success for audioPort='HDMI_ARC0'\n");
+                        }
+                        audio->Release();
+                    }
+                    else {
+                        LOGERR("IDeviceSettingsAudio not available");
+                    }
                 }
-
-                device::VideoDevice &device = device::Host::getInstance().getVideoDevices().at(0);
-                device.getHDRCapabilities(&capabilities);
-            }
-            catch(const device::Exception& err)
-            {
-                LOG_DEVICE_EXCEPTION0();
-                return videoFormats;
-            }
-            catch(const std::exception& err)
-            {
-                LOGERR("exception: %s", err.what());
-                return videoFormats;
-            }
-            catch(...)
-            {
-                LOGWARN("Unknown exception occurred");
-                return videoFormats;
-            }
-
-            if(capabilities & dsHDRSTANDARD_HDR10)videoFormats.Add("HDR10");
-            if(capabilities & dsHDRSTANDARD_HLG)videoFormats.Add("HLG");
-            if(capabilities & dsHDRSTANDARD_DolbyVision)videoFormats.Add("DV");
-            if(capabilities & dsHDRSTANDARD_TechnicolorPrime)videoFormats.Add("Technicolor Prime");
-            if(capabilities & dsHDRSTANDARD_HDR10PLUS)videoFormats.Add("HDR10PLUS");
-            if(capabilities & dsHDRSTANDARD_SDR)videoFormats.Add("SDR");
-            for (uint32_t i = 0; i < videoFormats.Length(); i++)
-            {
-               LOGINFO("capabilities: %s", videoFormats[i].String().c_str());
-            }
-            return videoFormats;
-        }
-
-        const char *DisplaySettings::getVideoFormatTypeToString(dsHDRStandard_t format)
-        {
-            const char *strValue = "NONE";
-            switch (format)
-            {
-                case dsHDRSTANDARD_SDR:
-                    LOGINFO("Video Format: SDR\n");
-                    strValue = "SDR";
-                    break;
-                case dsHDRSTANDARD_HDR10:
-                    LOGINFO("Video Format: HDR10\n");
-                    strValue = "HDR10";
-                    break;
-                case dsHDRSTANDARD_HDR10PLUS:
-                    LOGINFO("Video Format: HDR10PLUS\n");
-                    strValue = "HDR10PLUS";
-                    break;
-                case dsHDRSTANDARD_HLG:
-                    LOGINFO("Video Format: HLG\n");
-                    strValue = "HLG";
-                    break;
-                case dsHDRSTANDARD_DolbyVision:
-                    LOGINFO("Video Format: DV\n");
-                    strValue = "DV";
-                    break;
-                case dsHDRSTANDARD_TechnicolorPrime:
-                    LOGINFO("Video Format: TechnicolorPrime\n");
-                    strValue = "TechnicolorPrime";
-                    break;
-                default:
-                    LOGINFO("Video Format: NONE\n");
-                    strValue = "NONE";
-                    break;
-            }
-            return strValue;
-
-        }
-	dsHDRStandard_t DisplaySettings::getVideoFormatTypeFromString(const char *strFormat)
-        {
-           dsHDRStandard_t mode = dsHDRSTANDARD_NONE;
-            if(strcmp(strFormat,"SDR")== 0 )
-                    mode = dsHDRSTANDARD_SDR;
-            else if(strcmp(strFormat,"NONE")== 0)
-                    mode = dsHDRSTANDARD_NONE;
-            else if(strcmp(strFormat,"HDR10")== 0)
-                    mode = dsHDRSTANDARD_HDR10;
-            else if(strcmp(strFormat,"HDR10PLUS")== 0)
-                    mode = dsHDRSTANDARD_HDR10PLUS;
-            else if(strcmp(strFormat,"DV")== 0)
-                    mode = dsHDRSTANDARD_DolbyVision;
-            else if(strcmp(strFormat,"HLG")== 0)
-                    mode = dsHDRSTANDARD_TechnicolorPrime;
-            else if(strcmp(strFormat,"TechnicolorPrime")== 0)
-                    mode = dsHDRSTANDARD_NONE;
-	    else
-		    mode = dsHDRSTANDARD_Invalid;
-
-	    return mode;
-        }
-    Core::hresult DisplaySettings::Request(const string& newState)
-	{
-		vector<string> connectedDisplays;
-		getConnectedVideoDisplaysHelper(connectedDisplays);
-		for (int i = 0; i < (int)connectedDisplays.size(); i++)
-		{
-			try
-			{
-				std::string strVideoPort = connectedDisplays.at(i);;
-				device::VideoOutputPort vPort = device::Host::getInstance().getVideoOutputPort(strVideoPort.c_str());
-				if (isDisplayConnected(strVideoPort))
-				{
-					bool enable = (newState == "GAME") ? true : false;
-					if(enable){ // Game mode
-					    vPort.getDisplay().setAVIContentType(dsAVICONTENT_TYPE_GAME);
-					    vPort.getDisplay().setAVIScanInformation(dsAVI_SCAN_TYPE_UNDERSCAN);
-					}else{ // video mode
-					    vPort.getDisplay().setAVIContentType(dsAVICONTENT_TYPE_NOT_SIGNALLED);
-					    vPort.getDisplay().setAVIScanInformation(dsAVI_SCAN_TYPE_NO_DATA);
-					}
-					vPort.getDisplay().setAllmEnabled(enable);
-				}
-				else
-				{
-					LOGWARN("failure: %s is not connected!",strVideoPort.c_str());
-				}
-			}
-			catch (const device::Exception& err)
-			{
-				LOG_DEVICE_EXCEPTION0();
-			}
-		}
-		if( 0 == (int)connectedDisplays.size())
-		{
-			LOGWARN("No display connected to device (or)device's powerstate is not ON");
-            return Core::ERROR_GENERAL;
-		}
-        return Core::ERROR_NONE;
-	}
-        void DisplaySettings::registerDsEventHandlers()
-        {
-            LOGINFO("registerDsEventHandlers");
-            if(!_registeredDsEventHandlers)
-            {
-                _registeredDsEventHandlers = true;
-                device::Host::getInstance().Register(baseInterface<device::Host::IDisplayEvents>(), "WPE[DisplaySettings]");
-                device::Host::getInstance().Register(baseInterface<device::Host::IAudioOutputPortEvents>(), "WPE[DisplaySettings]");
-                device::Host::getInstance().Register(baseInterface<device::Host::IDisplayDeviceEvents>(), "WPE[DisplaySettings]");
-                device::Host::getInstance().Register(baseInterface<device::Host::IHdmiInEvents>(), "WPE[DisplaySettings]");
-                device::Host::getInstance().Register(baseInterface<device::Host::IVideoDeviceEvents>(), "WPE[DisplaySettings]");
-                device::Host::getInstance().Register(baseInterface<device::Host::IVideoOutputPortEvents>(), "WPE[DisplaySettings]");
-            }
-        }
-
-        void DisplaySettings::OnDisplayRxSense(dsDisplayEvent_t displayEvent)
-        {
-            LOGINFO("Received OnDisplayRxSense callback");
-
-            if(displayEvent == dsDISPLAY_RXSENSE_ON)
-            {
-                LOGINFO("Got dsDISPLAY_RXSENSE_ON -> notifyactiveInputChanged(true)");
-                if(DisplaySettings::_instance)
-                    DisplaySettings::_instance->activeInputChanged(true);
-            }
-            else if(displayEvent == dsDISPLAY_RXSENSE_OFF)
-            {
-                LOGINFO("Got dsDISPLAY_RXSENSE_OFF -> notifyactiveInputChanged(false)");
-                if(DisplaySettings::_instance)
-                    DisplaySettings::_instance->activeInputChanged(false);
-            }
-        }
-
-        void DisplaySettings::OnAudioOutHotPlug(dsAudioPortType_t portType, uint32_t uiPortNumber, bool isPortConnected)
-        {
-            LOGINFO("Received OnAudioOutHotPlug callback");
-            if(DisplaySettings::_instance)
-            {
-                DisplaySettings::_instance->connectedAudioPortUpdated((int)portType, isPortConnected);
-		if (portType == dsAUDIOPORT_TYPE_HDMI_ARC) {
-		   if(isPortConnected) {
-			DisplaySettings::_instance->m_arcEarcConnectionNotifiedToUI = ARC_EARC_CONNECTED;
-		   } else {
-			DisplaySettings::_instance->m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
-		   }
-		}
-            }
-            else
-            {
-                LOGERR("DisplaySettings::dsHdmiEventHandler DisplaySettings::_instance is NULL\n");
-            }
-        }
-
-        void DisplaySettings::OnAudioFormatUpdate(dsAudioFormat_t audioFormat)
-        {
-            LOGINFO("Received OnAudioFormatUpdate callback");
-            if(DisplaySettings::_instance)
-            {
-                DisplaySettings::_instance->notifyAudioFormatChange(audioFormat);
-            }
-        }
-
-        void DisplaySettings::OnDolbyAtmosCapabilitiesChanged(dsATMOSCapability_t atmosCapability, bool status)
-        {
-            LOGINFO("Received OnDolbyAtmosCapabilitiesChanged callback:atmosCaps[%d]", atmosCapability);
-            if(DisplaySettings::_instance && status)
-            {
-                DisplaySettings::_instance->notifyAtmosCapabilityChange(atmosCapability);
-            }
-        }
-
-        void DisplaySettings::OnAudioPortStateChanged(dsAudioPortState_t audioPortState)
-        {
-            LOGINFO("Received OnAudioPortStateChanged callback. Audio Port Init State: %d", audioPortState);
-            try
-            {   if( audioPortState == dsAUDIOPORT_STATE_INITIALIZED)
-                {
-                    DisplaySettings::_instance->AudioPortsReInitialize();
-                    DisplaySettings::_instance->InitAudioPorts();
+                else {
+                    LOGERR("audio port 'HDMI_ARC0' handle not found");
                 }
-           }
-           catch(const device::Exception& err)
-           {
-              LOG_DEVICE_EXCEPTION0();
-           }
-        }
-
-        void DisplaySettings::OnAssociatedAudioMixingChanged(bool mixing)
-        {
-            LOGINFO("Received OnAssociatedAudioMixingChanged callback. Associated Audio Mixing: %d", mixing);
-            if(DisplaySettings::_instance)
-            {
-                DisplaySettings::_instance->notifyAssociatedAudioMixingChange(mixing);
+                m_arcEarcAudioEnabled = true;
             }
         }
+    }
 
-        void DisplaySettings::OnAudioFaderControlChanged(int mixerBalance)
-        {
-            LOGINFO("Received OnAudioFaderControlChanged. Fader Control: %d", mixerBalance);
-            if(DisplaySettings::_instance)
-            {
-                DisplaySettings::_instance->notifyFaderControlChange(mixerBalance);
+    uint32_t DisplaySettings::getEnableAudioPort(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        if (!audioPort.compare("HDMI_ARC0")) {
+            JsonObject aPortConfig = getAudioOutputPortConfig();
+            response["enable"] = aPortConfig["HDMI_ARC"].Boolean();
+        } else {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    // DS_IARM: aPort.isEnabled() returns live HW state; use IsAudioPortEnabled here
+                    bool enabled = false;
+                    Core::hresult comResult = audio->IsAudioPortEnabled(audioHandle, enabled);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["enable"] = enabled;
+                        LOGINFO("getEnableAudioPort: audioPort=%s enable=%s", audioPort.c_str(),
+                            response["enable"].Boolean() ? "true" : "false");
+                    }
+                    else {
+                        LOGWARN("getEnableAudioPort: IsAudioPortEnabled failed for audioPort=%s, Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("audio port '%s' handle not found", audioPort.c_str());
+                success = false;
             }
         }
+        returnResponse(success);
+    }
 
-        void DisplaySettings::OnAudioPrimaryLanguageChanged(const std::string& primaryLanguage)
-        {
-            LOGINFO("Received OnAudioPrimaryLanguageChangedcallback. Primary Language: %s", primaryLanguage.c_str());
-            if(DisplaySettings::_instance)
-            {
-                DisplaySettings::_instance->notifyPrimaryLanguageChange(primaryLanguage);
+    // --- getHdmiCecSinkPlugin ---
+    void DisplaySettings::getHdmiCecSinkPlugin()
+    {
+        if (m_client == nullptr) {
+            string token;
+
+            // TODO: use interfaces and remove token
+            auto security = m_service->QueryInterfaceByCallsign<PluginHost::IAuthenticate>("SecurityAgent");
+            if (security != nullptr) {
+                string payload = "http://localhost";
+                if (security->CreateToken(
+                        static_cast<uint16_t>(payload.length()),
+                        reinterpret_cast<const uint8_t*>(payload.c_str()),
+                        token)
+                    == Core::ERROR_NONE) {
+                    std::cout << "DisplaySettings got security token" << std::endl;
+                } else {
+                    std::cout << "DisplaySettings failed to get security token" << std::endl;
+                }
+                security->Release();
+            } else {
+                std::cout << "No security agent" << std::endl;
             }
+
+            string query = "token=" + token;
+            Core::SystemInfo::SetEnvironment(_T("THUNDER_ACCESS"), (_T("127.0.0.1:9998")));
+            m_client = new WPEFramework::JSONRPC::LinkType<Core::JSON::IElement>(_T(HDMICECSINK_CALLSIGN_VER), (_T(HDMICECSINK_CALLSIGN_VER)), false, query);
+            LOGINFO("DisplaySettings getHdmiCecSinkPlugin init m_client\n");
+        }
+    }
+
+    // --- getSystemPowerState ---
+    PowerState DisplaySettings::getSystemPowerState()
+    {
+        PowerState pwrStateCur = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
+        PowerState pwrStatePrev = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
+        Core::hresult retStatus = Core::ERROR_GENERAL;
+
+        ASSERT(_powerManagerPlugin);
+        if (_powerManagerPlugin) {
+            retStatus = _powerManagerPlugin->GetPowerState(pwrStateCur, pwrStatePrev);
+        }
+        if (Core::ERROR_NONE == retStatus) {
+            m_powerState = pwrStateCur;
+            LOGWARN("DisplaySettings::m_powerState: %d", m_powerState);
         }
 
-        void DisplaySettings::OnAudioSecondaryLanguageChanged(const std::string& secondaryLanguage)
-        {
-            LOGINFO("Received OnAudioSecondaryLanguageChanged callback. Secondary Language: %s", secondaryLanguage.c_str());
-            if(DisplaySettings::_instance)
-            {
-                DisplaySettings::_instance->notifySecondaryLanguageChange(secondaryLanguage);
-            }
+        else {
+            LOGWARN("GetPowerState failed");
         }
 
-        void DisplaySettings::OnDisplayHDMIHotPlug(dsDisplayEvent_t displayEvent)
-        {
-            LOGINFO("Received OnDisplayHDMIHotPlug callback. event data:%d ", displayEvent);
+        return m_powerState;
+    }
+
+    // --- initAudioPortsWorker ---
+    void DisplaySettings::initAudioPortsWorker(void)
+    {
+        audioPortInitActive = true;
+        DisplaySettings::_instance->InitAudioPorts();
+        audioPortInitActive = false;
+    }
+
+    // --- onPowerModeChanged ---
+    void DisplaySettings::onPowerModeChanged(const PowerState currentState, const PowerState newState)
+    {
+        LOGWARN("onPowerModeChanged: State Changed %d --> %d\r",
+            currentState, newState);
+        m_powerState = newState;
+        if (newState == WPEFramework::Exchange::IPowerManager::POWER_STATE_ON) {
             isResCacheUpdated = false;
             isDisplayConnectedCacheUpdated = false;
             isStbHDRcapabilitiesCache = false;
-
-            if(DisplaySettings::_instance)
-            {
-                DisplaySettings::_instance->connectedVideoDisplaysUpdated((int)displayEvent);
+            try {
+                LOGWARN("creating worker thread for initAudioPortsWorker ");
+                std::thread audioPortInitThread = std::thread(initAudioPortsWorker);
+                audioPortInitThread.detach();
+            } catch (const std::system_error& e) {
+                LOGERR("system_error exception in thread creation: %s", e.what());
+            } catch (const std::exception& e) {
+                LOGERR("exception in thread creation : %s", e.what());
             }
         }
 
-        void DisplaySettings::OnHdmiInEventHotPlug(dsHdmiInPort_t port, bool isConnected)
-        {
-           int hdmiin_hotplug_port = port;
-           bool hdmiin_hotplug_conn = isConnected;
-           LOGINFO("Received OnHDMIInEventHotPlug Port:%d, connected:%d", hdmiin_hotplug_port, hdmiin_hotplug_conn);
+        else {
+            LOGINFO("%s: Current Power state: %d\n", __FUNCTION__, newState);
+            try {
+                bool hdmi_arc_supported = DSHelper::hasAudioPortHandle("HDMI_ARC0");
 
-           if(!DisplaySettings::_instance) {
-               LOGERR("DisplaySettings::OnHdmiInEventHotPlug DisplaySettings::_instance is NULL\n");
-               return;
-           }
-           if(hdmiin_hotplug_port == hdmiArcPortId) //HDMI ARC/eARC Port Handling
-           {
-               try
-               {
-                    LOGINFO("Received OnHDMIInEventHotPlug  HDMI_ARC Port, connected status[%d]",  hdmiin_hotplug_conn);
-                    if(!hdmiin_hotplug_conn)
+                if (hdmi_arc_supported) {
                     {
                         std::lock_guard<std::mutex> lock(DisplaySettings::_instance->m_AudioDeviceStatesUpdateMutex);
-                        LOGINFO("Current Arc/eArc states m_currentArcRoutingState = %d, m_hdmiInAudioDeviceConnected =%d, m_arcEarcAudioEnabled =%d, m_hdmiInAudioDeviceType = %d", DisplaySettings::_instance->m_currentArcRoutingState, DisplaySettings::_instance->m_hdmiInAudioDeviceConnected, \
-                                     DisplaySettings::_instance->m_arcEarcAudioEnabled, DisplaySettings::_instance->m_hdmiInAudioDeviceType);
-                        if (DisplaySettings::_instance->m_hdmiInAudioDeviceConnected == true)
-                        {
-                            DisplaySettings::_instance->m_hdmiInAudioDeviceConnected =  false;
-                            DisplaySettings::_instance->m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
-                            //if(DisplaySettings::_instance->m_arcEarcAudioEnabled == true) // commenting out for the AVR HPD 0 and 1 events instantly for TV standby in/out case
-                            {
-                                DisplaySettings::_instance->connectedAudioPortUpdated(dsAUDIOPORT_TYPE_HDMI_ARC, hdmiin_hotplug_conn);
-				DisplaySettings::_instance->m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
-                                LOGINFO("Received OnHdmiInEventHotPlug  HDMI_ARC Port disconnected. Notify UI !!! ");
-                            }
-                        }
-                        DisplaySettings::_instance->m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
+                        LOGINFO("Current Arc/eArc states m_currentArcRoutingState = %d, m_hdmiInAudioDeviceConnected =%d, m_arcEarcAudioEnabled =%d, m_hdmiInAudioDeviceType = %d\n", DisplaySettings::_instance->m_currentArcRoutingState, DisplaySettings::_instance->m_hdmiInAudioDeviceConnected,
+                            DisplaySettings::_instance->m_arcEarcAudioEnabled, DisplaySettings::_instance->m_hdmiInAudioDeviceType);
+                        LOGINFO("%s: Cleanup ARC/eARC state\n", __FUNCTION__);
+                        if (DisplaySettings::_instance->m_currentArcRoutingState != ARC_STATE_ARC_TERMINATED)
+                            DisplaySettings::_instance->m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
                         DisplaySettings::_instance->m_requestSadRetrigger = false;
+                        {
+                            if (DisplaySettings::_instance->m_hdmiInAudioDeviceConnected != false) {
+                                DisplaySettings::_instance->m_hdmiInAudioDeviceConnected = false;
+                                DisplaySettings::_instance->connectedAudioPortUpdated(static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HDMIARC), false);
+                                DisplaySettings::_instance->m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
+                                DisplaySettings::_instance->m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
+                            }
 
-                        if (DisplaySettings::_instance->m_AudioDeviceSADState != AUDIO_DEVICE_SAD_CLEARED)
-                        {
-                            DisplaySettings::_instance->m_AudioDeviceSADState = AUDIO_DEVICE_SAD_CLEARED;
-                            LOGINFO("%s: Clearing Audio device SAD", __FUNCTION__);
-                            sad_list.clear();
-                        }
-                        else
-                        {
-                            LOGINFO("SAD already cleared");
+                            if (DisplaySettings::_instance->m_arcEarcAudioEnabled == true) {
+                                // COM-RPC: disable ARC
+                                const int32_t arcDHandle = DSHelper::getCachedAudioPortHandle("HDMI_ARC0");
+                                auto* arcDAudio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                                if (arcDAudio != nullptr && INVALID_DS_HANDLE != arcDHandle) {
+                                    LOGINFO("%s: Disable ARC/eARC Audio\n", __FUNCTION__);
+                                    Exchange::IDeviceSettingsAudio::AudioARCStatus arcDSt;
+                                    arcDSt.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
+                                    arcDSt.status = false;
+                                    Core::hresult comResult = arcDAudio->EnableARC(arcDHandle, arcDSt);
+                                    if (comResult != Core::ERROR_NONE) {
+                                        LOGERR("Failed to disable ARC/eARC Audio, Error=%d", static_cast<int>(comResult));
+                                    }
+                                    arcDAudio->Release();
+                                }
+                                else {
+                                    LOGERR("Failed to disable ARC/eARC Audio, IDeviceSettingsAudio not available or HDMI_ARC0 handle not found");
+                                }
+                                DisplaySettings::_instance->m_arcEarcAudioEnabled = false;
+                            }
+                            if ((DisplaySettings::_instance->m_hdmiInAudioDeviceType != 0))
+                                DisplaySettings::_instance->m_hdmiInAudioDeviceType = 0;
                         }
                     } // Release Mutex m_AudioDeviceStatesUpdateMutex
+
+                    {
+                        std::lock_guard<mutex> lck(DisplaySettings::_instance->m_callMutex);
+                        if (DisplaySettings::_instance->m_timer.isActive()) {
+                            DisplaySettings::_instance->m_timer.stop();
+                        }
+
+                        if (DisplaySettings::_instance->m_AudioDeviceDetectTimer.isActive()) {
+                            DisplaySettings::_instance->m_AudioDeviceDetectTimer.stop();
+                        }
+                        if (DisplaySettings::_instance->m_SADDetectionTimer.isActive()) {
+                            DisplaySettings::_instance->m_SADDetectionTimer.stop();
+                        }
+                        if (DisplaySettings::_instance->m_ArcDetectionTimer.isActive()) {
+                            DisplaySettings::_instance->m_ArcDetectionTimer.stop();
+                        }
+                        if (DisplaySettings::_instance->m_AudioDevicePowerOnStatusTimer.isActive()) {
+                            DisplaySettings::_instance->m_AudioDevicePowerOnStatusTimer.stop();
+                        }
+                    }
                 }
-                catch (const device::Exception& err)
+            } catch (const std::exception& err) {
+                LOGERR("Exception caught: message=%s", err.what());
+            }
+        }
+    }
+
+    // --- sendMsgToQueue ---
+    void DisplaySettings::sendMsgToQueue(msg_t msg, void* param)
+    {
+        SendMsgInfo msgInfo;
+
+        msgInfo.msg = msg;
+        msgInfo.param = param;
+        std::unique_lock<std::mutex> lock(DisplaySettings::_instance->m_sendMsgMutex);
+        DisplaySettings::_instance->m_sendMsgQueue.push(msgInfo);
+        DisplaySettings::_instance->m_sendMsgThreadRun = true;
+        DisplaySettings::_instance->m_sendMsgCV.notify_one();
+    }
+
+    // --- sendMsgThread ---
+    void DisplaySettings::sendMsgThread()
+    {
+        LOGINFO("%s: message Thread Start\n", __FUNCTION__);
+        bool result = false;
+        SendMsgInfo msgInfo;
+
+        if (!DisplaySettings::_instance)
+            return;
+
+        while (true) {
+            msgInfo.msg = -1;
+            msgInfo.param = NULL;
+            {
+                LOGINFO("%s: Debug: Wait for message \n", __FUNCTION__);
+                std::unique_lock<std::mutex> lock(DisplaySettings::_instance->m_sendMsgMutex);
+                auto* instance = _instance;
+                _instance->m_sendMsgCV.wait(lock, [instance] {
+                    return instance->m_sendMsgThreadRun || instance->m_sendMsgThreadExit;
+                });
+
+                if (_instance->m_sendMsgThreadExit) {
+                    LOGINFO(" sendCecMessageThread Exiting");
+                    _instance->m_sendMsgThreadRun = false;
+                    break;
+                }
+
+                if (_instance->m_sendMsgQueue.empty()) {
+                    _instance->m_sendMsgThreadRun = false;
+                    continue;
+                }
+
+                msgInfo = DisplaySettings::_instance->m_sendMsgQueue.front();
+                DisplaySettings::_instance->m_sendMsgQueue.pop();
+            }
+
+            switch (msgInfo.msg) {
+            case SEND_AUDIO_DEVICE_POWERON_MSG: {
+                LOGINFO(" sendHdmiCecSinkAudioDevicePowerOn");
+                result = DisplaySettings::_instance->sendHdmiCecSinkAudioDevicePowerOn();
+            } break;
+
+            case REQUEST_SHORT_AUDIO_DESCRIPTOR: {
+                LOGINFO(" Request Short Audio descriptor");
+                result = DisplaySettings::_instance->requestShortAudioDescriptor();
+            } break;
+
+            case REQUEST_AUDIO_DEVICE_POWER_STATUS: {
+                LOGINFO(" Request Audio Device Power Status");
+                result = DisplaySettings::_instance->requestAudioDevicePowerStatus();
+            } break;
+
+            case SEND_MUTE_KEY_EVENT: {
+                LOGINFO(" Send Mute code ");
+                result = DisplaySettings::_instance->sendUserControlPressCommand(67);
+            } break;
+            case SEND_DEVICE_AUDIO_STATUS: {
+                LOGINFO(" Send Device Audio Status message");
+                result = DisplaySettings::_instance->requestDeviceAudioStatus();
+            } break;
+
+            case SEND_REQUEST_ARC_INITIATION: // spearte initiation and termination cases
+            {
+                LOGINFO(" Send request for ARC INITIATION");
+                result = DisplaySettings::_instance->setUpHdmiCecSinkArcRouting(true);
+            } break;
+
+            case SEND_REQUEST_ARC_TERMINATION: {
+                LOGINFO(" Send request for ARC TERMINATION");
+                result = DisplaySettings::_instance->setUpHdmiCecSinkArcRouting(false);
+            } break;
+
+            default: {
+                LOGINFO(" Requested invalid message");
+            } break;
+            }
+
+            if (result == true) {
+                LOGINFO(" send cec msg [%d] success \n", msgInfo.msg);
+            } else {
+                LOGERR(" send cec msg [%d] failed \n", msgInfo.msg);
+            }
+
+        }
+    }
+
+    // --- subscribeForHdmiCecSinkEvent ---
+    uint32_t DisplaySettings::subscribeForHdmiCecSinkEvent(const char* eventName)
+    {
+        uint32_t err = Core::ERROR_NONE;
+        LOGINFO("Attempting to subscribe for event: %s\n", eventName);
+        Core::SystemInfo::SetEnvironment(_T("THUNDER_ACCESS"), (_T(SERVER_DETAILS)));
+        if (nullptr == m_client) {
+            getHdmiCecSinkPlugin();
+            if (nullptr == m_client) {
+                LOGERR("JSONRPC: %s: client initialization failed", HDMICECSINK_CALLSIGN_VER);
+                err = Core::ERROR_UNAVAILABLE;
+            }
+        }
+
+        if (err == Core::ERROR_NONE) {
+            /* Register handlers for Event reception. */
+            if (strcmp(eventName, HDMICECSINK_ARC_INITIATION_EVENT) == 0) {
+                err = m_client->Subscribe<JsonObject>(1000, eventName, &DisplaySettings::onARCInitiationEventHandler, this);
+                m_clientRegisteredEventNames.push_back(eventName);
+            } else if (strcmp(eventName, HDMICECSINK_ARC_TERMINATION_EVENT) == 0) {
+                err = m_client->Subscribe<JsonObject>(1000, eventName, &DisplaySettings::onARCTerminationEventHandler, this);
+                m_clientRegisteredEventNames.push_back(eventName);
+            } else if (strcmp(eventName, HDMICECSINK_SHORT_AUDIO_DESCRIPTOR_EVENT) == 0) {
+                err = m_client->Subscribe<JsonObject>(1000, eventName, &DisplaySettings::onShortAudioDescriptorEventHandler, this);
+                m_clientRegisteredEventNames.push_back(eventName);
+            } else if (strcmp(eventName, HDMICECSINK_SYSTEM_AUDIO_MODE_EVENT) == 0) {
+                err = m_client->Subscribe<JsonObject>(1000, eventName, &DisplaySettings::onSystemAudioModeEventHandler, this);
+                m_clientRegisteredEventNames.push_back(eventName);
+            } else if (strcmp(eventName, HDMICECSINK_ARC_AUDIO_STATUS_EVENT) == 0) {
+                err = m_client->Subscribe<JsonObject>(1000, eventName, &DisplaySettings::onArcAudioStatusEventHandler, this);
+                m_clientRegisteredEventNames.push_back(eventName);
+            } else if (strcmp(eventName, HDMICECSINK_AUDIO_DEVICE_CONNECTED_STATUS_EVENT) == 0) {
+                err = m_client->Subscribe<JsonObject>(1000, eventName, &DisplaySettings::onAudioDeviceConnectedStatusEventHandler, this);
+                m_clientRegisteredEventNames.push_back(eventName);
+            } else if (strcmp(eventName, HDMICECSINK_CEC_ENABLED_EVENT) == 0) {
+                err = m_client->Subscribe<JsonObject>(1000, eventName, &DisplaySettings::onCecEnabledEventHandler, this);
+                m_clientRegisteredEventNames.push_back(eventName);
+            } else if (strcmp(eventName, HDMICECSINK_AUDIO_DEVICE_POWER_STATUS_EVENT) == 0) {
+                err = m_client->Subscribe<JsonObject>(1000, eventName, &DisplaySettings::onAudioDevicePowerStatusEventHandler, this);
+                m_clientRegisteredEventNames.push_back(eventName);
+            } else {
+                err = Core::ERROR_UNAVAILABLE;
+                LOGERR("Unsupported Event: %s ", eventName);
+            }
+            if (err == Core::ERROR_NONE) {
+                LOGINFO("Subscribed for %s", eventName);
+            } else {
+                LOGERR("Failed to subscribe for %s with code %d", eventName, err);
+            }
+        }
+        return err;
+    }
+
+    // --- onARCInitiationEventHandler ---
+    void DisplaySettings::onARCInitiationEventHandler(const JsonObject& parameters)
+    {
+        dispatchEvent(EV_ARC_INITIATION, std::make_tuple(parameters));
+    }
+
+    void DisplaySettings::processARCInitiationEvent(const JsonObject& parameters)
+    {
+        string message;
+        string value;
+
+        parameters.ToString(message);
+        LOGINFO("[ARC Initiation Event], %s : %s", __FUNCTION__, C_STR(message));
+
+        if (!parameters.HasLabel("status")) {
+            LOGERR("Field 'status' could not be found in the event's payload.");
+            return;
+        }
+        int currentrcRoutingState = getCurrentArcRoutingState();
+        LOGINFO("ARC routing state before update m_currentArcRoutingState=%d\n ", currentrcRoutingState);
+        // AVR power status is not checked here assuming that ARC init request will happen only when AVR is in ON state
+        if ((currentrcRoutingState != ARC_STATE_ARC_INITIATED) && (m_systemAudioMode_Power_RequestedAndReceived == true)) {
+            value = parameters["status"].String();
+
+            if (!value.compare("success")) {
+                // Update Arc state
+                std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                m_currentArcRoutingState = ARC_STATE_ARC_INITIATED;
+                // Request SAD
+                //  We will get Arc initiation request only if port is connected and Audio device is detected
+                //  So no need to explicitly check for that
+                LOGINFO("ARC routing state after update m_currentArcRoutingState=%d\n ", m_currentArcRoutingState);
+                // COM-RPC: get stereo mode for SAD request decision
+                Exchange::IDeviceSettingsAudio::StereoMode comRpcMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
+                int32_t comRpcStereoAuto = 0;
                 {
-                     LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
+                    const int32_t arcAHandle = DSHelper::getCachedAudioPortHandle("HDMI_ARC0");
+                    auto* arcAAudio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (arcAAudio != nullptr && INVALID_DS_HANDLE != arcAHandle) {
+                        Core::hresult comResult = arcAAudio->GetStereoMode(arcAHandle, comRpcMode, false);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGWARN("GetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                        }
+                        comResult = arcAAudio->GetStereoAuto(arcAHandle, comRpcStereoAuto);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGWARN("GetStereoAuto failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                        }
+                        arcAAudio->Release();
+                    }
+                    else {
+                        LOGERR("IDeviceSettingsAudio not available or HDMI_ARC0 handle not found");
+                    }
                 }
-            }// HDMI_IN_ARC_PORT_ID
+                if ((m_AudioDeviceSADState == AUDIO_DEVICE_SAD_CLEARED || m_AudioDeviceSADState == AUDIO_DEVICE_SAD_UNKNOWN) && ((comRpcMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH) || comRpcStereoAuto != 0)) {
+                    LOGINFO("Initiate SAD request\n");
+                    m_AudioDeviceSADState = AUDIO_DEVICE_SAD_REQUESTED;
+                    sendMsgToQueue(REQUEST_SHORT_AUDIO_DESCRIPTOR, NULL);
+                } else {
+                    LOGINFO("SAD not requested m_AudioDeviceSADState =%d, soundmode = %d", m_AudioDeviceSADState, static_cast<int>(comRpcMode));
+                }
+                // update device type in case we receive ARC init before power ON request
+                if (m_hdmiInAudioDeviceType == 0) {
+                    LOGINFO("Updating Audio device type to Arc\n");
+                    m_hdmiInAudioDeviceType = static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC);
+                } else {
+                    LOGINFO("m_hdmiInAudioDeviceType is already updated %d\n", m_hdmiInAudioDeviceType);
+                }
+                try {
+                    if (m_hdmiInAudioDeviceConnected == false) {
+                        m_hdmiInAudioDeviceConnected = true;
+                        if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_DISCONNECTED) {
+                            LOGINFO("Arc Initiation sucess, Notify UI\n");
+                            connectedAudioPortUpdated(static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HDMIARC), true);
+                            m_arcEarcConnectionNotifiedToUI = ARC_EARC_CONNECTED;
+                        } else {
+                            LOGINFO("not notified to UI since m_arcEarcConnectionNotifiedToUI =%d\n", m_arcEarcConnectionNotifiedToUI);
+                        }
+                    } else {
+                        LOGINFO("onARCInitiationEventHandler: not notifying the UI as m_hdmiInAudioDeviceConnected = true !!!\n");
+                    }
+
+                } catch (const std::exception& err) {
+                    LOGERR("Exception caught: message=%s", err.what());
+                }
+            } // Release Mutex m_AudioDeviceStatesUpdateMutex if Arc is Success
+            else {
+                LOGERR("CEC ARC Initiaition Failed !!!");
+                {
+                    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                    m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
+                } // Release Mutex m_AudioDeviceStatesUpdateMutex if Arc failure
+            }
+        } else {
+            LOGINFO("%s: The ARC initiation already done or m_systemAudioMode_Power_RequestedAndReceived [%d]", __FUNCTION__, m_systemAudioMode_Power_RequestedAndReceived);
+        }
+    }
+
+    // --- onARCTerminationEventHandler ---
+    void DisplaySettings::onARCTerminationEventHandler(const JsonObject& parameters)
+    {
+        string message;
+        string value;
+
+        parameters.ToString(message);
+        LOGINFO("[ARC Termination Event], %s : %s", __FUNCTION__, C_STR(message));
+
+        if (m_AudioDeviceSADState != AUDIO_DEVICE_SAD_CLEARED) {
+            m_AudioDeviceSADState = AUDIO_DEVICE_SAD_CLEARED;
+            m_requestSadRetrigger = false;
+            LOGINFO("%s: Clearing Audio device SAD\n", __FUNCTION__);
+            // clear the SAD list
+            sad_list.clear();
+        } else {
+            LOGINFO("SAD already cleared\n");
         }
 
-        void DisplaySettings::OnZoomSettingsChanged(dsVideoZoom_t zoomSetting)
-        {
-            LOGINFO("Received OnZoomSettingsChanged callback");
-            if(zoomSetting == dsVIDEO_ZOOM_NONE)
+        int currentrcRoutingState = getCurrentArcRoutingState();
+        LOGINFO("Current ARC routing state before update m_currentArcRoutingState=%d\n ", currentrcRoutingState);
+        if (currentrcRoutingState != ARC_STATE_ARC_TERMINATED) {
+            if (parameters.HasLabel("status")) {
+                value = parameters["status"].String();
+                std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
+                m_requestSadRetrigger = false;
+                LOGINFO("Current ARC routing state after update m_currentArcRoutingState=%d\n ", m_currentArcRoutingState);
+                if (!value.compare("success")) {
+                    try {
+                        if (m_hdmiInAudioDeviceConnected == true) {
+                            m_hdmiInAudioDeviceConnected = false;
+                            if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_CONNECTED) {
+                                connectedAudioPortUpdated(static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HDMIARC), false);
+                                m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
+                            } else {
+                                LOGINFO("Not notifying UI since m_arcEarcConnectionNotifiedToUI = %d", m_arcEarcConnectionNotifiedToUI);
+                            }
+                        } else {
+                            LOGINFO("onARCTerminationEventHandler: Skip Disable ARC and not notifying the UI as  m_hdmiInAudioDeviceConnected = false\n");
+                        }
+                    } catch (const std::exception& err) {
+                        LOGERR("Exception caught: message=%s", err.what());
+                    }
+                } else {
+                    LOGERR("CEC onARCTerminationEventHandler Failed !!!");
+                }
+            } // Release mutex m_AudioDeviceStatesUpdateMutex
+            else {
+                LOGERR("Field 'status' could not be found in the event's payload.");
+            }
+        }
+    }
+
+    // --- onShortAudioDescriptorEventHandler ---
+    void DisplaySettings::onShortAudioDescriptorEventHandler(const JsonObject& parameters)
+    {
+        dispatchEvent(EV_SHORT_AUDIO_DESCRIPTOR, std::make_tuple(parameters));
+    }
+
+    void DisplaySettings::processShortAudioDescriptorEvent(const JsonObject& parameters)
+    {
+        string message;
+
+        parameters.ToString(message);
+        JsonArray shortAudioDescriptorList;
+        LOGINFO("[Short Audio Descriptor Event], %s : %s", __FUNCTION__, C_STR(message));
+
+        if (parameters.HasLabel("shortAudioDescriptor")) {
+            shortAudioDescriptorList = parameters["shortAudioDescriptor"].Array();
+            int currentSADState = getAudioDeviceSADState();
+            if (currentSADState == AUDIO_DEVICE_SAD_REQUESTED) {
+                try {
+                    setAudioDeviceSADState(AUDIO_DEVICE_SAD_RECEIVED);
+                    m_requestSadRetrigger = false;
+                    // COM-RPC: acquire HDMI_ARC0 handle for SAD/ARC operations
+                    const int32_t arcHandle = DSHelper::getCachedAudioPortHandle("HDMI_ARC0");
+                    auto* arcAudio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (arcAudio == nullptr || INVALID_DS_HANDLE == arcHandle) {
+                        LOGERR("HDMI_ARC0 handle unavailable");
+                        if (arcAudio)
+                            arcAudio->Release();
+                        return;
+                    }
+                    LOGINFO("Total Short Audio Descriptors received from connected ARC device: %d\n", shortAudioDescriptorList.Length());
+                    if (shortAudioDescriptorList.Length() <= 0) {
+                        LOGERR("Not setting SAD. No SAD returned by connected ARC device\n");
+                        return;
+                    }
+
+                    for (int i = 0; i < shortAudioDescriptorList.Length(); i++) {
+                        LOGINFO("Short Audio Descriptor[%d]: %lld \n", i, shortAudioDescriptorList[i].Number());
+                        sad_list.push_back(shortAudioDescriptorList[i].Number());
+                    }
+
+                    bool wasSADTimerActive = false;
+                    Core::hresult comResult = Core::ERROR_NONE;
+
+                    int arcRoutingState = ARC_STATE_ARC_TERMINATED;
+                    {
+                        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                        arcRoutingState = m_currentArcRoutingState;
+                    }
+                    if (arcRoutingState == ARC_STATE_ARC_INITIATED) {
+                        if (m_SADDetectionTimer.isActive()) {
+                            // Timer is active, so stop the timer and if audio is not routed set SAD and route the audio
+                            LOGINFO("%s: Stopping the SAD timer\n", __FUNCTION__);
+                            m_SADDetectionTimer.stop();
+
+                            wasSADTimerActive = true;
+                        }
+
+                        if (wasSADTimerActive == true && m_arcEarcAudioEnabled == false) { /*setEnableAudioPort is called, Timer has started, got SAD before Timer Expiry*/
+                            LOGINFO("%s: Updating SAD \n", __FUNCTION__);
+                            setAudioDeviceSADState(AUDIO_DEVICE_SAD_UPDATED);
+                            {
+                                std::vector<uint8_t> sadB(sad_list.begin(), sad_list.end());
+                                arcAudio->SetSAD(arcHandle, sadB.data(), static_cast<uint8_t>(sadB.size()));
+                            }
+                            int32_t sAuto = 0;
+                            comResult = arcAudio->GetStereoAuto(arcHandle, sAuto);
+                            if (comResult != Core::ERROR_NONE) {
+                                LOGWARN("GetStereoAuto failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                            }
+                            if (sAuto != 0) {
+                                comResult = arcAudio->SetStereoAuto(arcHandle, 1, true);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGWARN("SetStereoAuto failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                                }
+                            } else {
+                                Exchange::IDeviceSettingsAudio::StereoMode sMode = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
+                                comResult = arcAudio->GetStereoMode(arcHandle, sMode, false);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGWARN("GetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                                }
+                                comResult = arcAudio->SetStereoMode(arcHandle, sMode, true);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGWARN("SetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                                }
+                            }
+                            LOGINFO("%s: Routing the audio since m_arcEarcAudioEnabled = %d\n", __FUNCTION__, m_arcEarcAudioEnabled);
+                            LOGINFO("%s: Enable ARC... \n", __FUNCTION__);
+                            {
+                                Exchange::IDeviceSettingsAudio::AudioARCStatus arcSt;
+                                arcSt.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
+                                arcSt.status = true;
+                                comResult = arcAudio->EnableARC(arcHandle, arcSt);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGERR("Failed to enable ARC/eARC Audio, Error=%d", static_cast<int>(comResult));
+                                } else {
+                                    LOGINFO("Enable ARC success for audioPort='HDMI_ARC0'\n");
+                                }
+                            }
+                            m_arcEarcAudioEnabled = true;
+                        } else if (m_arcEarcAudioEnabled == true) { /*setEnableAudioPort is called,Timer started and Expired, arc is routed -- or for both wasSADTimerActive == true/false*/
+                            LOGINFO("%s: Updating SAD since audio is already routed and ARC is initiated\n", __FUNCTION__);
+                            setAudioDeviceSADState(AUDIO_DEVICE_SAD_UPDATED);
+                            {
+                                std::vector<uint8_t> sadB2(sad_list.begin(), sad_list.end());
+                                arcAudio->SetSAD(arcHandle, sadB2.data(), static_cast<uint8_t>(sadB2.size()));
+                            }
+                            int32_t sAuto2 = 0;
+                            comResult = arcAudio->GetStereoAuto(arcHandle, sAuto2);
+                            if (comResult != Core::ERROR_NONE) {
+                                LOGWARN("GetStereoAuto failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                            }
+                            if (sAuto2 != 0) {
+                                comResult = arcAudio->SetStereoAuto(arcHandle, 1, true);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGWARN("SetStereoAuto failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                                }
+                            } else {
+                                Exchange::IDeviceSettingsAudio::StereoMode sMode2 = Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO;
+                                comResult = arcAudio->GetStereoMode(arcHandle, sMode2, false);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGWARN("GetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                                }
+                                comResult = arcAudio->SetStereoMode(arcHandle, sMode2, true);
+                                if (comResult != Core::ERROR_NONE) {
+                                    LOGWARN("SetStereoMode failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                                }
+                            }
+                        } else { // SAD received before setEnableAudioPort
+                            LOGINFO("%s: Not updating SAD now since arc routing has not yet happened and SAD timer is not active -> Routing and SAD is updated when setEnableAudioPort is called \n", __FUNCTION__);
+                        }
+                    } else {
+                        bool arcEarcAudioEnabled = false;
+                        {
+                            std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                            arcRoutingState = m_currentArcRoutingState;
+                            arcEarcAudioEnabled = m_arcEarcAudioEnabled;
+                        }
+                        LOGINFO("%s: m_currentArcRoutingState = %d, m_arcEarcAudioEnabled = %d", __FUNCTION__, arcRoutingState, arcEarcAudioEnabled);
+                    } /*End of m_currentArcRoutingState check */
+                    arcAudio->Release();
+                } catch (const std::exception& err) {
+                    LOGERR("Exception caught: message=%s", err.what());
+                }
+            } else {
+                LOGERR("Invalid SAD state m_AudioDeviceSADState =%d", m_AudioDeviceSADState);
+            } /*End of (m_AudioDeviceSADState == AUDIO_DEVICE_SAD_REQUESTED) */
+        } else {
+            LOGERR("Field 'ShortAudioDescriptor' could not be found in the event's payload.");
+        } /*End of (m_AudioDeviceSADState == AUDIO_DEVICE_SAD_REQUESTED) */
+    }
+
+    // --- onSystemAudioModeEventHandler ---
+    void DisplaySettings::onSystemAudioModeEventHandler(const JsonObject& parameters)
+    {
+        string message;
+        string value;
+
+        parameters.ToString(message);
+        LOGINFO("[System Audio Mode Event], %s : %s", __FUNCTION__, C_STR(message));
+
+        if (parameters.HasLabel("audioMode")) {
+            value = parameters["audioMode"].String();
+            if (!value.compare("On")) {
+                m_systemAudioMode_Power_RequestedAndReceived = true; // system audio mode ON is received
+                LOGINFO("Requesting power status of AVR as system audio mode is %s\n", C_STR(message));
+                m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_REQUEST; // Should we send power request irrespective of System audio mode status
+                sendMsgToQueue(REQUEST_AUDIO_DEVICE_POWER_STATUS, NULL);
+            } else if (!value.compare("Off")) {
+                LOGINFO("%s :  audioMode OFF !!!\n", __FUNCTION__);
+                try {
+                    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                    m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
+
+                    if (m_hdmiInAudioDeviceConnected == true) {
+                        LOGINFO("SystemAudio mode off disable Arc\n");
+                        m_hdmiInAudioDeviceConnected = false;
+                        if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_CONNECTED) {
+                            LOGINFO("System Audio mode is off and m_arcEarcConnectionNotifiedToUI %d, Notify UI to disbale Arc", m_arcEarcConnectionNotifiedToUI);
+                            connectedAudioPortUpdated(static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HDMIARC), false);
+                            m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
+                        } else {
+                            LOGINFO("Not notifying UI since m_arcEarcConnectionNotifiedToUI =%d\n", m_arcEarcConnectionNotifiedToUI);
+                        }
+                        {
+                            // Arc termination happens from HdmiCecSink plugin so just update the state here
+                            m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
+                            m_requestSadRetrigger = false;
+                            LOGINFO("Updating ARC routing state to ARC terminated\n");
+                        }
+
+                    } else {
+                        LOGINFO("onSystemAudioModeEventHandler: Skip Disable ARC and not notifying the UI as  m_hdmiInAudioDeviceConnected = false\n");
+                    }
+                } // Release mutex m_AudioDeviceStatesUpdateMutex
+                catch (const std::exception& err) {
+                    LOGERR("Exception caught: message=%s", err.what());
+                }
+            } else {
+                LOGERR("%s: Invalid audio mode sent by HdmiCecSink !!!\n", __FUNCTION__);
+            }
+        } else {
+            LOGERR("Field 'audioMode' could not be found in the event's payload.");
+        }
+    }
+
+    // --- onArcAudioStatusEventHandler ---
+    void DisplaySettings::onArcAudioStatusEventHandler(const JsonObject& parameters)
+    {
+        string message;
+        parameters.ToString(message);
+        LOGINFO("[ARC Audio Status Event], %s : %s", __FUNCTION__, C_STR(message));
+
+        if (parameters.HasLabel("muteStatus") && parameters.HasLabel("volumeLevel")) {
+            int iArcVolumeLevel = 0;
+            const string volumeLevelStr = parameters["volumeLevel"].String();
+            if (!TryParseIntInRange(volumeLevelStr, 0, 100, iArcVolumeLevel)) {
+                LOGWARN("Invalid volumeLevel in ARC Audio Status Event");
+                return;
+            }
+            if (iArcVolumeLevel != hdmiArcVolumeLevel) {
+                hdmiArcVolumeLevel = iArcVolumeLevel;
+                JsonObject volParams;
+                volParams["volumeLevel"] = (int)hdmiArcVolumeLevel;
+                sendNotify("volumeLevelChanged", volParams);
+            }
+
+            int muteStatusInt = 0;
+            const string muteStatusStr = parameters["muteStatus"].String();
+            if (!TryParseIntInRange(muteStatusStr, 0, 1, muteStatusInt)) {
+                LOGWARN("Invalid muteStatus in ARC Audio Status Event");
+                return;
+            }
+            bool bMuteStatus = (muteStatusInt != 0);
+            if (bMuteStatus != hdmiArcMuteStatus) {
+                hdmiArcMuteStatus = bMuteStatus;
+                JsonObject params;
+                params["muted"] = hdmiArcMuteStatus;
+                sendNotify("muteStatusChanged", params);
+            }
+        } else {
+            LOGERR("Field 'muteStatus' and 'volumeLevel' could not be found in the event's payload.");
+        }
+    }
+
+    // --- onAudioDeviceConnectedStatusEventHandler ---
+    void DisplaySettings::onAudioDeviceConnectedStatusEventHandler(const JsonObject& parameters)
+    {
+        string value;
+
+        if (parameters.HasLabel("audioDeviceConnected"))
+            value = parameters["audioDeviceConnected"].String();
+
+        if (!value.compare("true")) {
+            m_hdmiCecAudioDeviceDetected = true;
+        } else {
+            m_hdmiCecAudioDeviceDetected = false;
+            bool deviceConnected = false;
+            int arcRoutingState = ARC_STATE_ARC_TERMINATED;
             {
-                LOGINFO("dsVIDEO_ZOOM_NONE Settings");
-                if(DisplaySettings::_instance)
-                    DisplaySettings::_instance->zoomSettingUpdated("NONE");
+                std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                deviceConnected = m_hdmiInAudioDeviceConnected;
+                arcRoutingState = m_currentArcRoutingState;
             }
-            else if(zoomSetting == dsVIDEO_ZOOM_FULL)
+            if (deviceConnected) {
+                LOGINFO("Audio device removed event Handler, clearing the states m_hdmiInAudioDeviceConnected =%d, m_currentArcRoutingState =%d",
+                    deviceConnected, arcRoutingState);
+                {
+                    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                    m_hdmiInAudioDeviceConnected = false;
+                    m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
+                    m_currentArcRoutingState = ARC_STATE_ARC_TERMINATED;
+                    m_requestSadRetrigger = false;
+                }
+                connectedAudioPortUpdated(static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HDMIARC), false);
+                m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
+            }
+            if (m_AudioDeviceSADState != AUDIO_DEVICE_SAD_CLEARED && m_AudioDeviceSADState != AUDIO_DEVICE_SAD_UNKNOWN) {
+                LOGINFO("%s: Clearing Audio device SAD previous state= %d current state = %d\n", __FUNCTION__, m_AudioDeviceSADState, AUDIO_DEVICE_SAD_CLEARED);
+                // clear the SAD list
+                sad_list.clear();
+                m_AudioDeviceSADState = AUDIO_DEVICE_SAD_CLEARED;
+                m_requestSadRetrigger = false;
+            } else {
+                LOGINFO("SAD already cleared\n");
+            }
+            // if m_arcEarcAudioEnabled == true(case where arc/earc is already routed) we will not reset device type because it will be done from setEnableAudioPort during disable from the connectedAudioPort update
             {
-                LOGINFO("dsVIDEO_ZOOM_FULL Settings");
-                if(DisplaySettings::_instance)
-                    DisplaySettings::_instance->zoomSettingUpdated("FULL");
+                std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                if (!m_arcEarcAudioEnabled && m_hdmiInAudioDeviceType != 0) {
+                    LOGINFO("Reset m_hdmiInAudioDeviceType since m_arcEarcAudioEnabled = %d", m_arcEarcAudioEnabled);
+                    m_hdmiInAudioDeviceType = 0;
+                }
             }
         }
+        LOGINFO("updated m_hdmiCecAudioDeviceDetected status [%d] ... \n", m_hdmiCecAudioDeviceDetected);
 
-        void DisplaySettings::OnResolutionPreChange(const int width, const int height)
-        {
-            LOGINFO("Received OnResolutionPreChange callback");
-            if(DisplaySettings::_instance)
+        if (m_hdmiCecAudioDeviceDetected) {
+            LOGINFO("Trigger Audio Device Power State Request status ... \n");
+            sendMsgToQueue(SEND_DEVICE_AUDIO_STATUS, NULL);
+            m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_REQUEST;
+            sendMsgToQueue(REQUEST_AUDIO_DEVICE_POWER_STATUS, NULL);
+
+        } else {
+            LOGINFO("Audio Device is removed \n");
+        }
+        hdmiArcVolumeLevel = 0;
+        hdmiArcMuteStatus = false;
+    }
+
+    // --- onAudioDevicePowerStatusEventHandler ---
+    void DisplaySettings::onAudioDevicePowerStatusEventHandler(const JsonObject& parameters)
+    {
+        dispatchEvent(EV_AUDIO_DEVICE_POWER_STATUS, std::make_tuple(parameters));
+    }
+
+    void DisplaySettings::processAudioDevicePowerStatusEvent(const JsonObject& parameters)
+    {
+        string value;
+        if (parameters.HasLabel("powerStatus"))
+            value = parameters["powerStatus"].String();
+
+        int pState = 1; // STANDBY
+        if (!TryParseIntInRange(value, INT_MIN, INT_MAX, pState)) {
+            LOGWARN("powerStatus is not a valid int\n");
+            return;
+        }
+
+        LOGINFO("Audio Device Power State [%d] ... \n", pState);
+
+        if (pState == AVR_POWER_STATE_ON) { // ON
+            m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_ON;
+            m_systemAudioMode_Power_RequestedAndReceived = true; // received power ON msg from AVR.
+
+            if (m_AudioDevicePowerOnStatusTimer.isActive()) {
+                LOGINFO("Stopping timer, Audio Device power status - m_hdmiInAudioDevicePowerState [%d]!!!\n", m_hdmiInAudioDevicePowerState);
+                retryPowerRequestCount = 0;
+                m_AudioDevicePowerOnStatusTimer.stop();
+            }
+
+            try {
+                int types = 0;
+                Core::hresult comResult = Core::ERROR_NONE;
+                // COM-RPC: get supported ARC types
+                {
+                    const int32_t arcPHandle = DSHelper::getCachedAudioPortHandle("HDMI_ARC0");
+                    auto* arcPAudio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                    if (arcPAudio != nullptr && INVALID_DS_HANDLE != arcPHandle) {
+                        int32_t arcTypes = 0;
+                        comResult = arcPAudio->GetSupportedARCTypes(arcPHandle, arcTypes);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGWARN("GetSupportedARCTypes failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                        }
+                        types = static_cast<int>(arcTypes);
+                        arcPAudio->Release();
+                    }
+                    else {
+                        LOGERR("IDeviceSettingsAudio not available or HDMI_ARC0 handle not found");
+                    }
+                }
+                bool deviceConnected = false;
+                {
+                    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                    deviceConnected = m_hdmiInAudioDeviceConnected;
+                }
+                if ((types & static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_EARC)) && !deviceConnected) {
+                    LOGINFO("%s: Audio device is eArc m_hdmiInAudioDeviceConnected =%d", __FUNCTION__, deviceConnected);
+                    {
+                        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                        m_hdmiInAudioDeviceConnected = true;
+                        m_hdmiInAudioDeviceType = static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_EARC);
+                    }
+                    if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_DISCONNECTED) {
+                        // Notify UI that Audio device is connected and is in ON state
+                        LOGINFO("Triggered from HPD: eARC audio device power on: Notify UI !!! \n");
+                        connectedAudioPortUpdated(static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HDMIARC), true);
+                        m_arcEarcConnectionNotifiedToUI = ARC_EARC_CONNECTED;
+                    } else {
+                        LOGINFO("eARC connection notification is already sent m_arcEarcConnectionNotifiedToUI =%d", m_arcEarcConnectionNotifiedToUI);
+                    }
+                } else {
+                    std::lock_guard<std::mutex> lock(m_callMutex);
+                    {
+                        std::lock_guard<std::mutex> arcLock(m_AudioDeviceStatesUpdateMutex);
+                        deviceConnected = m_hdmiInAudioDeviceConnected;
+                    }
+                    if (!deviceConnected && !m_ArcDetectionTimer.isActive()) {
+                        // tinymix commad to detect eArc is failed, start the timer for 3 seconds
+                        LOGINFO("Starting timer to detect eArc for %d milli seconds", ARC_DETECTION_CHECK_TIME_IN_MILLISECONDS);
+                        m_ArcDetectionTimer.start(ARC_DETECTION_CHECK_TIME_IN_MILLISECONDS);
+                    }
+                }
+            } catch (const std::exception& err) {
+                LOGERR("Exception caught: message=%s", err.what());
+            }
+        } else if (pState == AVR_POWER_STATE_STANDBY) {
+            m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_STANDBY;
+        } else if (pState == AVR_POWER_STATE_STANDBY_TO_ON_TRANSITION) {
+            // Start a timer to re check the power status of AVR?
+            LOGINFO("Audio device  power status IN TRANSITION from STANDBY to ON, Requesting power status again pState=%d\n", pState);
+            m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_REQUEST;
+            sendMsgToQueue(REQUEST_AUDIO_DEVICE_POWER_STATUS, NULL);
+        }
+    }
+
+    // --- checkArcDeviceConnected ---
+    void DisplaySettings::checkArcDeviceConnected()
+    {
+        // Timer is invoked in case of delayed HPD
+        LOGINFO("Inside checkArcDeviceConnected\n");
+        static int retryArcCount = 0;
+        std::lock_guard<std::mutex> lock(m_callMutex);
+        int types = 0;
+        try {
+            Core::hresult comResult = Core::ERROR_NONE;
+            // COM-RPC: get supported ARC types
             {
-                DisplaySettings::_instance->resolutionPreChange();
+                const int32_t arcCHandle = DSHelper::getCachedAudioPortHandle("HDMI_ARC0");
+                auto* arcCAudio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (arcCAudio != nullptr && INVALID_DS_HANDLE != arcCHandle) {
+                    int32_t arcTypes = 0;
+                    comResult = arcCAudio->GetSupportedARCTypes(arcCHandle, arcTypes);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGWARN("GetSupportedARCTypes failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
+                    } else {
+                        types = static_cast<int>(arcTypes);
+                    }
+                    arcCAudio->Release();
+                }
             }
-            isResCacheUpdated = false;
+            int arcRoutingState = ARC_STATE_ARC_TERMINATED;
+            {
+                std::lock_guard<std::mutex> arcLock(m_AudioDeviceStatesUpdateMutex);
+                arcRoutingState = m_currentArcRoutingState;
+            }
+            if (arcRoutingState != ARC_STATE_ARC_INITIATED) {
+                bool deviceConnected = false;
+                {
+                    std::lock_guard<std::mutex> arcLock(m_AudioDeviceStatesUpdateMutex);
+                    deviceConnected = m_hdmiInAudioDeviceConnected;
+                }
+                if ((types & static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_EARC)) && !deviceConnected) {
+                    {
+                        std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                        m_hdmiInAudioDeviceConnected = true;
+                        m_hdmiInAudioDeviceType = static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_EARC);
+                    }
+                    if (m_arcEarcConnectionNotifiedToUI == ARC_EARC_DISCONNECTED) {
+                        LOGINFO("Triggered from HPD: eARC audio device power on: Notify UI !!! \n");
+                        connectedAudioPortUpdated(static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HDMIARC), true);
+                        m_arcEarcConnectionNotifiedToUI = ARC_EARC_CONNECTED;
+                    } else {
+                        LOGINFO("Arc connection notification is already sent m_arcEarcConnectionNotifiedToUI = %d", m_arcEarcConnectionNotifiedToUI);
+                    }
+                } else if (!deviceConnected) {
+                    std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                    retryArcCount++;
+                    LOGINFO("device Type is ARC, checking if eARC - retryArcCount [%d]", retryArcCount);
+                    if (retryArcCount >= 3) {
+                        m_hdmiInAudioDeviceType = static_cast<int32_t>(Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC);
+                        if ((m_currentArcRoutingState == ARC_STATE_ARC_TERMINATED) && (isCecEnabled == true)) {
+                            LOGINFO("ARC_mode: Send dummy ARC initiation request... \n");
+                            LOGINFO("ARC_mode: Notify Arc routing with m_currentArcRoutingStat [%d] \n", DisplaySettings::_instance->m_currentArcRoutingState);
+                            m_currentArcRoutingState = ARC_STATE_REQUEST_ARC_INITIATION;
+                            sendMsgToQueue(SEND_REQUEST_ARC_INITIATION, NULL);
+                        } else {
+                            LOGINFO("Arc initiation request not sent\n");
+                        }
+                    }
+                } // Release Mutex m_AudioDeviceStatesUpdateMutex
+            } else {
+                LOGINFO("Arc is already initiated m_currentArcRoutingState =%d", arcRoutingState);
+            }
+
+            int arcStateCheck = ARC_STATE_ARC_TERMINATED;
+            int32_t deviceTypeCheck = 0;
+            {
+                std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                arcStateCheck = m_currentArcRoutingState;
+                deviceTypeCheck = m_hdmiInAudioDeviceType;
+            }
+            if (m_ArcDetectionTimer.isActive() && ((retryArcCount >= 3) || (arcStateCheck == ARC_STATE_ARC_INITIATED) || (deviceTypeCheck != 0))) {
+                retryArcCount = 0; /* reset counter */
+                LOGINFO("Stopping the eArc detection timer retryArcCount = %d, m_currentArcRoutingState = %d, m_hdmiInAudioDeviceType = %d",
+                    retryArcCount, arcStateCheck, deviceTypeCheck);
+                m_ArcDetectionTimer.stop();
+            }
+        } catch (const std::exception& err) {
+            LOGERR("Exception caught: message=%s", err.what());
+        }
+    }
+
+    // --- onCecEnabledEventHandler ---
+    void DisplaySettings::onCecEnabledEventHandler(const JsonObject& parameters)
+    {
+        string value;
+
+        LOGINFO(" CEC Enable-Disable Event... \n");
+        if (parameters.HasLabel("cecEnable"))
+            value = parameters["cecEnable"].String();
+
+        if (!value.compare("true")) {
+            isCecEnabled = true;
+        } else {
+            isCecEnabled = false;
+            try {
+                std::lock_guard<std::mutex> lock(m_AudioDeviceStatesUpdateMutex);
+                // if m_arcEarcAudioEnabled == true(case where arc/earc is already routed) we will not reset device type because it will be done from setEnableAudioPort during disable from the connectedAudioPort update
+                if (m_arcEarcAudioEnabled == false && m_hdmiInAudioDeviceType != 0) {
+                    LOGINFO("Reset m_hdmiInAudioDeviceType since m_arcEarcAudioEnabled = %d", m_arcEarcAudioEnabled);
+                    m_hdmiInAudioDeviceType = 0;
+                }
+                if (m_hdmiInAudioDeviceConnected == true) {
+                    m_hdmiInAudioDeviceConnected = false;
+                    connectedAudioPortUpdated(static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HDMIARC), false);
+                    m_arcEarcConnectionNotifiedToUI = ARC_EARC_DISCONNECTED;
+                    m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_UNKNOWN;
+                } else {
+                    LOGINFO("Skip Disable ARC and not notifying the UI as  m_hdmiInAudioDeviceConnected = false\n");
+                }
+            } catch (const std::exception& err) {
+                LOGERR("Exception caught: message=%s", err.what());
+            }
         }
 
-        void DisplaySettings::OnResolutionPostChange(const int width, const int height)
+        LOGINFO("updated isCecEnabled [%d] ... \n", isCecEnabled);
+    }
+
+    // --- stopCecTimeAndUnsubscribeEvent ---
+    void DisplaySettings::stopCecTimeAndUnsubscribeEvent()
+    {
+        LOGINFO("de-init cec timer and subscribbed event \n");
         {
-            LOGINFO("Received OnResolutionPostChange callback");
-            if(DisplaySettings::_instance) {
-                DisplaySettings::_instance->resolutionChanged(width, height);
+            lock_guard<mutex> lck(m_callMutex);
+            if (m_timer.isActive()) {
+                m_timer.stop();
+            }
+
+            if (m_AudioDeviceDetectTimer.isActive()) {
+                m_AudioDeviceDetectTimer.stop();
+            }
+            if (m_SADDetectionTimer.isActive()) {
+                m_SADDetectionTimer.stop();
+            }
+            if (m_ArcDetectionTimer.isActive()) {
+                m_ArcDetectionTimer.stop();
+            }
+            if (m_AudioDevicePowerOnStatusTimer.isActive()) {
+                m_AudioDevicePowerOnStatusTimer.stop();
+            }
+
+            if (nullptr != m_client) {
+                for (std::string eventName : m_clientRegisteredEventNames) {
+                    m_client->Unsubscribe(1000, _T(eventName));
+                    LOGINFO("Unsubscribing event %s\n", eventName.c_str());
+                }
+                m_clientRegisteredEventNames.clear();
+
+                LOGINFO("deleting m_client \n");
+                delete m_client;
+                m_client = nullptr;
+            }
+        }
+    }
+
+    // --- onTimer ---
+    void DisplaySettings::onTimer()
+    {
+        // lock to prevent: parallel onTimer runs, destruction during onTimer
+        lock_guard<mutex> lck(m_callMutex);
+
+        PluginHost::IShell::state state;
+        bool pluginActivated = false;
+
+        if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
+            LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
+            pluginActivated = true;
+        }
+
+        LOGWARN("DisplaySettings::onTimer pluginActivated:%d line:%d", pluginActivated, __LINE__);
+        if (!m_subscribed) {
+            if (pluginActivated && (subscribeForHdmiCecSinkEvent(HDMICECSINK_ARC_INITIATION_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_ARC_TERMINATION_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_SHORT_AUDIO_DESCRIPTOR_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_SYSTEM_AUDIO_MODE_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_AUDIO_DEVICE_CONNECTED_STATUS_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_CEC_ENABLED_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_AUDIO_DEVICE_POWER_STATUS_EVENT) == Core::ERROR_NONE) && (subscribeForHdmiCecSinkEvent(HDMICECSINK_ARC_AUDIO_STATUS_EVENT) == Core::ERROR_NONE)) {
+                m_subscribed = true;
+                if (m_timer.isActive()) {
+                    m_timer.stop();
+                    LOGINFO("Timer stopped.");
+                }
+                LOGINFO("Subscription completed.");
+                sleep(WARMING_UP_TIME_IN_SECONDS);
+
+            } else {
+                LOGERR("Could not subscribe this time, one more attempt in %d msec. Plugin is %s", RECONNECTION_TIME_IN_MILLISECONDS, pluginActivated ? "ACTIVE" : "BLOCKED");
+            }
+        } else {
+            // Standby ON transitions case
+            LOGINFO("Already subscribed. Stopping the timer.");
+            if (m_timer.isActive()) {
+                m_timer.stop();
             }
         }
 
-        void DisplaySettings::OnVideoFormatUpdate(dsHDRStandard_t videoFormatHDR)
+        if (!isCecEnabled) {
+            try {
+                isCecEnabled = getHdmiCecSinkCecEnableStatus();
+            } catch (const std::exception& err) {
+                LOGERR("Exception caught: message=%s", err.what());
+            }
+        }
+
+        if (m_subscribed) {
+            // Need to send power on request as this timer might have started based on standby out or boot up scenario
+            LOGINFO("%s: Audio Port : [HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n", __FUNCTION__);
+            sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
+            // Some AVR's and SB are not sending response for power on message even though it is in ON state
+            // Send power request immediately to query power status of the AVR
+            m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_REQUEST;
+            sendMsgToQueue(REQUEST_AUDIO_DEVICE_POWER_STATUS, NULL);
+            LOGINFO("[HDMI_ARC0] sendAudioDevicePowerStatusRequestMsg!!!\n");
+        }
+    }
+
+    // --- checkAudioDeviceDetectionTimer ---
+    void DisplaySettings::checkAudioDeviceDetectionTimer()
+    {
+        // lock to prevent: parallel onTimer runs, destruction during onTimer
+        lock_guard<mutex> lck(m_callMutex);
+        if (m_subscribed && m_hdmiCecAudioDeviceDetected) {
+            // Connected Audio Ports status update is necessary on bootup / power state transitions
+            m_systemAudioMode_Power_RequestedAndReceived = false;
+            LOGINFO("%s: Audio Port : [HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n", __FUNCTION__);
+            sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
+            LOGINFO("[HDMI_ARC0] Starting the timer to check audio device power status after power on msg!!!\n");
+            m_AudioDevicePowerOnStatusTimer.start(AUDIO_DEVICE_POWER_TRANSITION_TIME_IN_MILLISECONDS);
+        } else {
+            LOGINFO("%s: No Audio device detected even after timeout\n", __FUNCTION__);
+        }
+
+        if (m_AudioDeviceDetectTimer.isActive()) {
+            m_AudioDeviceDetectTimer.stop();
+        }
+    }
+
+    // --- checkAudioDevicePowerStatusTimer ---
+    void DisplaySettings::checkAudioDevicePowerStatusTimer()
+    {
+
+        lock_guard<mutex> lck(m_callMutex);
+        if (m_subscribed && m_hdmiCecAudioDeviceDetected) {
+            // Some AVR's and SB are not sending response for power on message even though it is in ON state
+            // Send power request immediately to query power status of the AVR
+            LOGINFO("[HDMI_ARC0] m_hdmiInAudioDevicePowerState [%d] \n", m_hdmiInAudioDevicePowerState);
+            if (m_hdmiInAudioDevicePowerState != AUDIO_DEVICE_POWER_STATE_ON) {
+                m_hdmiInAudioDevicePowerState = AUDIO_DEVICE_POWER_STATE_REQUEST;
+                if ((retryPowerRequestCount == 2) || (retryPowerRequestCount == 4)) // Send Power On msg again for 3rd and 4th iteration
+                {
+                    LOGINFO("[HDMI_ARC0] sendHdmiCecSinkAudioDevicePowerOn !!! \n");
+                    sendMsgToQueue(SEND_AUDIO_DEVICE_POWERON_MSG, NULL);
+                }
+                sendMsgToQueue(REQUEST_AUDIO_DEVICE_POWER_STATUS, NULL);
+                retryPowerRequestCount++;
+                LOGINFO("[HDMI_ARC0] sendAudioDevicePowerStatusRequestMsg, retryPowerRequestCount [%d]\n", retryPowerRequestCount);
+            }
+        } else {
+            LOGINFO("%s: No Audio device detected\n", __FUNCTION__);
+        }
+
+        //            if (((m_hdmiInAudioDevicePowerState == AUDIO_DEVICE_POWER_STATE_ON) || (retryPowerRequestCount >= 5)) && m_AudioDevicePowerOnStatusTimer.isActive()) {
+        if ((retryPowerRequestCount >= 5) && m_AudioDevicePowerOnStatusTimer.isActive()) {
+            m_systemAudioMode_Power_RequestedAndReceived = true; // resetting the Variable if power status not received.
+            LOGINFO("Stopping timer, Audio Device power status - m_hdmiInAudioDevicePowerState [%d]!!!\n", m_hdmiInAudioDevicePowerState);
+            retryPowerRequestCount = 0;
+            m_AudioDevicePowerOnStatusTimer.stop();
+        }
+    }
+
+    uint32_t DisplaySettings::getTVHDRCapabilities(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        bool success = false;
         {
-            LOGINFO("Received OnVideoFormatUpdate callback. Video format: %d", videoFormatHDR);
-            if(DisplaySettings::_instance) {
-                DisplaySettings::_instance->notifyVideoFormatChange(videoFormatHDR);
+            // DS_IARM: uses default video port, checks isDisplayConnected; returns failure if not connected
+            const std::string strVideoPort = DSHelper::getDefaultVideoPortName();
+            if (!isDisplayConnected(strVideoPort)) {
+                LOGERR("getTVHDRCapabilities failure: display not connected on %s!", strVideoPort.c_str());
+            } else {
+                const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(strVideoPort);
+                if (INVALID_DS_HANDLE != videoHandle) {
+                    auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                    if (vp != nullptr) {
+                        int32_t capabilities = 0;
+                        Core::hresult comResult = vp->GetTVHDRCapabilities(videoHandle, capabilities);
+                        if (comResult == Core::ERROR_NONE) {
+                            response["capabilities"] = capabilities;
+                            success = true;
+                        }
+                        else {
+                            LOGERR("GetTVHDRCapabilities failed for videoPort='%s', Error=%d", strVideoPort.c_str(), static_cast<int>(comResult));
+                        }
+                        vp->Release();
+                    }
+                    else {
+                        LOGERR("IDeviceSettingsVideoPort not available");
+                    }
+                }
+                else {
+                    LOGERR("video port handle not found for videoPort='%s'", strVideoPort.c_str());
+                }
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::isConnectedDeviceRepeater(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        bool success = true;
+        bool isConnectedDeviceRepeater = false;
+        {
+            const std::string strVideoPort = DSHelper::getDefaultVideoPortName();
+            if (!isDisplayConnected(strVideoPort)) {
+                LOGERR("isConnectedDeviceRepeater failure: display not connected on %s\n", strVideoPort.c_str());
+                success = false;
+            } else {
+                auto* disp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+                if (disp != nullptr) {
+                    int32_t displayHandle = -1;
+                    Core::hresult comResult = Core::ERROR_NONE;
+                    comResult = disp->GetDisplay(Exchange::IDeviceSettingsDisplay::DS_DISPLAY_PORT_TYPE_HDMI, 0, displayHandle);
+                    if (comResult == Core::ERROR_NONE && INVALID_DS_HANDLE != displayHandle) {
+                        Exchange::IDeviceSettingsDisplay::DisplayEDID edId{};
+                        Exchange::IDeviceSettingsDisplay::IDSVideoPortResolutionIterator* resList = nullptr;
+                        comResult = disp->GetDisplayEdid(displayHandle, edId, resList);
+                        if (comResult == Core::ERROR_NONE) {
+                            isConnectedDeviceRepeater = edId.isRepeater;
+                            if (resList != nullptr) {
+                                resList->Release();
+                                resList = nullptr;
+                            }
+                        } else {
+                            LOGERR("GetDisplayEdid failed, Error=%d", static_cast<int>(comResult));
+                            success = false;
+                        }
+                    } else {
+                        LOGERR("video port handle not found, Error=%d", static_cast<int>(comResult));
+                        success = false;
+                    }
+                    disp->Release();
+                } else {
+                    LOGERR("display handle not found");
+                    success = false;
+                }
+            }
+        }
+        response["HdcpRepeater"] = isConnectedDeviceRepeater;
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::getDefaultResolution(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        bool success = true;
+        {
+            const std::string strVideoPort = DSHelper::getDefaultVideoPortName();
+            if (!isDisplayConnected(strVideoPort)) {
+                LOGERR("getDefaultResolution failure: display not connected on %s\n", strVideoPort.c_str());
+                success = false;
+            } else {
+                const std::string defaultRes = DSHelper::getVideoPortDefaultResolution(strVideoPort);
+                if (!defaultRes.empty()) {
+                    response["defaultResolution"] = defaultRes;
+                } else {
+                    LOGERR("no default resolution for port '%s'", strVideoPort.c_str());
+                    success = false;
+                }
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::setScartParameter(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "scartParameter");
+        returnIfParamNotFound(parameters, "scartParameterData");
+
+        string sScartParameter = parameters["scartParameter"].String();
+        string sScartParameterData = parameters["scartParameterData"].String();
+
+        bool success = true;
+        // SCART is a legacy interface not supported via COM-RPC. Skip.
+        LOGWARN("[COMRPC Unavailable] setScartParameter: not supported in COM-RPC mode");
+        success = false;
+        returnResponse(success);
+    }
+    // Thunder plugins communication end
+
+
+    // End methods
+
+    // Begin events
+    void DisplaySettings::resolutionPreChange()
+    {
+        sendNotify("resolutionPreChange", JsonObject());
+    }
+
+    void DisplaySettings::resolutionChanged(int width, int height)
+    {
+        vector<string> connectedDisplays;
+        getConnectedVideoDisplaysHelper(connectedDisplays);
+
+        string firstDisplay = "";
+        string firstResolution = "";
+        bool firstResolutionSet = false;
+        for (int i = 0; i < (int)connectedDisplays.size(); i++) {
+            string resolution;
+            string display = connectedDisplays.at(i);
+            {
+                const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(display);
+                if (INVALID_DS_HANDLE != videoHandle) {
+                    // Derive resolution name from cached config store — avoids COM-RPC round-trip
+                    using VR = Exchange::IDeviceSettingsVideoPort::VideoResolution;
+                    VR pixRes = VR::DS_VIDEO_PIXELRES_MAX;
+                    if      (width == 720  && height == 480)  pixRes = VR::DS_VIDEO_PIXELRES_720X480;
+                    else if (width == 720  && height == 576)  pixRes = VR::DS_VIDEO_PIXELRES_720X576;
+                    else if (width == 1280 && height == 720)  pixRes = VR::DS_VIDEO_PIXELRES_1280X720;
+                    else if (width == 1366 && height == 768)  pixRes = VR::DS_VIDEO_PIXELRES_1366X768;
+                    else if (width == 1920 && height == 1080) pixRes = VR::DS_VIDEO_PIXELRES_1920X1080;
+                    else if (width == 3840 && height == 2160) pixRes = VR::DS_VIDEO_PIXELRES_3840X2160;
+                    else if (width == 4096 && height == 2160) pixRes = VR::DS_VIDEO_PIXELRES_4096X2160;
+
+                    VideoPortEntry vpEntry;
+                    if (pixRes != VR::DS_VIDEO_PIXELRES_MAX && DSHelper::resolveVideoPortByName(display, vpEntry)) {
+                        std::vector<VideoPortResolution> vpResolutions;
+                        if (DSHelper::getVideoPortResolutionsForType(vpEntry.type, vpResolutions)) {
+                            for (const auto& r : vpResolutions) {
+                                if (r.pixelResolution == pixRes) {
+                                    resolution = r.name;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (resolution.empty()) {
+                        LOGERR("resolutionChanged: no cached name for %dx%d on port '%s'", width, height, display.c_str());
+                    }
+                }
+            }
+            // DS_IARM: uses device::Host::getInstance().DSHelper::getDefaultVideoPortName() for default port
+            // COM-RPC: use DSHelper::getDefaultVideoPortName() accessor
+            const std::string defaultPort = DSHelper::getDefaultVideoPortName();
+            std::string videoPortName = defaultPort.substr(0, defaultPort.size() - 1);
+            if (!resolution.empty()) {
+                if (Utils::String::stringContains(display, videoPortName.c_str())) {
+                    // only report first HDMI connected device is HDMI is connected
+                    JsonObject params;
+                    params["width"] = width;
+                    params["height"] = height;
+                    params["videoDisplayType"] = display;
+                    params["resolution"] = resolution;
+                    sendNotify("resolutionChanged", params);
+                    return;
+                } else if (!firstResolutionSet) {
+                    firstDisplay = display;
+                    firstResolution = resolution;
+                    firstResolutionSet = true;
+                }
+            }
+        }
+        if (firstResolutionSet) {
+            // if HDMI is not connected then notify the server of first connected device
+            JsonObject params;
+            params["width"] = width;
+            params["height"] = height;
+            params["videoDisplayType"] = firstDisplay;
+            params["resolution"] = firstResolution;
+            sendNotify("resolutionChanged", params);
+        }
+    }
+
+    void DisplaySettings::zoomSettingUpdated(const string& zoomSetting)
+    { // servicemanager sample: {"name":"zoomSettingUpdated","params":{"zoomSetting":"None","success":true,"videoDisplayType":"all"}
+      // servicemanager sample: {"name":"zoomSettingUpdated","params":{"zoomSetting":"Full","success":true,"videoDisplayType":"all"}
+        JsonObject params;
+        params["zoomSetting"] = zoomSetting;
+        params["videoDisplayType"] = "all";
+        sendNotify("zoomSettingUpdated", params);
+    }
+
+    void DisplaySettings::activeInputChanged(bool activeInput)
+    {
+        JsonObject params;
+        params["activeInput"] = activeInput;
+        sendNotify("activeInputChanged", params);
+    }
+
+    void DisplaySettings::connectedVideoDisplaysUpdated(int hdmiHotPlugEvent)
+    {
+        static int previousStatus = HDMI_HOT_PLUG_EVENT_CONNECTED;
+        static int firstTime = 1;
+
+        if (firstTime || previousStatus != hdmiHotPlugEvent) {
+            firstTime = 0;
+            JsonArray connectedDisplays;
+            if (HDMI_HOT_PLUG_EVENT_CONNECTED == hdmiHotPlugEvent) {
+                connectedDisplays.Add("HDMI0");
+            } else {
+                /* notify Empty list on HDMI-output-disconnect hotplug */
             }
 
+            JsonObject params;
+            params["connectedVideoDisplays"] = connectedDisplays;
+            sendNotify("connectedVideoDisplaysUpdated", params);
+        }
+        previousStatus = hdmiHotPlugEvent;
+
+        // If HDMI hotplug event occurs, DisplaySettings  re-evaluate whether it should be signalling ALLM output of the HDMI port
+        std::string currentAllmState = "";
+        Utils::String::getSystemModePropertyValue("DEVICE_OPTIMIZE", "currentstate", currentAllmState);
+        if (currentAllmState == "VIDEO" || currentAllmState == "GAME") {
+            Request(currentAllmState);
+        }
+    }
+
+    void DisplaySettings::connectedAudioPortUpdated(int iAudioPortType, bool isPortConnected)
+    {
+        JsonObject params;
+        string sPortName;
+        string sPortStatus;
+        // COM-RPC path: portType maps to Exchange::IDeviceSettingsAudio::AudioPortType
+        if (iAudioPortType == static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HDMIARC)) {
+            params["HotpluggedAudioPort"] = "HDMI_ARC0";
+            sPortName.assign("HDMI_ARC0");
+        } else if (iAudioPortType == static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HEADPHONE)) {
+            params["HotpluggedAudioPort"] = "HEADPHONE0";
+            sPortName.assign("HEADPHONE0");
         }
 
-    } // namespace Plugin
+        if (1 == isPortConnected) {
+            params["isConnected"] = "connected";
+            sPortStatus.assign("connected");
+        } else {
+            params["isConnected"] = "disconnected";
+            sPortStatus.assign("disconnected");
+        }
+        LOGWARN("Thunder sends notification %s audio port hotplug status %s", sPortName.c_str(), sPortStatus.c_str());
+        sendNotify("connectedAudioPortUpdated", params);
+    }
+
+    // End events
+
+    void DisplaySettings::getConnectedVideoDisplaysHelper(vector<string>& connectedDisplays)
+    {
+        // COM-RPC path: iterate over cached video port handles and check connectivity
+        for (const auto& kv : DSHelper::getVideoPortHandleEntries()) {
+            if (isDisplayConnected(kv.first)) {
+                const std::string& portName = kv.first;
+                if (Utils::String::stringContains(portName, "HDMI") && !Utils::String::stringContains(portName, "HDMI_ARC")) {
+                    connectedDisplays.clear();
+                    connectedDisplays.emplace_back(portName);
+                    break;
+                } else {
+                    vectorSet(connectedDisplays, portName);
+                }
+            }
+        }
+    }
+
+    bool DisplaySettings::checkPortName(std::string& name) const
+    {
+        if (Utils::String::stringContains(name, "HDMI")) {
+            if (Utils::String::stringContains(name, "HDMI_ARC"))
+                name = "HDMI_ARC0";
+            else
+                name = "HDMI0";
+        } else if (Utils::String::stringContains(name, "SPDIF"))
+            name = "SPDIF0";
+        else if (Utils::String::stringContains(name, "IDLR"))
+            name = "IDLR0";
+        else if (Utils::String::stringContains(name, "SPEAKER"))
+            name = "SPEAKER0";
+        else if (Utils::String::stringContains(name, "HEADPHONE"))
+            name = "HEADPHONE0";
+        else if (!name.empty()) // Empty is allowed
+            return false;
+
+        return true;
+    }
+
+    uint32_t DisplaySettings::resetDialogEnhancement(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->ResetAudioDialogEnhancement(audioHandle);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("ResetAudioDialogEnhancement failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::resetBassEnhancer(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->ResetAudioBassEnhancer(audioHandle);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("ResetAudioBassEnhancer failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::resetSurroundVirtualizer(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->ResetAudioSurroundVirtualizer(audioHandle);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("ResetAudioSurroundVirtualizer failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+
+    uint32_t DisplaySettings::resetVolumeLeveller(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        bool success = true;
+        string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+        {
+            const int32_t audioHandle = DSHelper::getCachedAudioPortHandle(audioPort);
+            if (INVALID_DS_HANDLE != audioHandle) {
+                auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+                if (audio != nullptr) {
+                    Core::hresult comResult = audio->ResetAudioVolumeLeveller(audioHandle);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("ResetAudioVolumeLeveller failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
+                        success = false;
+                    }
+                    audio->Release();
+                } else {
+                    LOGERR("IDeviceSettingsAudio not available");
+                    success = false;
+                }
+            } else {
+                LOGERR("Failed to get audio port handle for audioPort='%s'", audioPort.c_str());
+                success = false;
+            }
+        }
+        returnResponse(success);
+    }
+    uint32_t DisplaySettings::getVideoFormat(const JsonObject& parameters, JsonObject& response)
+    { // sample servicemanager response:{"currentVideoFormat":"SDR","supportedVideoFormat":["SDR","HDR10","HLG","DV","Technicolor Prime"],"success":true}
+        LOGINFOMETHOD();
+        {
+            // DS_IARM: always uses DSHelper::getDefaultVideoPortName(); no videoPort parameter in original
+            string videoPort = parameters.HasLabel("videoPort") ? parameters["videoPort"].String() : DSHelper::getDefaultVideoPortName();
+            const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(videoPort);
+            if (INVALID_DS_HANDLE != videoHandle) {
+                auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    Exchange::IDeviceSettingsVideoPort::HDRStandard hdrStd = Exchange::IDeviceSettingsVideoPort::HDRStandard::DS_HDRSTANDARD_NONE;
+                    Core::hresult comResult = vp->GetVideoEOTF(videoHandle, hdrStd);
+                    if (comResult == Core::ERROR_NONE) {
+                        response["currentVideoFormat"] = getVideoFormatTypeToString(static_cast<uint32_t>(hdrStd));
+                    } else {
+                        response["currentVideoFormat"] = "NONE";
+                        LOGERR("GetVideoEOTF failed for videoPort='%s', Error=%d", videoPort.c_str(), static_cast<int>(comResult));
+                    }
+                    vp->Release();
+                } else {
+                    response["currentVideoFormat"] = "NONE";
+                    LOGERR("IDeviceSettingsVideoPort not available");
+                }
+            } else {
+                response["currentVideoFormat"] = "NONE";
+                LOGERR("Failed to get video port handle for videoPort='%s'", videoPort.c_str());
+            }
+        }
+        response["supportedVideoFormat"] = getSupportedVideoFormats();
+        returnResponse(true);
+    }
+
+    JsonArray DisplaySettings::getSupportedVideoFormats()
+    {
+        JsonArray videoFormats;
+        {
+            auto* vd = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoDevice>();
+            if (vd != nullptr) {
+                int32_t capabilities = 0;
+                int videoDeviceHandle = DSHelper::getCachedVideoDeviceHandle(0);
+                if (INVALID_DS_HANDLE == videoDeviceHandle) {
+                    LOGERR("Failed to get video device handle for index 0");
+                }
+                else {
+                    Core::hresult comResult = vd->GetHDRCapabilities(videoDeviceHandle, capabilities);
+                    if (comResult == Core::ERROR_NONE) {
+                        using HS = Exchange::IDeviceSettingsVideoPort::HDRStandard;
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_HDR10))
+                            videoFormats.Add("HDR10");
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_HLG))
+                            videoFormats.Add("HLG");
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_DOLBYVISION))
+                            videoFormats.Add("DV");
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_TECHNICOLORPRIME))
+                            videoFormats.Add("Technicolor Prime");
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_HDR10PLUS))
+                            videoFormats.Add("HDR10PLUS");
+                        if (capabilities & static_cast<int32_t>(HS::DS_HDRSTANDARD_SDR))
+                            videoFormats.Add("SDR");
+                    }
+                    else {
+                        LOGERR("GetHDRCapabilities failed for videoDeviceHandle=%d, Error=%d", videoDeviceHandle, static_cast<int>(comResult));
+                    }
+                }
+                vd->Release();
+            }
+            else {
+                LOGERR("IDeviceSettingsVideoDevice not available");
+            }
+        }
+        return videoFormats;
+    }
+
+    const char* DisplaySettings::getVideoFormatTypeToString(
+        uint32_t format)
+    {
+        const char* strValue = "NONE";
+        using HS = Exchange::IDeviceSettingsVideoPort::HDRStandard;
+        switch (static_cast<HS>(format)) {
+        case HS::DS_HDRSTANDARD_SDR:
+            strValue = "SDR";
+            break;
+        case HS::DS_HDRSTANDARD_HDR10:
+            strValue = "HDR10";
+            break;
+        case HS::DS_HDRSTANDARD_HDR10PLUS:
+            strValue = "HDR10PLUS";
+            break;
+        case HS::DS_HDRSTANDARD_HLG:
+            strValue = "HLG";
+            break;
+        case HS::DS_HDRSTANDARD_DOLBYVISION:
+            strValue = "DV";
+            break;
+        case HS::DS_HDRSTANDARD_TECHNICOLORPRIME:
+            strValue = "TechnicolorPrime";
+            break;
+        default:
+            strValue = "NONE";
+            break;
+        }
+        return strValue;
+    }
+
+    uint32_t DisplaySettings::getVideoFormatTypeFromString(const char* strFormat)
+    {
+        if (strcmp(strFormat, "SDR") == 0)
+            return static_cast<uint32_t>(HDRStandard::DS_HDRSTANDARD_SDR);
+        if (strcmp(strFormat, "HDR10") == 0)
+            return static_cast<uint32_t>(HDRStandard::DS_HDRSTANDARD_HDR10);
+        if (strcmp(strFormat, "HDR10PLUS") == 0)
+            return static_cast<uint32_t>(HDRStandard::DS_HDRSTANDARD_HDR10PLUS);
+        if (strcmp(strFormat, "DV") == 0)
+            return static_cast<uint32_t>(HDRStandard::DS_HDRSTANDARD_DOLBYVISION);
+        if (strcmp(strFormat, "HLG") == 0)
+            return static_cast<uint32_t>(HDRStandard::DS_HDRSTANDARD_HLG);
+        if (strcmp(strFormat, "TechnicolorPrime") == 0)
+            return static_cast<uint32_t>(HDRStandard::DS_HDRSTANDARD_TECHNICOLORPRIME);
+        return static_cast<uint32_t>(HDRStandard::DS_HDRSTANDARD_NONE);
+    }
+    Core::hresult DisplaySettings::Request(const string& newState)
+    {
+        vector<string> connectedDisplays;
+        getConnectedVideoDisplaysHelper(connectedDisplays);
+        for (int i = 0; i < (int)connectedDisplays.size(); i++) {
+            const std::string& strVideoPort = connectedDisplays.at(i);
+            bool enable = (newState == "GAME") ? true : false;
+            const int32_t displayHandle = DSHelper::getCachedDisplayHandle(strVideoPort);
+            if (INVALID_DS_HANDLE != displayHandle) {
+                Core::hresult comResult = Core::ERROR_NONE;
+                auto* disp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+                if (disp != nullptr) {
+                    if (enable) {
+                        comResult = disp->SetAVIContentType(displayHandle, DisplayAVIContentType::DS_DISPLAY_AVI_CONTENT_GAME);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetAVIContentType failed for displayHandle=%d, Error=%d", displayHandle, static_cast<int>(comResult));
+                        }
+                        comResult = disp->SetAVIScanInformation(displayHandle, DisplayAVIScanInformation::DS_DISPLAY_AVI_SCAN_UNDERSCAN);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetAVIScanInformation failed for displayHandle=%d, Error=%d", displayHandle, static_cast<int>(comResult));
+                        }
+                    } else {
+                        comResult = disp->SetAVIContentType(displayHandle, DisplayAVIContentType::DS_DISPLAY_AVI_CONTENT_NOT_SIGNALLED);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetAVIContentType failed for displayHandle=%d, Error=%d", displayHandle, static_cast<int>(comResult));
+                        }
+                        comResult = disp->SetAVIScanInformation(displayHandle, DisplayAVIScanInformation::DS_DISPLAY_AVI_SCAN_NO_DATA);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("SetAVIScanInformation failed for displayHandle=%d, Error=%d", displayHandle, static_cast<int>(comResult));
+                        }
+                    }
+                    comResult = disp->SetAllmEnabled(displayHandle, enable);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("SetAllmEnabled failed for displayHandle=%d, Error=%d", displayHandle, static_cast<int>(comResult));
+                    }
+                    disp->Release();
+                }
+                else {
+                    LOGERR("IDeviceSettingsDisplay not available");
+                }
+            }
+            else {
+                LOGERR("display handle not found for videoPort='%s'", strVideoPort.c_str());
+            }
+        }
+        if (0 == (int)connectedDisplays.size()) {
+            LOGWARN("No display connected to device (or)device's powerstate is not ON");
+            return Core::ERROR_GENERAL;
+        }
+        return Core::ERROR_NONE;
+    }
+
+    // ================================================================
+    // Methods ported from DS_IARM (JSONRPC/CEC/power — no libds)
+    // ================================================================
+} // namespace Plugin
 } // namespace WPEFramework
