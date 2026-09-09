@@ -237,6 +237,9 @@ namespace Plugin {
         registerMethodLockedApi("getSupportedSettopResolutions", &DisplaySettings::getSupportedSettopResolutions, this);
         registerMethodLockedApi("getSupportedAudioPorts", &DisplaySettings::getSupportedAudioPorts, this);
         registerMethodLockedApi("getSupportedAudioModes", &DisplaySettings::getSupportedAudioModes, this);
+        registerMethodLockedApi("getSupportedAudioConfigs", &DisplaySettings::getSupportedAudioConfigs, this);
+        registerMethodLockedApi("getAudioConfig", &DisplaySettings::getAudioConfig, this);
+        registerMethodLockedApi("setAudioConfig", &DisplaySettings::setAudioConfig, this);
         registerMethodLockedApi("getAudioFormat", &DisplaySettings::getAudioFormat, this);
         registerMethodLockedApi("getZoomSetting", &DisplaySettings::getZoomSetting, this);
         registerMethodLockedApi("setZoomSetting", &DisplaySettings::setZoomSetting, this);
@@ -1280,6 +1283,85 @@ namespace Plugin {
             }
         }
         setResponseArray(response, "supportedAudioPorts", supportedAudioPorts);
+        returnResponse(true);
+    }
+
+    uint32_t DisplaySettings::getSupportedAudioConfigs(const JsonObject& /*parameters*/, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        vector<string> supportedAudioConfigs;
+        auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+        if (audio == nullptr) {
+            LOGERR("Failed to acquire IDeviceSettingsAudio interface");
+            setResponseArray(response, "supportedAudioConfigs", supportedAudioConfigs);
+            returnResponse(false);
+        }
+
+        Exchange::IDeviceSettingsAudio::IDeviceSettingsAudioApplicationConfigIterator* iterator = nullptr;
+        const Core::hresult result = audio->GetApplicationAudioConfigList(0, iterator);
+        audio->Release();
+        if ((result != Core::ERROR_NONE) || (iterator == nullptr)) {
+            LOGERR("GetApplicationAudioConfigList failed, Error=%d", static_cast<int>(result));
+            setResponseArray(response, "supportedAudioConfigs", supportedAudioConfigs);
+            returnResponse(false);
+        }
+
+        string config;
+        while (iterator->Next(config)) {
+            supportedAudioConfigs.push_back(config);
+        }
+        iterator->Release();
+        setResponseArray(response, "supportedAudioConfigs", supportedAudioConfigs);
+        returnResponse(true);
+    }
+
+    uint32_t DisplaySettings::getAudioConfig(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "audioConfig");
+        const string audioConfig = parameters["audioConfig"].String();
+        bool enabled = false;
+        auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+        if (audio == nullptr) {
+            LOGERR("Failed to acquire IDeviceSettingsAudio interface");
+            response["enabled"] = enabled;
+            returnResponse(false);
+        }
+
+        const Core::hresult result = audio->GetApplicationAudioConfig(0, audioConfig, enabled);
+        audio->Release();
+        response["enabled"] = enabled;
+        if (result != Core::ERROR_NONE) {
+            LOGERR("GetApplicationAudioConfig failed for config='%s', Error=%d", audioConfig.c_str(), static_cast<int>(result));
+            returnResponse(false);
+        }
+        returnResponse(true);
+    }
+
+    uint32_t DisplaySettings::setAudioConfig(const JsonObject& parameters, JsonObject& response)
+    {
+        LOGINFOMETHOD();
+        returnIfParamNotFound(parameters, "audioConfig");
+        returnIfParamNotFound(parameters, "enabled");
+        const string audioConfig = parameters["audioConfig"].String();
+        bool enabled = false;
+        if (!TryGetBoolParam(parameters, "enabled", enabled)) {
+            LOGWARN("enabled invalid; expected true or false");
+            returnResponse(false);
+        }
+
+        auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+        if (audio == nullptr) {
+            LOGERR("Failed to acquire IDeviceSettingsAudio interface");
+            returnResponse(false);
+        }
+
+        const Core::hresult result = audio->SetApplicationAudioConfig(0, audioConfig, enabled);
+        audio->Release();
+        if (result != Core::ERROR_NONE) {
+            LOGERR("SetApplicationAudioConfig failed for config='%s', Error=%d", audioConfig.c_str(), static_cast<int>(result));
+            returnResponse(false);
+        }
         returnResponse(true);
     }
 
