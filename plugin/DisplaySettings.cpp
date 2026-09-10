@@ -1286,7 +1286,7 @@ namespace Plugin {
         returnResponse(true);
     }
 
-    uint32_t DisplaySettings::getSupportedAudioConfigs(const JsonObject& /*parameters*/, JsonObject& response)
+    uint32_t DisplaySettings::getSupportedAudioConfigs(const JsonObject& parameters, JsonObject& response)
     {
         LOGINFOMETHOD();
         vector<string> supportedAudioConfigs;
