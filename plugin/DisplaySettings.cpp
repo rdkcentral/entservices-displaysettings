@@ -223,7 +223,7 @@ namespace WPEFramework {
             , _registeredEventHandlers(false)
             , _registeredDsEventHandlers(false)
         {
-            LOGINFO("constructor");
+            LOGINFO("constructor1");
             DisplaySettings::_instance = this;
             m_client = nullptr;
 
