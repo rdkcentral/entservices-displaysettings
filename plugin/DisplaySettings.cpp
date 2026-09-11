@@ -423,7 +423,7 @@ namespace WPEFramework {
 
         DisplaySettings::~DisplaySettings()
         {
-            LOGINFO ("dtor3");
+            LOGINFO ("dtor4");
 			isDisplayConnectedCacheUpdated = false;
             isResCacheUpdated = false;
 			audioPortEnableStatusMap.clear();
