@@ -261,7 +261,7 @@ jobs:
 
           echo "Creating new feature branch '$FEATURE_BRANCH' from '$SUPPORT_BRANCH'..."
           # git checkout -b "$FEATURE_BRANCH" "origin/$SUPPORT_BRANCH"
-          FEATURE_BRANCH=feature/RDKEMW-21092_29 
+          FEATURE_BRANCH=dummy_support8.6.3
           git checkout $FEATURE_BRANCH
 
           # Verify checkout succeeded
