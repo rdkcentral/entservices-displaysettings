@@ -20,6 +20,7 @@
 #pragma once
 
 #include <mutex>
+#include <atomic>
 #include <condition_variable>
 #include "Module.h"
 #include "dsTypes.h"
@@ -276,6 +277,8 @@ namespace WPEFramework {
         int getCurrentArcRoutingState(void);
 
 	    void onTimer();
+	    void onWarmupTimerExpired();
+	    void checkCecEnabledAndNotifyAudioPowerOn();
 	    void stopCecTimeAndUnsubscribeEvent();
             void checkAudioDeviceDetectionTimer();
 	    void checkArcDeviceConnected();
@@ -287,6 +290,7 @@ namespace WPEFramework {
 	    TpTimer m_SADDetectionTimer;
 	    TpTimer m_ArcDetectionTimer;
 	    TpTimer m_AudioDevicePowerOnStatusTimer;
+	    TpTimer m_WarmupTimer;
             bool m_subscribed;
             std::mutex m_callMutex;
             std::mutex m_SadMutex;
@@ -307,7 +311,7 @@ namespace WPEFramework {
         bool _registeredEventHandlers;
         void InitializePowerManager();
             JsonObject getAudioOutputPortConfig() { return m_audioOutputPortConfig; }
-            static PowerState m_powerState;
+            std::atomic<PowerState> m_powerState;
 
     private:
         bool _registeredDsEventHandlers;
@@ -400,6 +404,9 @@ namespace WPEFramework {
             std::mutex m_sendMsgMutex;
 	    std::queue<SendMsgInfo> m_sendMsgQueue;
             std::condition_variable m_sendMsgCV;
+
+            std::mutex m_audioPortInitMutex;
+            std::condition_variable m_audioPortInitCV;
 
             int m_hdmiInAudioDevicePowerState;
             int m_currentArcRoutingState;

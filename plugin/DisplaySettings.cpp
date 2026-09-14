@@ -49,6 +49,8 @@
 #include <cerrno>
 #include <climits>
 #include <cstdlib>
+#include <chrono>
+#include <thread>
 
 using namespace std;
 
@@ -93,7 +95,7 @@ static int  hdmiArcPortId = -1;
 static int retryPowerRequestCount = 0;
 static int  hdmiArcVolumeLevel = 0;
 static bool hdmiArcMuteStatus = false;
-bool audioPortInitActive = false;
+std::atomic<bool> audioPortInitActive(false);
 std::vector<int> sad_list;
 
 static std::map<std::string, bool> audioPortEnableStatusMap;
@@ -273,12 +275,12 @@ namespace WPEFramework {
         SERVICE_REGISTRATION(DisplaySettings, API_VERSION_NUMBER_MAJOR, API_VERSION_NUMBER_MINOR, API_VERSION_NUMBER_PATCH);
 
         DisplaySettings* DisplaySettings::_instance = nullptr;
-        WPEFramework::Exchange::IPowerManager::PowerState DisplaySettings::m_powerState = WPEFramework::Exchange::IPowerManager::POWER_STATE_STANDBY;
 
         DisplaySettings::DisplaySettings()
             : PluginHost::JSONRPC()
             , _pwrMgrNotification(*this)
             , _registeredEventHandlers(false)
+            , m_powerState(WPEFramework::Exchange::IPowerManager::POWER_STATE_STANDBY)
             , _registeredDsEventHandlers(false)
         {
             LOGINFO("constructor");
@@ -599,12 +601,13 @@ namespace WPEFramework {
         }
 	    m_timer.connect(std::bind(&DisplaySettings::onTimer, this));
 	    {
-	    std::lock_guard<std::mutex> lock(m_callMutex);
+	        std::lock_guard<std::mutex> lock(m_callMutex);
             m_AudioDeviceDetectTimer.connect(std::bind(&DisplaySettings::checkAudioDeviceDetectionTimer, this));
             m_ArcDetectionTimer.connect(std::bind(&DisplaySettings::checkArcDeviceConnected, this));
             m_SADDetectionTimer.connect(std::bind(&DisplaySettings::checkSADUpdate, this));
-	    m_AudioDevicePowerOnStatusTimer.connect(std::bind(&DisplaySettings::checkAudioDevicePowerStatusTimer, this));
-	    }
+	        m_AudioDevicePowerOnStatusTimer.connect(std::bind(&DisplaySettings::checkAudioDevicePowerStatusTimer, this));
+        }
+	    m_WarmupTimer.connect(std::bind(&DisplaySettings::onWarmupTimerExpired, this));
 
             InitializePowerManager();
             try
@@ -625,7 +628,7 @@ namespace WPEFramework {
             }
             else
             {
-                LOGWARN("Current power state %d", m_powerState);
+                LOGWARN("Current power state %d", m_powerState.load());
             }
             LOGWARN ("DisplaySettings::Initialize completes line:%d", __LINE__);
 
@@ -651,10 +654,11 @@ namespace WPEFramework {
                     DisplaySettings::_instance->m_sendMsgThreadRun = true;
                     DisplaySettings::_instance->m_sendMsgCV.notify_one();
             }
-            int count = 0;
-            while(audioPortInitActive && count < 20){
-                sleep(100);
-                count++;
+            {
+                std::unique_lock<std::mutex> lock(m_audioPortInitMutex);
+                if (!m_audioPortInitCV.wait_for(lock, std::chrono::milliseconds(2000), [](){ return !audioPortInitActive.load(); })) {
+                    LOGWARN("Timed out waiting for InitAudioPorts worker thread to finish; proceeding with Deinitialize");
+                }
             }
             try
             {
@@ -719,8 +723,8 @@ namespace WPEFramework {
                 }
                 if (Core::ERROR_NONE == retStatus)
                 {
-                    m_powerState = pwrStateCur;
-                    LOGINFO("DisplaySettings::m_powerState:%d", m_powerState);
+                    m_powerState.store(pwrStateCur);
+                    LOGINFO("DisplaySettings::m_powerState:%d", m_powerState.load());
                 }
             }
 
@@ -4831,8 +4835,8 @@ namespace WPEFramework {
             }
             if (Core::ERROR_NONE == retStatus)
             {
-                m_powerState = pwrStateCur;
-                LOGWARN("DisplaySettings::m_powerState: %d", m_powerState);
+                m_powerState.store(pwrStateCur);
+                LOGWARN("DisplaySettings::m_powerState: %d", m_powerState.load());
             }
 
             else
@@ -4840,21 +4844,24 @@ namespace WPEFramework {
                 LOGWARN("GetPowerState failed");
             }
 
-            return m_powerState;
+            return m_powerState.load();
         }
 
         void DisplaySettings::initAudioPortsWorker(void)
         {
-            audioPortInitActive = true;
             DisplaySettings::_instance->InitAudioPorts();
-            audioPortInitActive = false;
+            {
+                std::lock_guard<std::mutex> lock(DisplaySettings::_instance->m_audioPortInitMutex);
+                audioPortInitActive.store(false);
+            }
+            DisplaySettings::_instance->m_audioPortInitCV.notify_all();
         }
 
         void DisplaySettings::onPowerModeChanged(const PowerState currentState, const PowerState newState)
         {
             LOGWARN("onPowerModeChanged: State Changed %d --> %d\r",
                          currentState, newState);
-            m_powerState = newState;
+            m_powerState.store(newState);
             if (newState == WPEFramework::Exchange::IPowerManager::POWER_STATE_ON){
                 isResCacheUpdated = false;
                 isDisplayConnectedCacheUpdated = false;
@@ -4862,6 +4869,8 @@ namespace WPEFramework {
             try
                 {
             LOGWARN("creating worker thread for initAudioPortsWorker ");
+            // Set before spawning so Deinitialize() can never observe a false-"done" race with thread start-up
+            audioPortInitActive.store(true);
             std::thread audioPortInitThread = std::thread(initAudioPortsWorker);
         audioPortInitThread.detach();
                 }
@@ -4909,10 +4918,20 @@ namespace WPEFramework {
              }
                     
                 if(DisplaySettings::_instance->m_arcEarcAudioEnabled == true) {
-                            device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort("HDMI_ARC0");
-                            LOGINFO("%s: Disable ARC/eARC Audio\n",__FUNCTION__);
-                            aPort.enableARC(dsAUDIOARCSUPPORT_ARC, false);
+                            LOGINFO("%s: Disable ARC/eARC Audio (deferred to worker pool to avoid blocking PowerManager notification chain)\n",__FUNCTION__);
                             DisplaySettings::_instance->m_arcEarcAudioEnabled = false;
+                            // enableARC() is a blocking HAL/CEC call; run it off the PowerManager callback thread
+                            Core::IWorkerPool::Instance().Submit(Core::ProxyType<Core::IDispatch>(Core::ProxyType<Job>::Create([]() {
+                                try
+                                {
+                                    device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort("HDMI_ARC0");
+                                    aPort.enableARC(dsAUDIOARCSUPPORT_ARC, false);
+                                }
+                                catch (const device::Exception& err)
+                                {
+                                    LOG_DEVICE_EXCEPTION1(string("HDMI_ARC0"));
+                                }
+                            })));
                         }
             if((DisplaySettings::_instance->m_hdmiInAudioDeviceType != dsAUDIOARCSUPPORT_NONE))
                 DisplaySettings::_instance->m_hdmiInAudioDeviceType = dsAUDIOARCSUPPORT_NONE;
@@ -4936,6 +4955,9 @@ namespace WPEFramework {
                     }
                     if ( DisplaySettings::_instance->m_AudioDevicePowerOnStatusTimer.isActive()) {
                         DisplaySettings::_instance->m_AudioDevicePowerOnStatusTimer.stop();
+                    }
+                    if ( DisplaySettings::_instance->m_WarmupTimer.isActive()) {
+                        DisplaySettings::_instance->m_WarmupTimer.stop();
                     }
                   }
 
@@ -5753,6 +5775,9 @@ void DisplaySettings::sendMsgThread()
                 if ( m_AudioDevicePowerOnStatusTimer.isActive()) {
                     m_AudioDevicePowerOnStatusTimer.stop();
                 }
+                if ( m_WarmupTimer.isActive()) {
+                    m_WarmupTimer.stop();
+                }
 
                 if (nullptr != m_client) {
                     for (std::string eventName : m_clientRegisteredEventNames) {
@@ -5775,6 +5800,7 @@ void DisplaySettings::sendMsgThread()
 
             PluginHost::IShell::state state;
             bool pluginActivated = false;
+            bool justSubscribed = false;
 
             if ((getServiceState(m_service, HDMICECSINK_CALLSIGN, state) == Core::ERROR_NONE) && (state == PluginHost::IShell::state::ACTIVATED)) {
                 LOGINFO("%s is active", HDMICECSINK_CALLSIGN);
@@ -5791,7 +5817,9 @@ void DisplaySettings::sendMsgThread()
                         LOGINFO("Timer stopped.");
                     }
                     LOGINFO("Subscription completed.");
-		    sleep(WARMING_UP_TIME_IN_SECONDS);
+                    // Defer the warmup wait to a separate timer instead of blocking this WorkerPool thread/m_callMutex
+                    justSubscribed = true;
+                    m_WarmupTimer.start(WARMING_UP_TIME_IN_SECONDS * 1000);
 
                 } else {
                     LOGERR("Could not subscribe this time, one more attempt in %d msec. Plugin is %s", RECONNECTION_TIME_IN_MILLISECONDS, pluginActivated ? "ACTIVE" : "BLOCKED");
@@ -5803,7 +5831,30 @@ void DisplaySettings::sendMsgThread()
                     m_timer.stop();
                 }
             }
-	    
+
+            if (justSubscribed) {
+                // Post-subscription work runs from onWarmupTimerExpired() once the warmup delay elapses
+                return;
+            }
+
+            checkCecEnabledAndNotifyAudioPowerOn();
+        }
+
+        void DisplaySettings::onWarmupTimerExpired()
+        {
+            // lock to prevent: parallel onTimer runs, destruction during onTimer
+            lock_guard<mutex> lck(m_callMutex);
+
+            if (m_WarmupTimer.isActive()) {
+                m_WarmupTimer.stop();
+            }
+
+            checkCecEnabledAndNotifyAudioPowerOn();
+        }
+
+        void DisplaySettings::checkCecEnabledAndNotifyAudioPowerOn()
+        {
+            // caller must hold m_callMutex
 	    if(!isCecEnabled){
 		try {
 		    isCecEnabled = getHdmiCecSinkCecEnableStatus();
