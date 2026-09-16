@@ -98,8 +98,8 @@ std::vector<int> sad_list;
 
 static std::map<std::string, bool> audioPortEnableStatusMap;
 
-using PowerState = WPEFramework::Exchange::IPowerManager::PowerState;
-using ThermalTemperature = WPEFramework::Exchange::IPowerManager::ThermalTemperature;
+using PowerState = Thunder::Exchange::IPowerManager::PowerState;
+using ThermalTemperature = Thunder::Exchange::IPowerManager::ThermalTemperature;
 #ifdef USE_IARM
 namespace
 {
@@ -160,7 +160,7 @@ namespace
 #define registerMethod(...) for (uint8_t i = 1; GetHandler(i); i++) GetHandler(i)->Register<JsonObject, JsonObject>(__VA_ARGS__)
 #define registerMethodLockedApi(...) for (uint8_t i = 1; GetHandler(i); i++) Utils::Synchro::RegisterLockedApiForHandler(GetHandler(i), __VA_ARGS__)
 
-namespace WPEFramework {
+namespace Thunder {
 
     namespace {
 
@@ -273,7 +273,7 @@ namespace WPEFramework {
         SERVICE_REGISTRATION(DisplaySettings, API_VERSION_NUMBER_MAJOR, API_VERSION_NUMBER_MINOR, API_VERSION_NUMBER_PATCH);
 
         DisplaySettings* DisplaySettings::_instance = nullptr;
-        WPEFramework::Exchange::IPowerManager::PowerState DisplaySettings::m_powerState = WPEFramework::Exchange::IPowerManager::POWER_STATE_STANDBY;
+        Thunder::Exchange::IPowerManager::PowerState DisplaySettings::m_powerState = Thunder::Exchange::IPowerManager::POWER_STATE_STANDBY;
 
         DisplaySettings::DisplaySettings()
             : PluginHost::JSONRPC()
@@ -619,7 +619,7 @@ namespace WPEFramework {
                 LOG_DEVICE_EXCEPTION0();
             }
 
-            if (WPEFramework::Exchange::IPowerManager::POWER_STATE_ON == getSystemPowerState())
+            if (Thunder::Exchange::IPowerManager::POWER_STATE_ON == getSystemPowerState())
             {
                 InitAudioPorts();
             }
@@ -702,8 +702,8 @@ namespace WPEFramework {
         void DisplaySettings::InitializePowerManager()
         {
             LOGINFO("Connect the COM-RPC socket\n");
-            PowerState pwrStateCur = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
-            PowerState pwrStatePrev = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
+            PowerState pwrStateCur = Thunder::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
+            PowerState pwrStatePrev = Thunder::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
             Core::hresult retStatus = Core::ERROR_GENERAL;
             _powerManagerPlugin = PowerManagerInterfaceBuilder(_T("org.rdk.PowerManager"))
                 .withIShell(m_service)
@@ -4494,7 +4494,7 @@ namespace WPEFramework {
                 returnResponse(false);
             }
 
-            if (true == pEnable && WPEFramework::Exchange::IPowerManager::POWER_STATE_STANDBY == getSystemPowerState()) {
+            if (true == pEnable && Thunder::Exchange::IPowerManager::POWER_STATE_STANDBY == getSystemPowerState()) {
                 LOGWARN("Ignoring the setEnableAudioPort(true) request based on the power state");
                 returnResponse(false);
             }
@@ -4813,7 +4813,7 @@ namespace WPEFramework {
 
                 string query = "token=" + token;
                 Core::SystemInfo::SetEnvironment(_T("THUNDER_ACCESS"), (_T("127.0.0.1:9998")));
-                m_client = new WPEFramework::JSONRPC::LinkType<Core::JSON::IElement>(_T(HDMICECSINK_CALLSIGN_VER), (_T(HDMICECSINK_CALLSIGN_VER)), false, query);
+                m_client = new Thunder::JSONRPC::LinkType<Core::JSON::IElement>(_T(HDMICECSINK_CALLSIGN_VER), (_T(HDMICECSINK_CALLSIGN_VER)), false, query);
                 LOGINFO("DisplaySettings getHdmiCecSinkPlugin init m_client\n");
             }
         }
@@ -4821,8 +4821,8 @@ namespace WPEFramework {
 
         PowerState DisplaySettings::getSystemPowerState()
         {
-            PowerState pwrStateCur = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
-            PowerState pwrStatePrev = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
+            PowerState pwrStateCur = Thunder::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
+            PowerState pwrStatePrev = Thunder::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
             Core::hresult retStatus = Core::ERROR_GENERAL;
 
             ASSERT (_powerManagerPlugin);
@@ -4855,7 +4855,7 @@ namespace WPEFramework {
             LOGWARN("onPowerModeChanged: State Changed %d --> %d\r",
                          currentState, newState);
             m_powerState = newState;
-            if (newState == WPEFramework::Exchange::IPowerManager::POWER_STATE_ON){
+            if (newState == Thunder::Exchange::IPowerManager::POWER_STATE_ON){
                 isResCacheUpdated = false;
                 isDisplayConnectedCacheUpdated = false;
                 isStbHDRcapabilitiesCache = false;
@@ -6662,4 +6662,4 @@ void DisplaySettings::sendMsgThread()
         }
 
     } // namespace Plugin
-} // namespace WPEFramework
+} // namespace Thunder

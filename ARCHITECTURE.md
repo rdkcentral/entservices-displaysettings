@@ -2,7 +2,7 @@
 
 ## Overview
 
-The DisplaySettings plugin is a WPEFramework (Thunder) plugin that provides a unified interface for managing display and audio settings on RDK devices. It abstracts the underlying Device Settings (DS) HAL layer to provide JSON-RPC based APIs for controlling video output, audio output, display properties, and related capabilities.
+The DisplaySettings plugin is a Thunder plugin that provides a unified interface for managing display and audio settings on RDK devices. It abstracts the underlying Device Settings (DS) HAL layer to provide JSON-RPC based APIs for controlling video output, audio output, display properties, and related capabilities.
 
 ## System Architecture
 
@@ -16,7 +16,7 @@ The DisplaySettings plugin is a WPEFramework (Thunder) plugin that provides a un
                  │ JSON-RPC
                  │ (Thunder Communication)
 ┌────────────────▼────────────────────────────────────┐
-│         WPEFramework (Thunder)                       │
+│                        Thunder                       │
 │         Plugin Host & JSON-RPC Dispatcher            │
 └────────────────┬────────────────────────────────────┘
                  │
@@ -127,7 +127,7 @@ Client Request → JSON-RPC → Validate Audio Port → Get Port Instance
 ## Dependencies
 
 ### External Libraries
-- **WPEFramework**: Plugin hosting, JSON-RPC, and service infrastructure
+- **THUNDER**: Plugin hosting, JSON-RPC, and service infrastructure
 - **DeviceSettings (DS)**: Platform abstraction for display/audio hardware
 - **IARM Bus**: Inter-process communication for RDK components
 - **RFC**: Remote feature control and configuration management

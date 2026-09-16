@@ -37,7 +37,7 @@
 #define DISPLAYSETTINGS_CALLSIGN  _T("org.rdk.DisplaySettings.1")
 #define DISPLAYSETTINGSL2TEST_CALLSIGN _T("L2tests.1")
 using ::testing::NiceMock;
-using namespace WPEFramework;
+using namespace Thunder;
 using testing::StrictMock;
 
 

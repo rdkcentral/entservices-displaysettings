@@ -1,6 +1,6 @@
 ## Context
 
-`getSupportedResolutions` is an existing JSON-RPC method of the `org.rdk.DisplaySettings` Thunder plugin (callsign `org.rdk.DisplaySettings`). It bridges the WPEFramework middleware layer with the Device Settings (DS) HAL via `device::Host` to query video output port capabilities.
+`getSupportedResolutions` is an existing JSON-RPC method of the `org.rdk.DisplaySettings` Thunder plugin (callsign `org.rdk.DisplaySettings`). It bridges the Thunder middleware layer with the Device Settings (DS) HAL via `device::Host` to query video output port capabilities.
 
 The current specification describes a single-sentence behavior with no documented response for the no-display case. Platform teams have encountered inconsistencies:
 

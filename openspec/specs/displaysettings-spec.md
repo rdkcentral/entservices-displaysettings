@@ -2,13 +2,13 @@
 
 ## Overview
 
-The `DisplaySettings` plugin manages video and audio output configuration for RDK-based set-top boxes and TV devices. It provides a JSON-RPC interface for querying and controlling display resolutions, audio ports, audio processing features (MS12), HDR modes, ARC/eARC routing, and EDID inspection. The plugin bridges the WPEFramework middleware layer with the Device Settings (DS) HAL through the `device::Host` abstraction.
+The `DisplaySettings` plugin manages video and audio output configuration for RDK-based set-top boxes and TV devices. It provides a JSON-RPC interface for querying and controlling display resolutions, audio ports, audio processing features (MS12), HDR modes, ARC/eARC routing, and EDID inspection. The plugin bridges the Thunder middleware layer with the Device Settings (DS) HAL through the `device::Host` abstraction.
 
 | Property | Value |
 |----------|-------|
 | Callsign | `org.rdk.DisplaySettings` |
 | API Version | 2.0.5 |
-| Framework | WPEFramework Thunder JSONRPC |
+| Framework | Thunder JSONRPC |
 | Precondition | `Platform` |
 | Transport | JSON-RPC over HTTP at `127.0.0.1:9998` |
 
@@ -30,7 +30,7 @@ The `DisplaySettings` plugin manages video and audio output configuration for RD
 
 ## Description
 
-The `DisplaySettings` plugin is a WPEFramework Thunder plugin that exposes over 80 JSON-RPC methods covering four functional domains:
+The `DisplaySettings` plugin is a Thunder plugin that exposes over 80 JSON-RPC methods covering four functional domains:
 
 1. **Video output** — resolution management (get/set current and supported resolutions, TV vs. STB capabilities), zoom/DFC, HDR mode control, EDID inspection, color depth, and active-input detection.
 2. **Audio output** — port enumeration, sound mode selection, port enable/disable, gain, volume, mute, audio delay (lip-sync), Atmos passthrough, and audio format reporting.
@@ -545,7 +545,7 @@ Clients should use callsign `org.rdk.DisplaySettings.2` for v2 methods.
 
 ## Security
 
-- The plugin does not expose any authentication mechanism; access control is expected to be enforced at the WPEFramework layer (token-based access or firewall rules on port 9998).
+- The plugin does not expose any authentication mechanism; access control is expected to be enforced at the Thunder layer (token-based access or firewall rules on port 9998).
 - No user-provided data is passed to shell commands or file-system paths without sanitization; the zoom-settings file path is a hardcoded constant.
 - RFC/TR181 feature flags are read-only from this plugin's perspective; no sensitive data is written via RFC API.
 
@@ -564,7 +564,7 @@ Clients should use callsign `org.rdk.DisplaySettings.2` for v2 methods.
 ## Conformance Testing & Validation
 
 L2 integration tests exist under `Tests/L2Tests/tests/DisplaySettings_L2Test.cpp`. The test fixture (`DisplaySettings_L2test`):
-- Activates `org.rdk.PowerManager` and `org.rdk.DisplaySettings` via WPEFramework plugin activation.
+- Activates `org.rdk.PowerManager` and `org.rdk.DisplaySettings` via Thunder plugin activation.
 - Registers mock DS HAL delegates for all `device::Host` event listener interfaces.
 - Invokes JSON-RPC methods via `InvokeServiceMethod` and validates responses.
 - Verifies event notifications are received with the expected payloads.
@@ -778,7 +778,7 @@ L1 unit test stubs exist under `Tests/L1Tests/`.
 ## References
 
 - [RDK Central — entservices-displaysettings repository](https://github.com/rdkcentral/entservices-displaysettings)
-- [WPEFramework Thunder Plugin documentation](https://rdkcentral.github.io/Thunder/)
+- [Thunder Plugin documentation](https://rdkcentral.github.io/Thunder/)
 - [Dolby MS12 Audio Processing documentation](https://professional.dolby.com/product/dolby-ms12/)
 - [HDMI ARC/eARC specification — HDMI Forum](https://www.hdmi.org/spec/earc)
 - [ISO 639-2 Language Codes](https://www.loc.gov/standards/iso639-2/php/code_list.php)

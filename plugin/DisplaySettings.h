@@ -33,9 +33,9 @@
 #include "PowerManagerInterface.h"
 #include "host.hpp"
 
-using PowerState = WPEFramework::Exchange::IPowerManager::PowerState;
-using ThermalTemperature = WPEFramework::Exchange::IPowerManager::ThermalTemperature;
-namespace WPEFramework {
+using PowerState = Thunder::Exchange::IPowerManager::PowerState;
+using ThermalTemperature = Thunder::Exchange::IPowerManager::ThermalTemperature;
+namespace Thunder {
 
     namespace Plugin {
 		// This is a server for a JSONRPC communication channel.
@@ -260,7 +260,7 @@ namespace WPEFramework {
             PowerState getSystemPowerState();
 
 	    void getHdmiCecSinkPlugin();
-	    WPEFramework::JSONRPC::LinkType<WPEFramework::Core::JSON::IElement>* m_client;
+	    Thunder::JSONRPC::LinkType<Thunder::Core::JSON::IElement>* m_client;
 	    std::vector<std::string> m_clientRegisteredEventNames;
 	    uint32_t subscribeForHdmiCecSinkEvent(const char* eventName);
 	    bool setUpHdmiCecSinkArcRouting (bool arcEnable);
@@ -416,4 +416,4 @@ namespace WPEFramework {
 
         };
 	} // namespace Plugin
-} // namespace WPEFramework
+} // namespace Thunder
