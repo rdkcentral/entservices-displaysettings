@@ -21,6 +21,7 @@
 
 #include <map>
 #include <mutex>
+#include <atomic>
 #include <condition_variable>
 #include "Module.h"
 #include "tptimer.h"
@@ -497,56 +498,59 @@ namespace WPEFramework {
             JsonArray getSupportedVideoFormats();
             bool checkPortName(std::string& name) const;
             PowerState getSystemPowerState();
-
-	    void getHdmiCecSinkPlugin();
-	    WPEFramework::JSONRPC::LinkType<WPEFramework::Core::JSON::IElement>* m_client;
-	    std::vector<std::string> m_clientRegisteredEventNames;
-	    uint32_t subscribeForHdmiCecSinkEvent(const char* eventName);
-	    bool setUpHdmiCecSinkArcRouting (bool arcEnable);
-	    bool requestShortAudioDescriptor();
+            void getHdmiCecSinkPlugin();
+            WPEFramework::JSONRPC::LinkType<WPEFramework::Core::JSON::IElement>* m_client;
+            std::vector<std::string> m_clientRegisteredEventNames;
+            uint32_t subscribeForHdmiCecSinkEvent(const char* eventName);
+            bool setUpHdmiCecSinkArcRouting (bool arcEnable);
+            bool requestShortAudioDescriptor();
             bool requestAudioDevicePowerStatus();
             bool requestDeviceAudioStatus();
-	    bool sendUserControlPressCommand(int keyCode);
-	    bool sendHdmiCecSinkAudioDevicePowerOn();
-	    bool getHdmiCecSinkCecEnableStatus();
-	    bool getHdmiCecSinkAudioDeviceConnectedStatus();
-        int getAudioDeviceSADState(void);
-        void setAudioDeviceSADState(int newState);
-        int getCurrentArcRoutingState(void);
+            bool sendUserControlPressCommand(int keyCode);
+            bool sendHdmiCecSinkAudioDevicePowerOn();
+            bool getHdmiCecSinkCecEnableStatus();
+            bool getHdmiCecSinkAudioDeviceConnectedStatus();
+            int getAudioDeviceSADState(void);
+            void setAudioDeviceSADState(int newState);
+            int getCurrentArcRoutingState(void);
 
-	    void onTimer();
-	    void stopCecTimeAndUnsubscribeEvent();
+            // Timer and event handling functions for HDMI CEC and audio device management
+            void onTimer();
+            void onWarmupTimerExpired();
+            void checkCecEnabledAndNotifyAudioPowerOn();
+            void stopCecTimeAndUnsubscribeEvent();
             void checkAudioDeviceDetectionTimer();
-	    void checkArcDeviceConnected();
-	    void checkSADUpdate();
-	    void checkAudioDevicePowerStatusTimer();
+            void checkArcDeviceConnected();
+            void checkSADUpdate();
+            void checkAudioDevicePowerStatusTimer();
 
-	    TpTimer m_timer;
+            TpTimer m_timer;
             TpTimer m_AudioDeviceDetectTimer;
-	    TpTimer m_SADDetectionTimer;
-	    TpTimer m_ArcDetectionTimer;
-	    TpTimer m_AudioDevicePowerOnStatusTimer;
+            TpTimer m_SADDetectionTimer;
+            TpTimer m_ArcDetectionTimer;
+            TpTimer m_AudioDevicePowerOnStatusTimer;
+            TpTimer m_WarmupTimer;
+
             bool m_subscribed;
             std::mutex m_callMutex;
             std::mutex m_SadMutex;
-	    std::thread m_arcRoutingThread;
-	    std::mutex m_AudioDeviceStatesUpdateMutex;
-	    bool m_cecArcRoutingThreadRun; 
-	    std::condition_variable arcRoutingCV;
-	    bool m_hdmiInAudioDeviceConnected;
+            std::thread m_arcRoutingThread;
+            std::mutex m_AudioDeviceStatesUpdateMutex;
+            bool m_cecArcRoutingThreadRun; 
+            std::condition_variable arcRoutingCV;
+            bool m_hdmiInAudioDeviceConnected;
             bool m_arcEarcAudioEnabled;
-	    bool m_arcEarcConnectionNotifiedToUI;
+            bool m_arcEarcConnectionNotifiedToUI;
             bool m_arcPendingSADRequest;   
-	    bool m_hdmiCecAudioDeviceDetected;
-	    bool m_systemAudioMode_Power_RequestedAndReceived;
+            bool m_hdmiCecAudioDeviceDetected;
+            bool m_systemAudioMode_Power_RequestedAndReceived;
             int32_t m_hdmiInAudioDeviceType { 0 };  ///< maps to dsAudioARCTypes_t, 0 = NONE
-	    JsonObject m_audioOutputPortConfig;
-        PowerManagerInterfaceRef _powerManagerPlugin;
-        Core::Sink<PowerManagerNotification> _pwrMgrNotification;
-        bool _registeredEventHandlers;
-        void InitializePowerManager();
+            JsonObject m_audioOutputPortConfig;
+            PowerManagerInterfaceRef _powerManagerPlugin;
+            Core::Sink<PowerManagerNotification> _pwrMgrNotification;
+            bool _registeredEventHandlers;
             JsonObject getAudioOutputPortConfig() { return m_audioOutputPortConfig; }
-            static PowerState m_powerState;
+            std::atomic<PowerState> m_powerState;
 
     private:
         bool _registeredDsEventHandlers;
@@ -613,6 +617,9 @@ namespace WPEFramework {
             std::mutex m_sendMsgMutex;
 	    std::queue<SendMsgInfo> m_sendMsgQueue;
             std::condition_variable m_sendMsgCV;
+
+            std::mutex m_audioPortInitMutex;
+            std::condition_variable m_audioPortInitCV;
 
             int m_hdmiInAudioDevicePowerState;
             int m_currentArcRoutingState;
