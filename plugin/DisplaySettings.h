@@ -482,6 +482,7 @@ namespace WPEFramework {
             virtual string Information() const override { return {}; }
             void onPowerModeChanged(const PowerState currentState, const PowerState newState);
             void registerEventHandlers();
+            void InitializePowerManager();
             BEGIN_INTERFACE_MAP(DisplaySettings)
             INTERFACE_ENTRY(PluginHost::IPlugin)
             INTERFACE_ENTRY(PluginHost::IDispatcher)

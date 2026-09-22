@@ -6139,7 +6139,7 @@ namespace Plugin {
                             if (DisplaySettings::_instance->m_arcEarcAudioEnabled == true) {
                                 LOGINFO("Disable ARC/eARC Audio (deferred to worker pool to avoid blocking PowerManager notification chain)");
                                 DisplaySettings::_instance->m_arcEarcAudioEnabled = false;
-                                Core::IWorkerPool::Instance().Submit(Core::ProxyType<Core::IDispatch>(Core::ProxyType<Job>::Create([]() {
+                                Core::IWorkerPool::Instance().Submit(Core::ProxyType<Core::IDispatch>(Core::ProxyType<Job>::Create([this]() {
                                     // COM-RPC: disable ARC
                                     LOGINFO("Disabling ARC/eARC Audio from worker pool\n");
                                     const int32_t arcDHandle = DSHelper::getCachedAudioPortHandle("HDMI_ARC0");
