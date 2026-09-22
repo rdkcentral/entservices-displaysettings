@@ -111,7 +111,8 @@ namespace WPEFramework {
                 EV_DISPLAY_HDMI_HOTPLUG,
                 EV_ARC_INITIATION,
                 EV_SHORT_AUDIO_DESCRIPTOR,
-                EV_AUDIO_DEVICE_POWER_STATUS
+                EV_AUDIO_DEVICE_POWER_STATUS,
+                EV_ARC_EARC_DISABLED,
             };
 
             // Worker-pool job: carries (impl*, Event, ParamsType); calls impl->Dispatch() on worker thread.
@@ -318,7 +319,8 @@ namespace WPEFramework {
             void OnDSResolutionPreChange();
             void OnDSResolutionPostChange(uint32_t width, uint32_t height);
             void OnDSVideoFormatUpdate(uint32_t videoFormatHDR);
-            void dispatchEvent(Event ev, ParamsType params);
+            // params defaults to an empty tuple<uint32_t,uint32_t> for events that carry no payload
+            void dispatchEvent(Event ev, ParamsType params = ParamsType());
             void Dispatch(Event ev, const ParamsType params);
             void OnDSAudioOutHotPlug(int portType, uint32_t portNumber, bool isPortConnected);
             void OnDSAudioFormatUpdate(uint32_t audioFormat);
@@ -471,6 +473,7 @@ namespace WPEFramework {
 	    void onCecEnabledEventHandler(const JsonObject& parameters);
             void onAudioDevicePowerStatusEventHandler(const JsonObject& parameters);
             void processAudioDevicePowerStatusEvent(const JsonObject& parameters);
+            void processARCEarcDisabledEvent();
 	    bool isDisplayConnected (std::string port);
             //End events
         public:

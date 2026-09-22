@@ -849,6 +849,9 @@ namespace Plugin {
             auto t = boost::get<std::tuple<JsonObject>>(params);
             DisplaySettings::_instance->processAudioDevicePowerStatusEvent(std::get<0>(t));
         }
+        else if (ev == EV_ARC_EARC_DISABLED) {
+            DisplaySettings::_instance->processARCEarcDisabledEvent();
+        }
     }
 
     // ====================================================================
@@ -6139,28 +6142,7 @@ namespace Plugin {
                             if (DisplaySettings::_instance->m_arcEarcAudioEnabled == true) {
                                 LOGINFO("Disable ARC/eARC Audio (deferred to worker pool to avoid blocking PowerManager notification chain)");
                                 DisplaySettings::_instance->m_arcEarcAudioEnabled = false;
-                                Core::IWorkerPool::Instance().Submit(Core::ProxyType<Core::IDispatch>(Core::ProxyType<Job>::Create([this]() {
-                                    // COM-RPC: disable ARC
-                                    LOGINFO("Disabling ARC/eARC Audio from worker pool\n");
-                                    const int32_t arcDHandle = DSHelper::getCachedAudioPortHandle("HDMI_ARC0");
-                                    auto* arcDAudio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
-                                    if (arcDAudio != nullptr && INVALID_DS_HANDLE != arcDHandle) {
-                                        Exchange::IDeviceSettingsAudio::AudioARCStatus arcDSt;
-                                        arcDSt.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
-                                        arcDSt.status = false;
-                                        Core::hresult comResult = arcDAudio->EnableARC(arcDHandle, arcDSt);
-                                        if (comResult != Core::ERROR_NONE) {
-                                            LOGERR("Failed to disable ARC/eARC Audio, Error=%d", static_cast<int>(comResult));
-                                        }
-                                        else {
-                                            LOGINFO("Successfully disabled ARC/eARC Audio\n");
-                                        }
-                                        arcDAudio->Release();
-                                    }
-                                    else {
-                                        LOGERR("Failed to disable ARC/eARC Audio, IDeviceSettingsAudio not available or HDMI_ARC0 handle not found");
-                                    }
-                                })));
+                                dispatchEvent(EV_ARC_EARC_DISABLED);
                             }
                             if ((DisplaySettings::_instance->m_hdmiInAudioDeviceType != 0))
                                 DisplaySettings::_instance->m_hdmiInAudioDeviceType = 0;
@@ -6813,6 +6795,30 @@ namespace Plugin {
     void DisplaySettings::onAudioDevicePowerStatusEventHandler(const JsonObject& parameters)
     {
         dispatchEvent(EV_AUDIO_DEVICE_POWER_STATUS, std::make_tuple(parameters));
+    }
+
+    void DisplaySettings::processARCEarcDisabledEvent()
+    {
+        // COM-RPC: disable ARC
+        LOGINFO("Disabling ARC/eARC Audio from worker pool\n");
+        const int32_t arcDHandle = DSHelper::getCachedAudioPortHandle("HDMI_ARC0");
+        auto* arcDAudio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
+        if (arcDAudio != nullptr && INVALID_DS_HANDLE != arcDHandle) {
+            Exchange::IDeviceSettingsAudio::AudioARCStatus arcDSt;
+            arcDSt.arcType = Exchange::IDeviceSettingsAudio::AudioARCType::AUDIO_ARCTYPE_ARC;
+            arcDSt.status = false;
+            Core::hresult comResult = arcDAudio->EnableARC(arcDHandle, arcDSt);
+            if (comResult != Core::ERROR_NONE) {
+                LOGERR("Failed to disable ARC/eARC Audio, Error=%d", static_cast<int>(comResult));
+            }
+            else {
+                LOGINFO("Successfully disabled ARC/eARC Audio\n");
+            }
+            arcDAudio->Release();
+        }
+        else {
+            LOGERR("Failed to disable ARC/eARC Audio, IDeviceSettingsAudio not available or HDMI_ARC0 handle not found");
+        }
     }
 
     void DisplaySettings::processAudioDevicePowerStatusEvent(const JsonObject& parameters)
