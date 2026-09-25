@@ -804,10 +804,12 @@ namespace Plugin {
         isResCacheUpdated = false;
         isStbHDRcapabilitiesCache = false;
 
-        // Trigger audio port initialization on (re-)activation
-        if (WPEFramework::Exchange::IPowerManager::POWER_STATE_ON == getSystemPowerState()) {
-            InitAudioPorts();
-        }
+        // Trigger audio port initialization on (re-)activation.
+        // This must NOT run inline: this override is invoked from the smart-interface
+        // activation notification, which holds the PluginMonitor CriticalSection. Doing
+        // DSHelper config work here takes the DSHelper config mutex in the opposite order
+        // to a concurrent JSON-RPC call (config mutex -> CriticalSection) and deadlocks.
+        dispatchEvent(EV_DS_ACTIVATED_INIT, std::make_tuple(static_cast<uint32_t>(0)));
     }
 
     void DisplaySettings::OnDeviceSettingsDeactivated()
@@ -851,6 +853,12 @@ namespace Plugin {
         }
         else if (ev == EV_ARC_EARC_DISABLED) {
             DisplaySettings::_instance->processARCEarcDisabledEvent();
+        }
+        else if (ev == EV_DS_ACTIVATED_INIT) {
+            // Trigger audio port initialization on (re-)activation
+            if (WPEFramework::Exchange::IPowerManager::POWER_STATE_ON == getSystemPowerState()) {
+                InitAudioPorts();
+            }
         }
     }
 

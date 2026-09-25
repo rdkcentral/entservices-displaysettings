@@ -113,6 +113,7 @@ namespace WPEFramework {
                 EV_SHORT_AUDIO_DESCRIPTOR,
                 EV_AUDIO_DEVICE_POWER_STATUS,
                 EV_ARC_EARC_DISABLED,
+                EV_DS_ACTIVATED_INIT,
             };
 
             // Worker-pool job: carries (impl*, Event, ParamsType); calls impl->Dispatch() on worker thread.
