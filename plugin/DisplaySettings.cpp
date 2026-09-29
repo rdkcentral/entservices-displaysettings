@@ -701,6 +701,7 @@ namespace WPEFramework {
 
             m_service->Release();
             m_service = nullptr;
+            m_service->Release();
         }
 
         void DisplaySettings::InitializePowerManager()
