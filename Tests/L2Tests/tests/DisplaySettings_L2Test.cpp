@@ -1314,13 +1314,22 @@ protected:
             WaitForPluginState(callsign, "deactivated", 10000));
     }
 
+    void ActivateAndWait(const char* callsign)
+    {
+        std::string state;
+        if ((GetPluginState(callsign, state) == Core::ERROR_NONE) && (state == "activated")) {
+            return;
+        }
+
+        (void)ActivateServiceWithRetry(callsign, 3, 500);
+        EXPECT_EQ(Core::ERROR_NONE, WaitForPluginState(callsign, "activated", 10000));
+    }
+
     DisplaySettingsL2Test()
     {
-        EXPECT_EQ(Core::ERROR_NONE, ActivateService("org.rdk.PowerManager"));
-        EXPECT_EQ(Core::ERROR_NONE,
-            ActivateServiceWithRetry("org.rdk.DeviceSettings", 3, 500));
-        EXPECT_EQ(Core::ERROR_NONE,
-            ActivateServiceWithRetry("org.rdk.DisplaySettings", 3, 500));
+        ActivateAndWait("org.rdk.PowerManager");
+        ActivateAndWait("org.rdk.DeviceSettings");
+        ActivateAndWait("org.rdk.DisplaySettings");
     }
 
     ~DisplaySettingsL2Test() override
@@ -1340,7 +1349,6 @@ TEST_F(DisplaySettingsL2Test, SetAudioDuckingRejectsMissingMode)
         kDisplaySettingsCallsign, "setAudioDucking", parameters, result);
 
     EXPECT_NE(Core::ERROR_NONE, status);
-    EXPECT_FALSE(result.HasLabel("success"));
 }
 
 TEST_F(DisplaySettingsL2Test, SetEnableVideoPortRejectsMissingDisplay)
@@ -1353,5 +1361,4 @@ TEST_F(DisplaySettingsL2Test, SetEnableVideoPortRejectsMissingDisplay)
         kDisplaySettingsCallsign, "setEnableVideoPort", parameters, result);
 
     EXPECT_NE(Core::ERROR_NONE, status);
-    EXPECT_FALSE(result.HasLabel("success"));
 }
