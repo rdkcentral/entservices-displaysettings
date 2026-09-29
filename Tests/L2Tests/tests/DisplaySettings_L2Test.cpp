@@ -1297,6 +1297,23 @@ constexpr const char* kDisplaySettingsCallsign = "org.rdk.DisplaySettings.1";
 
 class DisplaySettingsL2Test : public L2TestMocks {
 protected:
+    void DeactivateAndWait(const char* callsign)
+    {
+        std::string state;
+        const uint32_t stateStatus = GetPluginState(callsign, state);
+        EXPECT_EQ(Core::ERROR_NONE, stateStatus);
+        if (stateStatus != Core::ERROR_NONE || state == "deactivated") {
+            return;
+        }
+
+        if (state == "activated" || state == "suspended") {
+            (void)DeactivateService(callsign);
+        }
+
+        EXPECT_EQ(Core::ERROR_NONE,
+            WaitForPluginState(callsign, "deactivated", 10000));
+    }
+
     DisplaySettingsL2Test()
     {
         EXPECT_EQ(Core::ERROR_NONE, ActivateService("org.rdk.PowerManager"));
@@ -1308,9 +1325,9 @@ protected:
 
     ~DisplaySettingsL2Test() override
     {
-        EXPECT_EQ(Core::ERROR_NONE, DeactivateService("org.rdk.DisplaySettings"));
-        EXPECT_EQ(Core::ERROR_NONE, DeactivateService("org.rdk.DeviceSettings"));
-        EXPECT_EQ(Core::ERROR_NONE, DeactivateService("org.rdk.PowerManager"));
+        DeactivateAndWait("org.rdk.DisplaySettings");
+        DeactivateAndWait("org.rdk.DeviceSettings");
+        DeactivateAndWait("org.rdk.PowerManager");
     }
 };
 
