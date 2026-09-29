@@ -252,7 +252,6 @@ jobs:
           tvTypesODM.h
           tr181api.h
           list.hpp
-          dsDisplay.h
           dsRpc.h
           telemetry_busmessage_sender.h
           &&
