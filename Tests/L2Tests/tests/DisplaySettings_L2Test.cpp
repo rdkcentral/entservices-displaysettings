@@ -1297,6 +1297,31 @@ constexpr const char* kDisplaySettingsCallsign = "org.rdk.DisplaySettings.1";
 
 class DisplaySettingsL2Test : public L2TestMocks {
 protected:
+    void ConfigurePowerManagerHal()
+    {
+        ON_CALL(*p_powerManagerHalMock, PLAT_DS_INIT())
+            .WillByDefault(::testing::Return(DEEPSLEEPMGR_SUCCESS));
+        ON_CALL(*p_powerManagerHalMock, PLAT_INIT())
+            .WillByDefault(::testing::Return(PWRMGR_SUCCESS));
+        ON_CALL(*p_powerManagerHalMock, PLAT_API_SetWakeupSrc(::testing::_, ::testing::_))
+            .WillByDefault(::testing::Return(PWRMGR_SUCCESS));
+        ON_CALL(*p_powerManagerHalMock, PLAT_API_GetPowerState(::testing::_))
+            .WillByDefault(::testing::Invoke([](PWRMgr_PowerState_t* powerState) {
+                *powerState = PWRMGR_POWERSTATE_ON;
+                return PWRMGR_SUCCESS;
+            }));
+        ON_CALL(*p_powerManagerHalMock, PLAT_API_SetPowerState(::testing::_))
+            .WillByDefault(::testing::Return(PWRMGR_SUCCESS));
+        ON_CALL(*p_mfrMock, mfrGetTemperature(::testing::_, ::testing::_, ::testing::_))
+            .WillByDefault(::testing::Invoke(
+                [](mfrTemperatureState_t* state, int* temperature, int* wifiTemperature) {
+                    *state = static_cast<mfrTemperatureState_t>(0);
+                    *temperature = 90;
+                    *wifiTemperature = 25;
+                    return mfrERR_NONE;
+                }));
+    }
+
     void DeactivateAndWait(const char* callsign)
     {
         std::string state;
@@ -1327,6 +1352,7 @@ protected:
 
     DisplaySettingsL2Test()
     {
+        ConfigurePowerManagerHal();
         ActivateAndWait("org.rdk.PowerManager");
         ActivateAndWait("org.rdk.DeviceSettings");
         ActivateAndWait("org.rdk.DisplaySettings");
@@ -1348,7 +1374,9 @@ TEST_F(DisplaySettingsL2Test, SetAudioDuckingRejectsMissingMode)
     const uint32_t status = InvokeServiceMethod(
         kDisplaySettingsCallsign, "setAudioDucking", parameters, result);
 
-    EXPECT_NE(Core::ERROR_NONE, status);
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    ASSERT_TRUE(result.HasLabel("success"));
+    EXPECT_FALSE(result["success"].Boolean());
 }
 
 TEST_F(DisplaySettingsL2Test, SetEnableVideoPortRejectsMissingDisplay)
@@ -1360,5 +1388,7 @@ TEST_F(DisplaySettingsL2Test, SetEnableVideoPortRejectsMissingDisplay)
     const uint32_t status = InvokeServiceMethod(
         kDisplaySettingsCallsign, "setEnableVideoPort", parameters, result);
 
-    EXPECT_NE(Core::ERROR_NONE, status);
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    ASSERT_TRUE(result.HasLabel("success"));
+    EXPECT_FALSE(result["success"].Boolean());
 }

@@ -108,7 +108,7 @@ jobs:
         with:
           repository: rdkcentral/entservices-powermanager
           path: entservices-powermanager
-          ref: develop
+          ref: topic/RDKEMW-6755_testCaseFailureFixes
 
       - name: Checkout entservices-testframework
         uses: actions/checkout@v3
