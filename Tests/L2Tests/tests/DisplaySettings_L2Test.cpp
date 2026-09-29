@@ -1300,12 +1300,16 @@ protected:
     DisplaySettingsL2Test()
     {
         EXPECT_EQ(Core::ERROR_NONE, ActivateService("org.rdk.PowerManager"));
-        EXPECT_EQ(Core::ERROR_NONE, ActivateService("org.rdk.DisplaySettings"));
+        EXPECT_EQ(Core::ERROR_NONE,
+            ActivateServiceWithRetry("org.rdk.DeviceSettings", 3, 500));
+        EXPECT_EQ(Core::ERROR_NONE,
+            ActivateServiceWithRetry("org.rdk.DisplaySettings", 3, 500));
     }
 
     ~DisplaySettingsL2Test() override
     {
         EXPECT_EQ(Core::ERROR_NONE, DeactivateService("org.rdk.DisplaySettings"));
+        EXPECT_EQ(Core::ERROR_NONE, DeactivateService("org.rdk.DeviceSettings"));
         EXPECT_EQ(Core::ERROR_NONE, DeactivateService("org.rdk.PowerManager"));
     }
 };
