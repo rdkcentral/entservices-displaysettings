@@ -1627,7 +1627,7 @@ TEST_F(DisplaySettingsL2Test, SetEnableVideoPortDisablesConnectedDisplay)
 {
     JsonObject parameters;
     JsonObject result;
-    parameters["videoDisplay"] = "INTERNAL";
+    parameters["videoDisplay"] = "Internal0";
     parameters["enable"] = false;
 
     EXPECT_CALL(*p_dsVideoPortHalMock, dsEnableVideoPort(::testing::_, false))
@@ -1645,7 +1645,7 @@ TEST_F(DisplaySettingsL2Test, SetEnableVideoPortRejectsDisconnectedDisplay)
 {
     JsonObject parameters;
     JsonObject result;
-    parameters["videoDisplay"] = "INTERNAL";
+    parameters["videoDisplay"] = "Internal0";
     parameters["enable"] = false;
 
     ON_CALL(*p_dsVideoPortHalMock, dsIsDisplayConnected(::testing::_, ::testing::_))
@@ -1668,7 +1668,7 @@ TEST_F(DisplaySettingsL2Test, SetEnableVideoPortReportsHalFailure)
 {
     JsonObject parameters;
     JsonObject result;
-    parameters["videoDisplay"] = "INTERNAL";
+    parameters["videoDisplay"] = "Internal0";
     parameters["enable"] = true;
 
     EXPECT_CALL(*p_dsVideoPortHalMock, dsEnableVideoPort(::testing::_, true))
@@ -1686,7 +1686,7 @@ TEST_F(DisplaySettingsL2Test, GetEnableVideoPortReturnsHalState)
 {
     JsonObject parameters;
     JsonObject result;
-    parameters["videoDisplay"] = "INTERNAL";
+    parameters["videoDisplay"] = "Internal0";
 
     ON_CALL(*p_dsVideoPortHalMock, dsIsVideoPortEnabled(::testing::_, ::testing::_))
         .WillByDefault(::testing::Invoke([](intptr_t, bool* enabled) {
