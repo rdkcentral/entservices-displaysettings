@@ -1491,6 +1491,7 @@ TEST_F(DisplaySettingsL2Test, SetAudioDuckingMuteSucceeds)
     JsonObject result;
     parameters["mode"] = "mute";
     parameters["mute"] = true;
+    parameters["audioPort"] = "SPDIF0";
 
     const uint32_t status = InvokeServiceMethod(
         kDisplaySettingsCallsign, "setAudioDucking", parameters, result);
@@ -1508,6 +1509,7 @@ TEST_F(DisplaySettingsL2Test, SetAudioDuckingAttenuateSucceeds)
     parameters["enable"] = true;
     parameters["relative"] = true;
     parameters["volume"] = 0.37;
+    parameters["audioPort"] = "SPDIF0";
 
     const uint32_t status = InvokeServiceMethod(
         kDisplaySettingsCallsign, "setAudioDucking", parameters, result);
@@ -1525,6 +1527,7 @@ TEST_F(DisplaySettingsL2Test, SetAudioDuckingRawRelativeStartSucceeds)
     parameters["action"] = "start";
     parameters["duckingType"] = "relative";
     parameters["level"] = 56;
+    parameters["audioPort"] = "SPDIF0";
 
     const uint32_t status = InvokeServiceMethod(
         kDisplaySettingsCallsign, "setAudioDucking", parameters, result);
@@ -1542,6 +1545,7 @@ TEST_F(DisplaySettingsL2Test, SetAudioDuckingRawAbsoluteStopSucceeds)
     parameters["action"] = "stop";
     parameters["duckingType"] = "absolute";
     parameters["level"] = 100;
+    parameters["audioPort"] = "SPDIF0";
 
     const uint32_t status = InvokeServiceMethod(
         kDisplaySettingsCallsign, "setAudioDucking", parameters, result);
@@ -1623,7 +1627,7 @@ TEST_F(DisplaySettingsL2Test, SetEnableVideoPortDisablesConnectedDisplay)
 {
     JsonObject parameters;
     JsonObject result;
-    parameters["videoDisplay"] = "HDMI0";
+    parameters["videoDisplay"] = "INTERNAL";
     parameters["enable"] = false;
 
     EXPECT_CALL(*p_dsVideoPortHalMock, dsEnableVideoPort(::testing::_, false))
@@ -1641,7 +1645,7 @@ TEST_F(DisplaySettingsL2Test, SetEnableVideoPortRejectsDisconnectedDisplay)
 {
     JsonObject parameters;
     JsonObject result;
-    parameters["videoDisplay"] = "HDMI0";
+    parameters["videoDisplay"] = "INTERNAL";
     parameters["enable"] = false;
 
     ON_CALL(*p_dsVideoPortHalMock, dsIsDisplayConnected(::testing::_, ::testing::_))
@@ -1664,7 +1668,7 @@ TEST_F(DisplaySettingsL2Test, SetEnableVideoPortReportsHalFailure)
 {
     JsonObject parameters;
     JsonObject result;
-    parameters["videoDisplay"] = "HDMI0";
+    parameters["videoDisplay"] = "INTERNAL";
     parameters["enable"] = true;
 
     EXPECT_CALL(*p_dsVideoPortHalMock, dsEnableVideoPort(::testing::_, true))
@@ -1682,7 +1686,7 @@ TEST_F(DisplaySettingsL2Test, GetEnableVideoPortReturnsHalState)
 {
     JsonObject parameters;
     JsonObject result;
-    parameters["videoDisplay"] = "HDMI0";
+    parameters["videoDisplay"] = "INTERNAL";
 
     ON_CALL(*p_dsVideoPortHalMock, dsIsVideoPortEnabled(::testing::_, ::testing::_))
         .WillByDefault(::testing::Invoke([](intptr_t, bool* enabled) {
@@ -1802,7 +1806,7 @@ TEST_F(DisplaySettingsL2Test, GetSupportedResolutionsReturnsCapabilitiesWhenConn
 {
     JsonObject parameters;
     JsonObject result;
-    parameters["videoDisplay"] = "HDMI0";
+    parameters["videoDisplay"] = "INTERNAL";
 
     const uint32_t status = InvokeServiceMethod(
         kDisplaySettingsCallsign, "getSupportedResolutions", parameters, result);
