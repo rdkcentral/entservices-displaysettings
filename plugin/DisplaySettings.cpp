@@ -1351,9 +1351,9 @@ namespace Plugin {
             returnResponse(false);
         }
 
-        Exchange::IDeviceSettingsAudio::ApplicationAudioConfig config;
+        string config;
         while (iterator->Next(config)) {
-            supportedAudioConfigs.push_back(config.configName);
+            supportedAudioConfigs.push_back(config);
         }
         iterator->Release();
         setResponseArray(response, "supportedAudioConfigs", supportedAudioConfigs);
