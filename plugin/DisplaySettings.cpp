@@ -1342,7 +1342,7 @@ namespace Plugin {
             returnResponse(false);
         }
 
-        Exchange::IDeviceSettingsAudio::IDeviceSettingsAudioApplicationConfigIterator* iterator = nullptr;
+        Exchange::IDeviceSettingsAudio::IStringIterator* iterator = nullptr;
         const Core::hresult result = audio->GetApplicationAudioConfigList(0, iterator);
         audio->Release();
         if ((result != Core::ERROR_NONE) || (iterator == nullptr)) {
