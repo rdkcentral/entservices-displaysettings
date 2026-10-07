@@ -1564,7 +1564,6 @@ namespace WPEFramework {
 				    }
 				    aPort.setStereoAuto(stereoAuto, persist); //setStereoAuto true
 				}
-				aPort.setStereoMode(mode.toString(), persist);
 			   }
 			}
                         else if ((aPort.getType().getId() == device::AudioOutputPortType::kSPDIF) || (aPort.getType().getId() == device::AudioOutputPortType::kHEADPHONE))
@@ -1586,8 +1585,7 @@ namespace WPEFramework {
                                 aPort.setStereoMode(mode.toString(), persist);
                             }
                             else { //Auto Mode
-                                aPort.setStereoAuto(stereoAuto, persist);
-                                aPort.setStereoMode(mode.toString(), persist);
+                                aPort.setStereoAuto(stereoAuto, persist);	
                             }
                         }else if (aPort.getType().getId() == device::AudioOutputPortType::kHDMI) {
                             if (!(mode == device::AudioStereoMode::kPassThru))
