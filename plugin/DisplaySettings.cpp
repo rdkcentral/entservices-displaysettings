@@ -6096,6 +6096,7 @@ namespace Plugin {
     // --- initAudioPortsWorker ---
     void DisplaySettings::initAudioPortsWorker(void)
     {
+        DisplaySettings::_instance->InitAudioPorts();
         {
             std::lock_guard<std::mutex> lock(DisplaySettings::_instance->m_audioPortInitMutex);
             audioPortInitActive.store(false);
