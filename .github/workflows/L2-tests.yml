@@ -94,6 +94,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           path: entservices-displaysettings
+          ref: develop
 
       - name: Checkout entservices-displaysettings-testframework
         if: ${{ inputs.caller_source == 'testframework' }}
@@ -108,21 +109,21 @@ jobs:
         with:
           repository: rdkcentral/entservices-powermanager
           path: entservices-powermanager
-          ref: topic/RDKEMW-6755_testCaseFailureFixes
+          ref: develop
 
       - name: Checkout entservices-testframework
         uses: actions/checkout@v3
         with:
           repository: rdkcentral/entservices-testframework
           path: entservices-testframework
-          ref: feature/RDKEMW-25013
+          ref: 2.1.0
 
       - name: Checkout entservices-devicesettings
         uses: actions/checkout@v3
         with:
           repository: rdkcentral/entservices-devicesettings
           path: entservices-devicesettings
-          ref: topic/RDKEMW-25013
+          ref: develop
 
       - name: Checkout rdk-halif-device_settings
         uses: actions/checkout@v3
@@ -251,8 +252,6 @@ jobs:
           tvSettingsODM.h
           tvTypesODM.h
           tr181api.h
-          list.hpp
-          dsRpc.h
           telemetry_busmessage_sender.h
           &&
           cp -r /usr/include/gstreamer-1.0/gst /usr/include/glib-2.0/* /usr/lib/x86_64-linux-gnu/glib-2.0/include/* /usr/local/include/trower-base64/base64.h /usr/include/libdrm/drm.h /usr/include/libdrm/drm_mode.h /usr/include/xf86drm.h .
