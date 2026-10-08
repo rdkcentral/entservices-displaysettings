@@ -124,7 +124,7 @@ jobs:
         with:
           repository: rdkcentral/entservices-testframework
           path: entservices-testframework
-          ref: feature/RDKEMW-25013
+          ref: 2.1.0
 
       - name: Checkout entservices-displaysettings
         if: ${{ inputs.caller_source == 'local' }}
