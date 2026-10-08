@@ -119,16 +119,16 @@ namespace WPEFramework {
             // Worker-pool job: carries (impl*, Event, ParamsType); calls impl->Dispatch() on worker thread.
             class EXTERNAL DispatchJob : public Core::IDispatch {
             protected:
-                DispatchJob(DisplaySettings* ds, Event ev, ParamsType params)
-                    : _ds(ds), _ev(ev), _params(std::move(params))
+                DispatchJob(DisplaySettings* ds, Event ev, const ParamsType& params)
+                    : _ds(ds), _ev(ev), _params(params)
                 { if (_ds != nullptr) _ds->AddRef(); }
             public:
                 DispatchJob() = delete;
                 DispatchJob(const DispatchJob&) = delete;
                 DispatchJob& operator=(const DispatchJob&) = delete;
                 ~DispatchJob() { if (_ds != nullptr) _ds->Release(); }
-                static Core::ProxyType<Core::IDispatch> Create(DisplaySettings* ds, Event ev, ParamsType params) {
-                    return Core::ProxyType<Core::IDispatch>(Core::ProxyType<DispatchJob>::Create(ds, ev, std::move(params)));
+                static Core::ProxyType<Core::IDispatch> Create(DisplaySettings* ds, Event ev, const ParamsType& params) {
+                    return Core::ProxyType<Core::IDispatch>(Core::ProxyType<DispatchJob>::Create(ds, ev, params));
                 }
                 void Dispatch() override { _ds->Dispatch(_ev, _params); }
             private:
@@ -321,8 +321,8 @@ namespace WPEFramework {
             void OnDSResolutionPostChange(uint32_t width, uint32_t height);
             void OnDSVideoFormatUpdate(uint32_t videoFormatHDR);
             // params defaults to an empty tuple<uint32_t,uint32_t> for events that carry no payload
-            void dispatchEvent(Event ev, ParamsType params = ParamsType());
-            void Dispatch(Event ev, const ParamsType params);
+            void dispatchEvent(Event ev, const ParamsType& params = ParamsType());
+            void Dispatch(Event ev, const ParamsType& params);
             void OnDSAudioOutHotPlug(int portType, uint32_t portNumber, bool isPortConnected);
             void OnDSAudioFormatUpdate(uint32_t audioFormat);
             void OnDSDolbyAtmosCapabilitiesChanged(uint32_t atmosCapability, bool status);
@@ -475,7 +475,7 @@ namespace WPEFramework {
             void onAudioDevicePowerStatusEventHandler(const JsonObject& parameters);
             void processAudioDevicePowerStatusEvent(const JsonObject& parameters);
             void processARCEarcDisabledEvent();
-	    bool isDisplayConnected (std::string port);
+        bool isDisplayConnected (const std::string& port);
             //End events
         public:
             DisplaySettings();

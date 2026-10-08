@@ -693,7 +693,7 @@ namespace Plugin {
         return m_currentArcRoutingState;
     }
 
-    bool DisplaySettings::isDisplayConnected(std::string port)
+    bool DisplaySettings::isDisplayConnected(const std::string& port)
     {
         bool isConnected = isHdmiDisplayConnected;
         if (!isDisplayConnectedCacheUpdated || !(Utils::String::stringContains(port, "HDMI0"))) {
@@ -821,12 +821,12 @@ namespace Plugin {
         isStbHDRcapabilitiesCache = false;
     }
 
-    void DisplaySettings::dispatchEvent(Event ev, ParamsType params)
+    void DisplaySettings::dispatchEvent(Event ev, const ParamsType& params)
     {
-        Core::IWorkerPool::Instance().Submit(DispatchJob::Create(this, ev, std::move(params)));
+        Core::IWorkerPool::Instance().Submit(DispatchJob::Create(this, ev, params));
     }
 
-    void DisplaySettings::Dispatch(Event ev, const ParamsType params)
+    void DisplaySettings::Dispatch(Event ev, const ParamsType& params)
     {
         if (!DisplaySettings::_instance) return;
         if (ev == EV_RESOLUTION_POST_CHANGE) {
@@ -1563,8 +1563,7 @@ namespace Plugin {
         bool success = true;
         {
             // Use cached config store and handles — no COM-RPC config reload per request
-            const std::string defaultPort = DSHelper::getDefaultVideoPortName();
-            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : defaultPort;
+            string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : DSHelper::getDefaultVideoPortName();
             VideoPortEntry entry;
             if (DSHelper::resolveVideoPortByName(videoDisplay, entry)) {
                 const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(entry.name);
@@ -2471,8 +2470,7 @@ namespace Plugin {
 
         bool success = true;
         // DS_IARM: uses default video port, checks isDisplayConnected first
-        const std::string defaultVP = DSHelper::getDefaultVideoPortName();
-        string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : defaultVP;
+        string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : DSHelper::getDefaultVideoPortName();
         if (!isDisplayConnected(videoDisplay)) {
             LOGERR("display not connected on %s", videoDisplay.c_str());
             returnResponse(false);
@@ -5268,8 +5266,7 @@ namespace Plugin {
 
         bool success = false;
         // DS_IARM: defaults to DSHelper::getDefaultVideoPortName(), checks isDisplayConnected before querying
-        const std::string defaultVP = DSHelper::getDefaultVideoPortName();
-        string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : defaultVP;
+        string videoDisplay = parameters.HasLabel("videoDisplay") ? parameters["videoDisplay"].String() : DSHelper::getDefaultVideoPortName();
         if (!isDisplayConnected(videoDisplay)) {
             LOGWARN("getDisplayAspectRatio: display not connected on port: %s", videoDisplay.c_str());
             returnResponse(success);
