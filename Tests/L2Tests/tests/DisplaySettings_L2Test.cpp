@@ -23,7 +23,6 @@
 #include "L2Tests.h"
 #include "L2TestsMock.h"
 #include <fstream>
-#include "devicesettings.h"
 #include "FrontPanelIndicatorMock.h"
 #include "deepSleepMgr.h"
 #include "PowerManagerHalMock.h"
