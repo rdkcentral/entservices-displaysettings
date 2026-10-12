@@ -951,13 +951,14 @@ namespace WPEFramework {
             vector<string> supportedSettopResolutions;
             try
             {
-                if (device::Host::getInstance().getVideoDevices().size() < 1)
+                device::List<device::VideoDevice> videoDevices = device::Host::getInstance().getVideoDevices();
+                if (videoDevices.size() < 1)
                 {
                     LOGINFO("DSMGR_NOT_RUNNING");
                     returnResponse(false);
                 }
 
-                device::VideoDevice &device = device::Host::getInstance().getVideoDevices().at(0);
+                device::VideoDevice &device = videoDevices.at(0);
                 list<string> resolutions;
                 device.getSettopSupportedResolutions(resolutions);
                 for (list<string>::const_iterator ci = resolutions.begin(); ci != resolutions.end(); ++ci)
@@ -1086,14 +1087,15 @@ namespace WPEFramework {
             bool success = true;
             try
             {
-                if (device::Host::getInstance().getVideoDevices().size() < 1)
+                device::List<device::VideoDevice> videoDevices = device::Host::getInstance().getVideoDevices();
+                if (videoDevices.size() < 1)
                 {
                     LOGINFO("DSMGR_NOT_RUNNING");
                     returnResponse(false);
                 }
 
                 // TODO: why is this always the first one in the list
-                device::VideoDevice &decoder = device::Host::getInstance().getVideoDevices().at(0);
+                device::VideoDevice &decoder = videoDevices.at(0);
                 zoomSetting = decoder.getDFC().getName();
             }
             catch(const device::Exception& err)
@@ -1131,14 +1133,15 @@ namespace WPEFramework {
 #ifdef USE_IARM
                 zoomSetting = svc2iarm(zoomSetting);
 #endif
-                if (device::Host::getInstance().getVideoDevices().size() < 1)
+                device::List<device::VideoDevice> videoDevices = device::Host::getInstance().getVideoDevices();
+                if (videoDevices.size() < 1)
                 {
                     LOGINFO("DSMGR_NOT_RUNNING");
                     returnResponse(false);
                 }
 
                 // TODO: why is this always the first one in the list?
-                device::VideoDevice &decoder = device::Host::getInstance().getVideoDevices().at(0);
+                device::VideoDevice &decoder = videoDevices.at(0);
                 decoder.setDFC(std::move(zoomSetting));
             }
             catch(const device::Exception& err)
@@ -1773,13 +1776,14 @@ namespace WPEFramework {
 
                 try
                 {
-                    if (device::Host::getInstance().getVideoDevices().size() < 1)
+                    device::List<device::VideoDevice> videoDevices = device::Host::getInstance().getVideoDevices();
+                    if (videoDevices.size() < 1)
                     {
                         LOGINFO("DSMGR_NOT_RUNNING");
                         returnResponse(false);
                     }
 
-                    device::VideoDevice &device = device::Host::getInstance().getVideoDevices().at(0);
+                    device::VideoDevice &device = videoDevices.at(0);
                     device.getHDRCapabilities(&capabilities);
                 }
                 catch(const device::Exception& err)
@@ -3085,7 +3089,7 @@ namespace WPEFramework {
 		supportedProfiles = aPort.getMS12AudioProfileList();
                 for (size_t i = 0; i < supportedProfiles.size(); i++)
                 {
-		    LOGINFO("Profile[%d]:  %s\n",i,supportedProfiles.at(i).c_str());
+		    LOGINFO("Profile[%d]:  %s\n",static_cast<int>(i),supportedProfiles.at(i).c_str());
                 }
             }
             catch(const device::Exception& err)
@@ -6343,13 +6347,14 @@ void DisplaySettings::sendMsgThread()
 
             try
             {
-                if (device::Host::getInstance().getVideoDevices().size() < 1)
+                device::List<device::VideoDevice> videoDevices = device::Host::getInstance().getVideoDevices();
+                if (videoDevices.size() < 1)
                 {
                     LOGINFO("DSMGR_NOT_RUNNING");
                     return videoFormats;
                 }
 
-                device::VideoDevice &device = device::Host::getInstance().getVideoDevices().at(0);
+                device::VideoDevice &device = videoDevices.at(0);
                 device.getHDRCapabilities(&capabilities);
             }
             catch(const device::Exception& err)
