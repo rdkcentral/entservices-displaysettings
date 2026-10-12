@@ -22,6 +22,7 @@ set(PLUGIN_DISPLAYSETTINGS_AUTOSTART "false" CACHE STRING "Automatically start D
 set(PLUGIN_DISPLAYSETTINGS_STARTUPORDER "" CACHE STRING "To configure startup order of DisplaySettings plugin")
 
 find_package(${NAMESPACE}Plugins REQUIRED)
+find_package(${NAMESPACE}Helpers REQUIRED)
 
 add_library(${MODULE_NAME} SHARED
         DisplaySettings.cpp
@@ -31,7 +32,7 @@ set_target_properties(${MODULE_NAME} PROPERTIES
         CXX_STANDARD 11
         CXX_STANDARD_REQUIRED YES)
 
-if (RDK_SERVICE_L2_TEST)
+if (RDK_SERVICE_L2_TEST OR RDK_SERVICES_L1_TEST)
    find_library(TESTMOCKLIB_LIBRARIES NAMES TestMocklib)
    if (TESTMOCKLIB_LIBRARIES)
        message ("linking mock libraries ${TESTMOCKLIB_LIBRARIES} library")
@@ -39,24 +40,15 @@ if (RDK_SERVICE_L2_TEST)
    else (TESTMOCKLIB_LIBRARIES)
        message ("Require ${TESTMOCKLIB_LIBRARIES} library")
    endif (TESTMOCKLIB_LIBRARIES)
-endif (RDK_SERVICES_L2_TEST)
+else ()
+        if (NOT RDK_SERVICES_COVERITY)
+        target_link_libraries(${MODULE_NAME} PRIVATE tr181api)
+        endif ()
+endif ()
 
 target_compile_definitions(${MODULE_NAME} PRIVATE MODULE_NAME=Plugin_${PLUGIN_NAME})
 
-find_package(DS)
-if (DS_FOUND)
-    find_package(IARMBus)
-    add_definitions(-DDS_FOUND)
-    target_include_directories(${MODULE_NAME} PRIVATE ${IARMBUS_INCLUDE_DIRS})
-    target_include_directories(${MODULE_NAME} PRIVATE ${DS_INCLUDE_DIRS})
-    if (RDK_SERVICE_L2_TEST)
-    target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${IARMBUS_LIBRARIES} ${DS_LIBRARIES} ${NAMESPACE}::${NAMESPACE}Helpers)
-    else()
-    target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${IARMBUS_LIBRARIES} ${DS_LIBRARIES} "-ltr181api" ${NAMESPACE}::${NAMESPACE}Helpers)
-    endif(RDK_SERVICE_L2_TEST)
-else (DS_FOUND)
-    target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${NAMESPACE}::${NAMESPACE}Helpers)
-endif(DS_FOUND)
+target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${NAMESPACE}::${NAMESPACE}Helpers)
 
 install(TARGETS ${MODULE_NAME}
         DESTINATION lib/${STORAGE_DIRECTORY}/plugins)
