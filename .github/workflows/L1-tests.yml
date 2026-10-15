@@ -381,6 +381,7 @@ jobs:
           -B build/entservices-displaysettings
           -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/usr"
           -DCMAKE_MODULE_PATH="$GITHUB_WORKSPACE/install/tools/cmake"
+          -DRDK_SERVICES_L1_TEST=ON
           -DCMAKE_CXX_FLAGS="
           -fprofile-arcs
           -ftest-coverage
