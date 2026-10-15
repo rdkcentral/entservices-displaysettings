@@ -17,12 +17,12 @@
 * limitations under the License.
 */
 
-#if 0
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "L2Tests.h"
 #include "L2TestsMock.h"
 #include <fstream>
+#include "devicesettings.h"
 #include "FrontPanelIndicatorMock.h"
 #include "deepSleepMgr.h"
 #include "PowerManagerHalMock.h"
@@ -1281,8 +1281,6 @@ TEST_F(DisplaySettings_L2test, getSupportedResolutions_CacheRefreshOnReconnect)
     EXPECT_TRUE(result2["success"].Boolean());
     EXPECT_GT(result2["supportedResolutions"].Array().Length(), 0u);
 }
-#endif
-
 #include <gtest/gtest.h>
 
 #include "L2Tests.h"
