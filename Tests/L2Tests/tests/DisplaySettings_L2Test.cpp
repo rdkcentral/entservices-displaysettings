@@ -563,3 +563,35 @@ TEST_F(DisplaySettingsL2Test, GetSupportedResolutionsUsesDefaultPort)
     EXPECT_TRUE(result["success"].Boolean());
     ASSERT_TRUE(result.HasLabel("supportedResolutions"));
 }
+
+TEST_F(DisplaySettingsL2Test, CoversDisplayInformationEndpoints)
+{
+    const std::vector<const char*> methods = {
+        "getConnectedVideoDisplays",
+        "getConnectedAudioPorts",
+        "getSupportedVideoDisplays",
+        "getSupportedTvResolutions",
+        "getSupportedSettopResolutions",
+        "getSupportedAudioPorts",
+        "getSupportedAudioModes",
+        "getCurrentResolution",
+        "getAudioFormat",
+        "getVideoFormat",
+        "getColorDepthCapabilities",
+        "getCurrentOutputSettings",
+        "getZoomSetting",
+        "getTVHDRCapabilities",
+        "getSinkAtmosCapability",
+    };
+
+    for (const char* method : methods) {
+        JsonObject parameters;
+        JsonObject result;
+        const uint32_t status = InvokeServiceMethod(
+            kDisplaySettingsCallsign, method, parameters, result);
+
+        SCOPED_TRACE(method);
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result.HasLabel("success"));
+    }
+}
