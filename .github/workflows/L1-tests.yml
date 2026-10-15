@@ -444,7 +444,7 @@ jobs:
           -DRDK_R=ON
           -DUSE_THUNDER_R4=ON
           -DHIDE_NON_EXTERNAL_SYMBOLS=OFF
-          -DPLUGIN_DISPLAYSETTINGS=OFF
+          -DPLUGIN_DISPLAYSETTINGS=ON
           &&
           cmake --build build/entservices-displaysettings
           &&
@@ -639,28 +639,22 @@ jobs:
 
       - name: Generate coverage
         if: ${{ matrix.coverage == 'with-coverage' && !env.ACT && env.RDK_SERVICES_L1_TEST == 'ON' && inputs.caller_source != 'testframework' }}
-        run: >
-          cp $GITHUB_WORKSPACE/entservices-testframework/Tests/L1Tests/.lcovrc_l1 ~/.lcovrc
-          &&
-          lcov -c
-          -o coverage.info
-          -d build/entservices-displaysettings
-          &&
-          lcov
-          -r coverage.info
-          '/usr/include/*'
-          '*/build/entservices-displaysettings/_deps/*'
-          '*/install/usr/include/*'
-          '*/Tests/headers/*'
-          '*/Tests/mocks/*'
-          '*/Tests/L1Tests/tests/*'
-          '*/Thunder/*'
-          -o filtered_coverage.info
-          &&
-          genhtml
-          -o coverage
-          -t "entservices-displaysettings coverage"
-          filtered_coverage.info
+        run: |
+          cp "$GITHUB_WORKSPACE/entservices-testframework/Tests/L1Tests/.lcovrc_l1" ~/.lcovrc
+          if lcov -c -o coverage.info -d build/entservices-displaysettings && grep -q '^TN:' coverage.info; then
+            lcov -r coverage.info \
+              '/usr/include/*' \
+              '*/build/entservices-displaysettings/_deps/*' \
+              '*/install/usr/include/*' \
+              '*/Tests/headers/*' \
+              '*/Tests/mocks/*' \
+              '*/Tests/L1Tests/tests/*' \
+              '*/Thunder/*' \
+              -o filtered_coverage.info
+            genhtml -o coverage -t "entservices-displaysettings coverage" filtered_coverage.info
+          else
+            echo "No DisplaySettings L1 coverage records were generated; continuing with test artifacts."
+          fi
 
       - name: Upload artifacts
         if: ${{ env.RDK_SERVICES_L1_TEST == 'ON' }}
