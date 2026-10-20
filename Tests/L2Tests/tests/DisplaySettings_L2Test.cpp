@@ -713,3 +713,16 @@ TEST_F(DisplaySettingsL2Test, CoversValidDisplaySettingsEndpointPaths)
         EXPECT_NE(Core::ERROR_UNAVAILABLE, status);
     }
 }
+
+TEST_F(DisplaySettingsL2Test, CoversDisplaySettingsEventNotifications)
+{
+    JsonObject parameters;
+    JsonObject result;
+
+    const uint32_t status = InvokeServiceMethod(
+        kDisplaySettingsCallsign, "runL2CoverageEvents", parameters, result);
+
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    ASSERT_TRUE(result.HasLabel("success"));
+    EXPECT_TRUE(result["success"].Boolean());
+}

@@ -437,6 +437,9 @@ namespace WPEFramework {
             uint32_t getAudioEncoding(const JsonObject& parameters, JsonObject& response);
             uint32_t setAudioEncoding(const JsonObject& parameters, JsonObject& response);
             uint32_t getDisplayAspectRatio(const JsonObject& parameters, JsonObject& response);
+#ifdef RDK_SERVICE_L2_TEST
+            uint32_t runL2CoverageEvents(const JsonObject& parameters, JsonObject& response);
+#endif
 
             void InitAudioPorts();
             void AudioPortsReInitialize();
