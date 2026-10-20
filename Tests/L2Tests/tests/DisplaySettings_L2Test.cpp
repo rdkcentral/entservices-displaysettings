@@ -595,3 +595,52 @@ TEST_F(DisplaySettingsL2Test, CoversDisplayInformationEndpoints)
         EXPECT_TRUE(result.HasLabel("success"));
     }
 }
+
+TEST_F(DisplaySettingsL2Test, CoversAudioAndPictureEndpointDispatch)
+{
+    const std::vector<const char*> methods = {
+        "getDRCMode",
+        "setDRCMode",
+        "getSoundMode",
+        "setSoundMode",
+        "getActiveInput",
+        "getVolumeLevel",
+        "setVolumeLevel",
+        "getBassEnhancer",
+        "setBassEnhancer",
+        "getFaderControl",
+        "setFaderControl",
+        "getTvHDRSupport",
+        "setForceHDRMode",
+        "getAudioEncoding",
+        "setAudioEncoding",
+        "getVolumeLeveller",
+        "setVolumeLeveller",
+        "resetBassEnhancer",
+        "getDolbyVolumeMode",
+        "setDolbyVolumeMode",
+        "getEnableAudioPort",
+        "setEnableAudioPort",
+        "getPrimaryLanguage",
+        "setPrimaryLanguage",
+        "getSecondaryLanguage",
+        "setSecondaryLanguage",
+        "getDefaultResolution",
+        "getDisplayAspectRatio",
+        "getPreferredColorDepth",
+        "setPreferredColorDepth",
+        "getSupportedMS12Config",
+        "getSurroundVirtualizer",
+        "resetDialogEnhancement",
+    };
+
+    for (const char* method : methods) {
+        JsonObject parameters;
+        JsonObject result;
+        const uint32_t status = InvokeServiceMethod(
+            kDisplaySettingsCallsign, method, parameters, result);
+
+        SCOPED_TRACE(method);
+        EXPECT_NE(Core::ERROR_UNAVAILABLE, status);
+    }
+}
