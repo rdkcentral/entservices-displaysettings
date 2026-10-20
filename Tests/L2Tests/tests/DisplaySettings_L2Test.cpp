@@ -631,6 +631,10 @@ TEST_F(DisplaySettingsL2Test, CoversAudioAndPictureEndpointDispatch)
         "setPreferredColorDepth",
         "getSupportedMS12Config",
         "getSurroundVirtualizer",
+        "isSurroundDecoderEnabled",
+        "enableSurroundDecoder",
+        "setMISteering",
+        "getMISteering",
         "resetDialogEnhancement",
     };
 
@@ -700,6 +704,7 @@ TEST_F(DisplaySettingsL2Test, CoversValidDisplaySettingsEndpointPaths)
         parameters["hdr_mode"] = "DV";
         parameters["encoding"] = "AC3";
         parameters["lang"] = "en-US";
+        parameters["MISteeringEnable"] = true;
 
         const uint32_t status = InvokeServiceMethod(
             kDisplaySettingsCallsign, method, parameters, result);
