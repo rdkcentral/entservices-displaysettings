@@ -644,3 +644,67 @@ TEST_F(DisplaySettingsL2Test, CoversAudioAndPictureEndpointDispatch)
         EXPECT_NE(Core::ERROR_UNAVAILABLE, status);
     }
 }
+
+TEST_F(DisplaySettingsL2Test, CoversValidDisplaySettingsEndpointPaths)
+{
+    const std::vector<const char*> methods = {
+        "readEDID",
+        "readHostEDID",
+        "setZoomSetting",
+        "setCurrentResolution",
+        "setForceHDRMode",
+        "setMS12AudioCompression",
+        "getMS12AudioCompression",
+        "setDialogEnhancement",
+        "getDialogEnhancement",
+        "setIntelligentEqualizerMode",
+        "getIntelligentEqualizerMode",
+        "setGraphicEqualizerMode",
+        "getGraphicEqualizerMode",
+        "setMS12AudioProfile",
+        "getMS12AudioProfile",
+        "getSupportedMS12AudioProfiles",
+        "getAudioDelay",
+        "setAudioDelay",
+        "setAudioAtmosOutputMode",
+        "getSettopHDRSupport",
+        "setScartParameter",
+        "isConnectedDeviceRepeater",
+        "setGain",
+        "getGain",
+        "setMuted",
+        "getMuted",
+        "setAssociatedAudioMixing",
+        "getAssociatedAudioMixing",
+        "setSecondaryLanguage",
+        "getSecondaryLanguage",
+        "resetVolumeLeveller",
+        "resetSurroundVirtualizer",
+        "getSettopMS12Capabilities",
+        "getSettopAudioCapabilities",
+        "setMS12ProfileSettingsOverride",
+    };
+
+    for (const char* method : methods) {
+        JsonObject parameters;
+        JsonObject result;
+        parameters["videoDisplay"] = "HDMI0";
+        parameters["audioPort"] = "HDMI0";
+        parameters["enable"] = true;
+        parameters["value"] = 1;
+        parameters["level"] = 50;
+        parameters["mode"] = "on";
+        parameters["resolution"] = "1080p60";
+        parameters["persist"] = true;
+        parameters["ignoreEdid"] = false;
+        parameters["hdr_mode"] = "DV";
+        parameters["encoding"] = "AC3";
+        parameters["lang"] = "en-US";
+
+        const uint32_t status = InvokeServiceMethod(
+            kDisplaySettingsCallsign, method, parameters, result);
+
+        SCOPED_TRACE(method);
+        EXPECT_NE(Core::ERROR_UNAVAILABLE, status);
+    }
+}
