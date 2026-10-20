@@ -714,15 +714,76 @@ TEST_F(DisplaySettingsL2Test, CoversValidDisplaySettingsEndpointPaths)
     }
 }
 
-TEST_F(DisplaySettingsL2Test, CoversDisplaySettingsEventNotifications)
+TEST_F(DisplaySettingsL2Test, CoversAudioNumericParameterBranches)
 {
-    JsonObject parameters;
-    JsonObject result;
+    const auto invoke = [](const char* method, const char* name, const char* value) {
+        JsonObject parameters;
+        JsonObject result;
+        parameters[name] = value;
+        parameters["audioPort"] = "HDMI0";
+        return InvokeServiceMethod(kDisplaySettingsCallsign, method, parameters, result);
+    };
 
-    const uint32_t status = InvokeServiceMethod(
-        kDisplaySettingsCallsign, "runL2CoverageEvents", parameters, result);
+    EXPECT_EQ(Core::ERROR_NONE, invoke("setVolumeLeveller", "level", "5"));
+    EXPECT_EQ(Core::ERROR_NONE, invoke("setVolumeLeveller", "level", "invalid"));
+    EXPECT_EQ(Core::ERROR_NONE, invoke("setBassEnhancer", "bassBoost", "25"));
+    EXPECT_EQ(Core::ERROR_NONE, invoke("setBassEnhancer", "bassBoost", "invalid"));
+    EXPECT_EQ(Core::ERROR_NONE, invoke("setSurroundVirtualizer", "boost", "20"));
+    EXPECT_EQ(Core::ERROR_NONE, invoke("setSurroundVirtualizer", "boost", "invalid"));
 
-    EXPECT_EQ(Core::ERROR_NONE, status);
-    ASSERT_TRUE(result.HasLabel("success"));
-    EXPECT_TRUE(result["success"].Boolean());
+    JsonObject volumeModeParameters;
+    JsonObject volumeModeResult;
+    volumeModeParameters["mode"] = "2";
+    volumeModeParameters["level"] = "5";
+    volumeModeParameters["audioPort"] = "HDMI0";
+    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+        kDisplaySettingsCallsign, "setVolumeLeveller2", volumeModeParameters, volumeModeResult));
+
+    volumeModeParameters["mode"] = "0";
+    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+        kDisplaySettingsCallsign, "setVolumeLeveller2", volumeModeParameters, volumeModeResult));
+
+    volumeModeParameters["mode"] = "1";
+    volumeModeParameters["level"] = "5";
+    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+        kDisplaySettingsCallsign, "setVolumeLeveller2", volumeModeParameters, volumeModeResult));
+
+    volumeModeParameters["mode"] = "invalid";
+    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+        kDisplaySettingsCallsign, "setVolumeLeveller2", volumeModeParameters, volumeModeResult));
+
+    JsonObject surroundModeParameters;
+    JsonObject surroundModeResult;
+    surroundModeParameters["mode"] = "2";
+    surroundModeParameters["audioPort"] = "HDMI0";
+    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+        kDisplaySettingsCallsign, "setSurroundVirtualizer2", surroundModeParameters, surroundModeResult));
+
+    surroundModeParameters["mode"] = "0";
+    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+        kDisplaySettingsCallsign, "setSurroundVirtualizer2", surroundModeParameters, surroundModeResult));
+
+    surroundModeParameters["mode"] = "1";
+    surroundModeParameters["boost"] = "20";
+    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+        kDisplaySettingsCallsign, "setSurroundVirtualizer2", surroundModeParameters, surroundModeResult));
+
+    surroundModeParameters["mode"] = "invalid";
+    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+        kDisplaySettingsCallsign, "setSurroundVirtualizer2", surroundModeParameters, surroundModeResult));
+
+    JsonObject delayParameters;
+    JsonObject delayResult;
+    delayParameters["audioDelay"] = "100";
+    delayParameters["audioPort"] = "HDMI0";
+    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+        kDisplaySettingsCallsign, "setAudioDelay", delayParameters, delayResult));
+
+    delayParameters["audioDelay"] = "invalid";
+    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+        kDisplaySettingsCallsign, "setAudioDelay", delayParameters, delayResult));
+
+    delayParameters["audioDelay"] = "-1";
+    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+        kDisplaySettingsCallsign, "setAudioDelay", delayParameters, delayResult));
 }

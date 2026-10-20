@@ -331,9 +331,6 @@ namespace Plugin {
         registerMethodLockedApi("getAudioEncoding", &DisplaySettings::getAudioEncoding, this);
         registerMethodLockedApi("setAudioEncoding", &DisplaySettings::setAudioEncoding, this);
         registerMethodLockedApi("getDisplayAspectRatio", &DisplaySettings::getDisplayAspectRatio, this);
-    #ifdef RDK_SERVICE_L2_TEST
-        registerMethodLockedApi("runL2CoverageEvents", &DisplaySettings::runL2CoverageEvents, this);
-    #endif
 
         m_subscribed = false; // HdmiCecSink event subscription
         m_hdmiInAudioDeviceConnected = false; // Tells about the device connection state, for eArc will be updated on audio device power status event handler after tinymix command and incase of ARC will be true after ARC Initiation
@@ -7338,26 +7335,6 @@ namespace Plugin {
         returnResponse(success);
     }
 
-#ifdef RDK_SERVICE_L2_TEST
-    uint32_t DisplaySettings::runL2CoverageEvents(const JsonObject& parameters, JsonObject& response)
-    {
-        resolutionPreChange();
-        resolutionChanged(1920, 1080);
-        zoomSettingUpdated("Full");
-        activeInputChanged(true);
-        connectedVideoDisplaysUpdated(HDMI_HOT_PLUG_EVENT_CONNECTED);
-        connectedAudioPortUpdated(
-            static_cast<int>(Exchange::IDeviceSettingsAudio::AudioPortType::AUDIO_PORT_TYPE_HDMIARC), true);
-        notifyAudioFormatChange(0);
-        notifyVideoFormatChange(0);
-        notifyAssociatedAudioMixingChange(true);
-        notifyFaderControlChange(1);
-        notifyPrimaryLanguageChange("en-US");
-        notifySecondaryLanguageChange("es-ES");
-        response["success"] = true;
-        return Core::ERROR_NONE;
-    }
-#endif
     // Thunder plugins communication end
 
 
