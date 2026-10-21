@@ -32,6 +32,7 @@
 #include <fstream>
 #include <interfaces/IPowerManager.h>
 #include "PowerManagerInterface.h"
+#include <interfaces/IAudioOutput.h>
 
 // COM-RPC path: DeviceSettingsInterface.h brings in DSHelper
 // (which inherits PluginSmartInterfaceType<IDeviceSettings>) plus all DS
