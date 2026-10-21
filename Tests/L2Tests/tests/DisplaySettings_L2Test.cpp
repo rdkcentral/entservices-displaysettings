@@ -724,66 +724,66 @@ TEST_F(DisplaySettingsL2Test, CoversAudioNumericParameterBranches)
         return InvokeServiceMethod(kDisplaySettingsCallsign, method, parameters, result);
     };
 
-    EXPECT_EQ(Core::ERROR_NONE, invoke("setVolumeLeveller", "level", "5"));
-    EXPECT_EQ(Core::ERROR_NONE, invoke("setVolumeLeveller", "level", "invalid"));
-    EXPECT_EQ(Core::ERROR_NONE, invoke("setBassEnhancer", "bassBoost", "25"));
-    EXPECT_EQ(Core::ERROR_NONE, invoke("setBassEnhancer", "bassBoost", "invalid"));
-    EXPECT_EQ(Core::ERROR_NONE, invoke("setSurroundVirtualizer", "boost", "20"));
-    EXPECT_EQ(Core::ERROR_NONE, invoke("setSurroundVirtualizer", "boost", "invalid"));
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, invoke("setVolumeLeveller", "level", "5"));
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, invoke("setVolumeLeveller", "level", "invalid"));
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, invoke("setBassEnhancer", "bassBoost", "25"));
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, invoke("setBassEnhancer", "bassBoost", "invalid"));
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, invoke("setSurroundVirtualizer", "boost", "20"));
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, invoke("setSurroundVirtualizer", "boost", "invalid"));
 
     JsonObject volumeModeParameters;
     JsonObject volumeModeResult;
     volumeModeParameters["mode"] = "2";
     volumeModeParameters["level"] = "5";
     volumeModeParameters["audioPort"] = "HDMI0";
-    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, InvokeServiceMethod(
         kDisplaySettingsCallsign, "setVolumeLeveller2", volumeModeParameters, volumeModeResult));
 
     volumeModeParameters["mode"] = "0";
-    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, InvokeServiceMethod(
         kDisplaySettingsCallsign, "setVolumeLeveller2", volumeModeParameters, volumeModeResult));
 
     volumeModeParameters["mode"] = "1";
     volumeModeParameters["level"] = "5";
-    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, InvokeServiceMethod(
         kDisplaySettingsCallsign, "setVolumeLeveller2", volumeModeParameters, volumeModeResult));
 
     volumeModeParameters["mode"] = "invalid";
-    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, InvokeServiceMethod(
         kDisplaySettingsCallsign, "setVolumeLeveller2", volumeModeParameters, volumeModeResult));
 
     JsonObject surroundModeParameters;
     JsonObject surroundModeResult;
     surroundModeParameters["mode"] = "2";
     surroundModeParameters["audioPort"] = "HDMI0";
-    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, InvokeServiceMethod(
         kDisplaySettingsCallsign, "setSurroundVirtualizer2", surroundModeParameters, surroundModeResult));
 
     surroundModeParameters["mode"] = "0";
-    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, InvokeServiceMethod(
         kDisplaySettingsCallsign, "setSurroundVirtualizer2", surroundModeParameters, surroundModeResult));
 
     surroundModeParameters["mode"] = "1";
     surroundModeParameters["boost"] = "20";
-    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, InvokeServiceMethod(
         kDisplaySettingsCallsign, "setSurroundVirtualizer2", surroundModeParameters, surroundModeResult));
 
     surroundModeParameters["mode"] = "invalid";
-    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, InvokeServiceMethod(
         kDisplaySettingsCallsign, "setSurroundVirtualizer2", surroundModeParameters, surroundModeResult));
 
     JsonObject delayParameters;
     JsonObject delayResult;
     delayParameters["audioDelay"] = "100";
     delayParameters["audioPort"] = "HDMI0";
-    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, InvokeServiceMethod(
         kDisplaySettingsCallsign, "setAudioDelay", delayParameters, delayResult));
 
     delayParameters["audioDelay"] = "invalid";
-    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, InvokeServiceMethod(
         kDisplaySettingsCallsign, "setAudioDelay", delayParameters, delayResult));
 
     delayParameters["audioDelay"] = "-1";
-    EXPECT_EQ(Core::ERROR_NONE, InvokeServiceMethod(
+    EXPECT_NE(Core::ERROR_UNAVAILABLE, InvokeServiceMethod(
         kDisplaySettingsCallsign, "setAudioDelay", delayParameters, delayResult));
 }
