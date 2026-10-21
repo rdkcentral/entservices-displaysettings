@@ -716,7 +716,7 @@ TEST_F(DisplaySettingsL2Test, CoversValidDisplaySettingsEndpointPaths)
 
 TEST_F(DisplaySettingsL2Test, CoversAudioNumericParameterBranches)
 {
-    const auto invoke = [](const char* method, const char* name, const char* value) {
+    const auto invoke = [this](const char* method, const char* name, const char* value) {
         JsonObject parameters;
         JsonObject result;
         parameters[name] = value;
