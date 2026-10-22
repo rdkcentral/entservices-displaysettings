@@ -606,8 +606,8 @@ namespace WPEFramework {
             m_ArcDetectionTimer.connect(std::bind(&DisplaySettings::checkArcDeviceConnected, this));
             m_SADDetectionTimer.connect(std::bind(&DisplaySettings::checkSADUpdate, this));
 	        m_AudioDevicePowerOnStatusTimer.connect(std::bind(&DisplaySettings::checkAudioDevicePowerStatusTimer, this));
+			m_WarmupTimer.connect(std::bind(&DisplaySettings::onWarmupTimerExpired, this));
         }
-	    m_WarmupTimer.connect(std::bind(&DisplaySettings::onWarmupTimerExpired, this));
 
             InitializePowerManager();
             try
