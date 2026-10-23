@@ -3796,22 +3796,15 @@ namespace WPEFramework {
             try
             {
                 device::VideoOutputPort &vPort = device::Host::getInstance().getVideoOutputPort(videoDisplay);
-                if (!vPort.isDisplayConnected())
+                if (enable)
                 {
-                    LOGERR("setEnableVideoPort: display NOT connected on port %s", videoDisplay.c_str());
+                    vPort.enable();
                 }
-				else
+                else
 				{
-					if (enable)
-					{
-						vPort.enable();
-					}
-                	else
-					{
-						vPort.disable();
-					}
-					success = true;
-				}
+                    vPort.disable();
+                }
+                success = true;
             }
             catch (const device::Exception& err)
             {
