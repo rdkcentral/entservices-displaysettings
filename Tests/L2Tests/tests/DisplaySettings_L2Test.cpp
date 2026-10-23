@@ -573,7 +573,7 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
         EXPECT_TRUE(result["success"].Boolean());
     }
 
-    /******************setEnableVideoPort - failure ******************/
+    /********setEnableVideoPort - disconnected display success *******/
     {
         TEST_LOG("Testing setEnableVideoPort disconnected display\n");
         JsonObject result, params;
@@ -582,10 +582,13 @@ TEST_F(DisplaySettings_L2test, DisplaySettings_L2_MethodTest)
 
         ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
             .WillByDefault(::testing::Return(false));
+        EXPECT_CALL(*p_videoOutputPortMock, disable())
+            .Times(1);
 
         uint32_t status = InvokeServiceMethod(DISPLAYSETTINGS_CALLSIGN, "setEnableVideoPort", params, result);
-	EXPECT_NE(Core::ERROR_NONE, status);
-	EXPECT_FALSE(result.HasLabel("success"));
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result.HasLabel("success"));
+        EXPECT_TRUE(result["success"].Boolean());
     }
 
     /******************getEnableVideoPort - success ******************/
