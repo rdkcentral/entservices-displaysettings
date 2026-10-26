@@ -2020,11 +2020,6 @@ namespace Plugin {
                                             success = false;
                                         }
                                     }
-                                    comResult = audio->SetStereoMode(audioHandle, comMode, persist);
-                                    if (comResult != Core::ERROR_NONE) {
-                                        LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
-                                        success = false;
-                                    }
                                 }
                             } else if (Utils::String::stringContains(audioPort, "SPDIF") || Utils::String::stringContains(audioPort, "HEADPHONE")) {
                                 // DS_IARM: else if (kSPDIF || kHEADPHONE)
@@ -2067,11 +2062,6 @@ namespace Plugin {
                                     comResult = audio->SetStereoAuto(audioHandle, stereoAuto ? 1 : 0, persist);
                                     if (comResult != Core::ERROR_NONE) {
                                         LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
-                                        success = false;
-                                    }
-                                    comResult = audio->SetStereoMode(audioHandle, comMode, persist);
-                                    if (comResult != Core::ERROR_NONE) {
-                                        LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
                                         success = false;
                                     }
                                 }
