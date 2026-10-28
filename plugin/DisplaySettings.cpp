@@ -1894,6 +1894,7 @@ namespace Plugin {
                         bool isArc = Utils::String::stringContains(audioPort, "HDMI_ARC");
 
                         if (portConnected) {
+                            LOGINFO("Port connected: %s, HDMI: %d, ARC: %d", audioPort.c_str(), isHdmi, isArc);
                             if (isHdmi && comMode != Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH) {
                                 // HDMI + non-passthru: set stereoAuto then stereoMode
                                 comResult = audio->SetStereoAuto(audioHandle, stereoAuto ? 1 : 0, persist);
@@ -1939,7 +1940,8 @@ namespace Plugin {
                                     LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
                                     success = false;
                                 }
-                            } else if (isHdmi) {
+                            }
+                            else if (isHdmi) {
                                 // HDMI + passthru: reset stereoAuto
                                 LOGWARN("Reset auto on %s for mode = %s!", audioPort.c_str(), soundMode.c_str());
                                 comResult = audio->SetStereoAuto(audioHandle, 0, persist);
@@ -1952,7 +1954,9 @@ namespace Plugin {
                                     LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
                                     success = false;
                                 }
-                            } else if (isArc) {
+                            }
+                            else if (isArc) {
+                                LOGINFO("ARC port handling: %s, HDMI: %d, ARC: %d", audioPort.c_str(), isHdmi, isArc);
                                 if (!stereoAuto && (comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND ||
                                                     comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH ||
                                                     comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO)) {
@@ -2020,13 +2024,10 @@ namespace Plugin {
                                             success = false;
                                         }
                                     }
-                                    comResult = audio->SetStereoMode(audioHandle, comMode, persist);
-                                    if (comResult != Core::ERROR_NONE) {
-                                        LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
-                                        success = false;
-                                    }
+                                    // don't set stereo mode ARC Port in Auto mode
                                 }
-                            } else if (Utils::String::stringContains(audioPort, "SPDIF") || Utils::String::stringContains(audioPort, "HEADPHONE")) {
+                            }
+                            else if (Utils::String::stringContains(audioPort, "SPDIF") || Utils::String::stringContains(audioPort, "HEADPHONE")) {
                                 // DS_IARM: else if (kSPDIF || kHEADPHONE)
                                 if (!stereoAuto) {
                                     comResult = audio->SetStereoAuto(audioHandle, 0, persist);
@@ -2047,7 +2048,9 @@ namespace Plugin {
                                     }
                                 }
                             }
-                        } else {
+                        }
+                        else {
+                            LOGINFO("Port not connected: %s, HDMI: %d, ARC: %d", audioPort.c_str(), isHdmi, isArc);
                             // Port not connected — mirror DS_IARM disconnected-port handling
                             if (isArc) {
                                 if (!stereoAuto && (comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND ||
@@ -2069,13 +2072,10 @@ namespace Plugin {
                                         LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
                                         success = false;
                                     }
-                                    comResult = audio->SetStereoMode(audioHandle, comMode, persist);
-                                    if (comResult != Core::ERROR_NONE) {
-                                        LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
-                                        success = false;
-                                    }
+                                    // don't set stereo mode ARC Port in Auto mode
                                 }
-                            } else if (isHdmi) {
+                            }
+                            else if (isHdmi) {
                                 if (comMode != Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH) {
                                     comResult = audio->SetStereoAuto(audioHandle, stereoAuto ? 1 : 0, persist);
                                     if (comResult != Core::ERROR_NONE) {
@@ -2096,7 +2096,8 @@ namespace Plugin {
                                     LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
                                     success = false;
                                 }
-                            } else {
+                            }
+                            else {
                                 LOGERR("setSoundMode failed !! Device Not Connected...\n");
                                 success = false;
                             }
