@@ -2125,15 +2125,19 @@ namespace WPEFramework {
             float level = 0;
 
             string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+            LOGINFO("revanth Audio Port: %s", audioPort.c_str());
             try
             {
                 if( audioPort != "HDMI_ARC0")
                 {
+                    LOGINFO("revanth Getting audio level for port if block: %s", audioPort.c_str());
                      device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
                      level = aPort.getLevel();
+                     LOGINFO("revanth Audio Level: %f", level);
                 }
                 else
                 {
+                    LOGINFO("revanth Getting audio level for HDMI_ARC0 port");
                     level = hdmiArcVolumeLevel;
                 }
                 response["volumeLevel"] = to_string(level);
@@ -2614,16 +2618,24 @@ namespace WPEFramework {
 
                 bool success = true;
                 string audioPort = parameters.HasLabel("audioPort") ? parameters["audioPort"].String() : "HDMI0";
+                LOGINFO("revanth Audio Port: %s", audioPort.c_str());
                 try
                 {
                         device::AudioOutputPort aPort = device::Host::getInstance().getAudioOutputPort(audioPort);
-			current_volumelevel = (int)aPort.getLevel();
+                        LOGINFO("revanth Setting audio level for port: %s", audioPort.c_str());
+                        LOGINFO("revanth Current audio level: %d", current_volumelevel);
+			            current_volumelevel = (int)aPort.getLevel();
                         aPort.setLevel(level);
+                        LOGINFO("revanth New audio level: %f", level);
                         if(current_volumelevel != (int)level)
                         {
                             JsonObject params;
                             params["volumeLevel"] = (int)level;
                             sendNotify("volumeLevelChanged", params);
+                        }
+                        else
+                        {
+                            LOGINFO("revanth Audio level unchanged for port: %s", audioPort.c_str());
                         }
                         success= true;
                 }
