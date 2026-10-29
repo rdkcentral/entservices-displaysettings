@@ -7264,11 +7264,17 @@ namespace Plugin {
                 LOGERR("isConnectedDeviceRepeater failure: display not connected on %s\n", strVideoPort.c_str());
                 success = false;
             } else {
+                // Legacy: vPort.getDisplay() uses the default video port's own type/index (not a fixed HDMI port)
+                VideoPortEntry portEntry;
                 auto* disp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
-                if (disp != nullptr) {
+                if (disp != nullptr && !DSHelper::resolveVideoPortByName(strVideoPort, portEntry)) {
+                    LOGERR("video port '%s' not found", strVideoPort.c_str());
+                    success = false;
+                    disp->Release();
+                } else if (disp != nullptr) {
                     int32_t displayHandle = -1;
                     Core::hresult comResult = Core::ERROR_NONE;
-                    comResult = disp->GetDisplay(Exchange::IDeviceSettingsDisplay::DS_DISPLAY_PORT_TYPE_HDMI, 0, displayHandle);
+                    comResult = disp->GetDisplay(static_cast<Exchange::IDeviceSettingsDisplay::DisplayPortType>(portEntry.type), portEntry.index, displayHandle);
                     if (comResult == Core::ERROR_NONE && INVALID_DS_HANDLE != displayHandle) {
                         Exchange::IDeviceSettingsDisplay::DisplayEDID edId{};
                         Exchange::IDeviceSettingsDisplay::IDSVideoPortResolutionIterator* resList = nullptr;
@@ -7280,8 +7286,8 @@ namespace Plugin {
                                 resList = nullptr;
                             }
                         } else {
-                            LOGERR("GetDisplayEdid failed, Error=%d", static_cast<int>(comResult));
-                            success = false;
+                            // Legacy getDisplay() only logs an EDID read failure and still succeeds
+                            LOGWARN("GetDisplayEdid failed, Error=%d", static_cast<int>(comResult));
                         }
                     } else {
                         LOGERR("video port handle not found, Error=%d", static_cast<int>(comResult));
