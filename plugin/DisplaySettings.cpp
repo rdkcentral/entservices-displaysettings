@@ -36,6 +36,7 @@
 #include "UtilsisValidInt.h"
 #include "tracing/Logging.h"
 #include <syscall.h>
+#include <cstring>
 
 using namespace std;
 
@@ -5771,7 +5772,10 @@ namespace Plugin {
                                             case AUDIO_DEVICE_SAD_RECEIVED: {
                                                 LOGINFO("%s: Update Audio device SAD\n", __FUNCTION__);
                                                 setAudioDeviceSADState(AUDIO_DEVICE_SAD_UPDATED);
-                                                std::vector<uint8_t> sadBytes(sad_list.begin(), sad_list.end());
+                                                // sad_list holds full packed SAD codes - flatten the raw int bytes, don't narrow each to uint8_t.
+                                                std::vector<uint8_t> sadBytes(sad_list.size() * sizeof(int));
+                                                memcpy(sadBytes.data(), sad_list.data(), sadBytes.size());
+                                                LOGINFO("%s: SetSAD entries=%zu byteCount=%zu", __FUNCTION__, sad_list.size(), sadBytes.size());
                                                 comResult = audio->SetSAD(audioHandle, sadBytes.data(), static_cast<uint8_t>(sadBytes.size()));
                                                 if (comResult != Core::ERROR_NONE) {
                                                     LOGWARN("SetSAD failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
@@ -5927,8 +5931,10 @@ namespace Plugin {
                 if (INVALID_DS_HANDLE != audioHandle) {
                     auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                     if (audio != nullptr) {
-                        // Build flat SAD array from sad_list
-                        std::vector<uint8_t> sadArray(sad_list.begin(), sad_list.end());
+                        // Build flat SAD array from sad_list - flatten the raw int bytes, don't narrow each to uint8_t.
+                        std::vector<uint8_t> sadArray(sad_list.size() * sizeof(int));
+                        memcpy(sadArray.data(), sad_list.data(), sadArray.size());
+                        LOGINFO("SetSAD entries=%zu byteCount=%zu", sad_list.size(), sadArray.size());
                         Core::hresult comResult = audio->SetSAD(audioHandle, sadArray.data(), static_cast<uint8_t>(sadArray.size()));
                         if (comResult != Core::ERROR_NONE) {
                             LOGWARN("SetSAD failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
@@ -6550,7 +6556,10 @@ namespace Plugin {
                             LOGINFO("%s: Updating SAD \n", __FUNCTION__);
                             setAudioDeviceSADState(AUDIO_DEVICE_SAD_UPDATED);
                             {
-                                std::vector<uint8_t> sadB(sad_list.begin(), sad_list.end());
+                                // sad_list holds full packed SAD codes - flatten the raw int bytes, don't narrow each to uint8_t.
+                                std::vector<uint8_t> sadB(sad_list.size() * sizeof(int));
+                                memcpy(sadB.data(), sad_list.data(), sadB.size());
+                                LOGINFO("%s: SetSAD entries=%zu byteCount=%zu", __FUNCTION__, sad_list.size(), sadB.size());
                                 arcAudio->SetSAD(arcHandle, sadB.data(), static_cast<uint8_t>(sadB.size()));
                             }
                             int32_t sAuto = 0;
@@ -6592,7 +6601,10 @@ namespace Plugin {
                             LOGINFO("%s: Updating SAD since audio is already routed and ARC is initiated\n", __FUNCTION__);
                             setAudioDeviceSADState(AUDIO_DEVICE_SAD_UPDATED);
                             {
-                                std::vector<uint8_t> sadB2(sad_list.begin(), sad_list.end());
+                                // sad_list holds full packed SAD codes - flatten the raw int bytes, don't narrow each to uint8_t.
+                                std::vector<uint8_t> sadB2(sad_list.size() * sizeof(int));
+                                memcpy(sadB2.data(), sad_list.data(), sadB2.size());
+                                LOGINFO("%s: SetSAD entries=%zu byteCount=%zu", __FUNCTION__, sad_list.size(), sadB2.size());
                                 arcAudio->SetSAD(arcHandle, sadB2.data(), static_cast<uint8_t>(sadB2.size()));
                             }
                             int32_t sAuto2 = 0;
