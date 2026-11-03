@@ -1573,7 +1573,7 @@ namespace Plugin {
                         auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                         if (vp != nullptr) {
                             Exchange::IDeviceSettingsVideoPort::VideoPortResolution vpRes;
-                            auto comRc = vp->GetVideoPortResolution(videoHandle, vpRes);
+                            auto comRc = vp->GetVideoPortResolution(videoHandle, vpRes, false);
                             if (comRc == Core::ERROR_NONE){
                                 currentResolutionCache = vpRes.name;
                                 isResCacheUpdated = true;
