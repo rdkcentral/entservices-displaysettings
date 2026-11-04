@@ -1,0 +1,464 @@
+# =============================================================================
+# Smart Backport Workflow with AI Conflict Resolution
+# =============================================================================
+#
+# PURPOSE:
+#   Automatically backports a merged PR to one or more target branches
+#   (e.g. develop, support/8.3.4.0). When merge conflicts occur, an AI
+#   assistant analyzes the diff and creates a GitHub Issue with step-by-step
+#   resolution suggestions, assigned to the PR author.
+#
+# HOW TO USE — LABEL-DRIVEN (automatic):
+#   Add one or more labels to your PR before merging:
+#     backport/develop
+#     backport/support/8.3.4.0
+#     backport/support/8.4.1.0
+#     backport/support/8.5.3.0_EMTK
+#     backport/support/rdk7-main
+#   When the PR merges, this workflow fires automatically.
+#
+# HOW TO USE — MANUAL:
+#   Go to Actions → "Smart Backport with AI Conflict Resolution" → Run workflow
+#   Enter the PR number and a comma-separated list of target branches.
+#
+# REQUIRED SECRETS:
+#   RDKCM_RDKE   — PAT with repo write access (already used by other workflows)
+#   OPENAI_API_KEY (optional) — Enables AI-powered conflict suggestions.
+#                               Without it, structured manual steps are provided.
+#
+# =============================================================================
+
+name: Smart Backport with AI Conflict Resolution
+
+on:
+  pull_request:
+    types: [closed]
+
+  # Manual trigger: supply a PR number and target branches explicitly
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to backport"
+        required: true
+        type: number
+      target_branches:
+        description: "Comma-separated target branches (e.g. develop,support/8.3.4.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 1: Resolve which branches this PR should be backported to
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  resolve-targets:
+    # Only run on merged PRs (label-driven) or manual dispatch
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    runs-on: ubuntu-latest
+    outputs:
+      targets:    ${{ steps.parse.outputs.targets }}
+      pr_number:  ${{ steps.parse.outputs.pr_number }}
+      pr_title:   ${{ steps.parse.outputs.pr_title }}
+      pr_author:  ${{ steps.parse.outputs.pr_author }}
+      commits:    ${{ steps.parse.outputs.commits }}
+      has_targets: ${{ steps.parse.outputs.has_targets }}
+
+    steps:
+      - name: Parse backport targets
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.RDKCM_RDKE }}
+          script: |
+            let prNumber, targets, prTitle, prAuthor;
+
+            // ── Manual dispatch ───────────────────────────────────────────────
+            if (context.eventName === 'workflow_dispatch') {
+              prNumber = parseInt(context.payload.inputs.pr_number);
+              targets  = context.payload.inputs.target_branches
+                           .split(',')
+                           .map(b => b.trim())
+                           .filter(Boolean);
+
+            // ── Label-driven (PR merge) ───────────────────────────────────────
+            } else {
+              prNumber = context.payload.pull_request.number;
+              const labels = context.payload.pull_request.labels.map(l => l.name);
+
+              targets = labels
+                .filter(l => l.startsWith('backport/'))
+                .map(l => l.replace(/^backport\//, ''));
+            }
+
+            if (targets.length === 0) {
+              console.log('No backport targets found. Skipping.');
+              core.setOutput('has_targets', 'false');
+              core.setOutput('targets', '[]');
+              core.setOutput('pr_number', prNumber || '');
+              core.setOutput('pr_title', '');
+              core.setOutput('pr_author', '');
+              core.setOutput('commits', '');
+              return;
+            }
+
+            // Fetch PR metadata and commit list
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              pull_number: prNumber
+            });
+
+            const commitsResp = await github.rest.pulls.listCommits({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              pull_number: prNumber,
+              per_page: 100
+            });
+
+            const commits = commitsResp.data.map(c => c.sha).join(',');
+
+            core.setOutput('has_targets', 'true');
+            core.setOutput('targets',    JSON.stringify(targets));
+            core.setOutput('pr_number',  String(prNumber));
+            core.setOutput('pr_title',   pr.data.title);
+            core.setOutput('pr_author',  pr.data.user.login);
+            core.setOutput('commits',    commits);
+
+            console.log(`PR #${prNumber}: "${pr.data.title}"`);
+            console.log(`Author  : ${pr.data.user.login}`);
+            console.log(`Targets : ${targets.join(', ')}`);
+            console.log(`Commits : ${commits}`);
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 2: Backport — one parallel job per target branch
+# ─────────────────────────────────────────────────────────────────────────────
+  backport:
+    needs: resolve-targets
+    if: needs.resolve-targets.outputs.has_targets == 'true'
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false            # keep going even if one target fails
+      matrix:
+        target: ${{ fromJson(needs.resolve-targets.outputs.targets) }}
+
+    env:
+      PR_NUMBER:  ${{ needs.resolve-targets.outputs.pr_number }}
+      PR_TITLE:   ${{ needs.resolve-targets.outputs.pr_title }}
+      PR_AUTHOR:  ${{ needs.resolve-targets.outputs.pr_author }}
+      COMMITS:    ${{ needs.resolve-targets.outputs.commits }}
+      TARGET:     ${{ matrix.target }}
+
+    steps:
+      # ── Checkout full history ──────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RDKCM_RDKE }}
+
+      # ── Git identity ───────────────────────────────────────────────────────
+      - name: Configure Git identity
+        run: |
+          git config user.name  "GitHub Actions [Smart Backport]"
+          git config user.email "187267378+rdkcm-rdke@users.noreply.github.com"
+
+      # ── Validate target branch exists ─────────────────────────────────────
+      - name: Validate target branch
+        run: |
+          if ! git ls-remote --exit-code --heads origin "$TARGET" > /dev/null 2>&1; then
+            echo "::error::Target branch '$TARGET' does not exist on remote."
+            exit 1
+          fi
+          echo "Target branch '$TARGET' confirmed."
+
+      # ── Cherry-pick all commits from the PR ───────────────────────────────
+      - name: Cherry-pick commits onto target branch
+        id: cherry_pick
+        run: |
+          set -euo pipefail
+
+          # Sanitise target name for use as a branch name  (/ → -)
+          SAFE_TARGET="${TARGET//\//-}"
+          BACKPORT_BRANCH="backport/pr-${PR_NUMBER}-to-${SAFE_TARGET}"
+
+          git fetch origin "$TARGET"
+          git checkout -b "$BACKPORT_BRANCH" "origin/$TARGET"
+
+          CONFLICT=false
+          CONFLICT_FILES=""
+
+          IFS=',' read -ra COMMIT_LIST <<< "$COMMITS"
+          for SHA in "${COMMIT_LIST[@]}"; do
+            echo "Cherry-picking $SHA …"
+            if ! git cherry-pick "$SHA"; then
+              CONFLICT=true
+              # Collect unmerged files
+              CONFLICT_FILES=$(git diff --name-only --diff-filter=U | tr '\n' ',')
+              echo "Conflict detected in: $CONFLICT_FILES"
+              git cherry-pick --abort 2>/dev/null || true
+              break
+            fi
+          done
+
+          echo "conflict=$CONFLICT"               >> "$GITHUB_OUTPUT"
+          echo "conflict_files=$CONFLICT_FILES"   >> "$GITHUB_OUTPUT"
+          echo "backport_branch=$BACKPORT_BRANCH" >> "$GITHUB_OUTPUT"
+
+      # ── SUCCESS PATH ──────────────────────────────────────────────────────
+
+      - name: Push backport branch
+        if: steps.cherry_pick.outputs.conflict == 'false'
+        run: |
+          git push origin "${{ steps.cherry_pick.outputs.backport_branch }}"
+
+      - name: Create backport Pull Request
+        if: steps.cherry_pick.outputs.conflict == 'false'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.RDKCM_RDKE }}
+          script: |
+            const { PR_NUMBER, PR_TITLE, PR_AUTHOR, TARGET } = process.env;
+            const backportBranch = '${{ steps.cherry_pick.outputs.backport_branch }}';
+
+            const { data: newPr } = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              title: `[Backport → ${TARGET}] ${PR_TITLE}`,
+              head:  backportBranch,
+              base:  TARGET,
+              body: [
+                `## Automated Backport`,
+                ``,
+                `This PR was automatically created by the **Smart Backport** workflow.`,
+                ``,
+                `| Field          | Value                        |`,
+                `|----------------|------------------------------|`,
+                `| Source PR      | #${PR_NUMBER}                |`,
+                `| Target branch  | \`${TARGET}\`                |`,
+                `| Requested by   | @${PR_AUTHOR}                |`,
+                ``,
+                `> Review, approve, and merge as you would any normal PR.`,
+              ].join('\n'),
+              draft: false
+            });
+
+            // Notify on original PR
+            await github.rest.issues.createComment({
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              issue_number: parseInt(PR_NUMBER),
+              body: `✅ **Backport to \`${TARGET}\` succeeded!**\n\nBackport PR created: #${newPr.number}`
+            });
+
+            console.log(`Created backport PR #${newPr.number}`);
+
+      # ── CONFLICT PATH ─────────────────────────────────────────────────────
+
+      - name: Fetch PR diff for AI analysis
+        if: steps.cherry_pick.outputs.conflict == 'true'
+        id: fetch_diff
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.RDKCM_RDKE }}
+          script: |
+            const { PR_NUMBER } = process.env;
+
+            // Fetch unified diff (limited to 4 KB to stay within API token budget)
+            const diffResp = await github.rest.pulls.get({
+              owner:      context.repo.owner,
+              repo:       context.repo.repo,
+              pull_number: parseInt(PR_NUMBER),
+              mediaType:  { format: 'diff' }
+            });
+
+            const truncatedDiff = String(diffResp.data).substring(0, 4000);
+            core.setOutput('diff', truncatedDiff);
+
+      - name: Request AI conflict resolution suggestions
+        if: steps.cherry_pick.outputs.conflict == 'true'
+        id: ai_suggest
+        env:
+          OPENAI_API_KEY:  ${{ secrets.OPENAI_API_KEY }}
+          CONFLICT_FILES:  ${{ steps.cherry_pick.outputs.conflict_files }}
+          PR_DIFF:         ${{ steps.fetch_diff.outputs.diff }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.RDKCM_RDKE }}
+          script: |
+            const { PR_NUMBER, PR_TITLE, TARGET, CONFLICT_FILES, OPENAI_API_KEY, PR_DIFF } = process.env;
+            const conflictFiles = CONFLICT_FILES.split(',').filter(Boolean);
+
+            let aiBody = '';
+
+            if (OPENAI_API_KEY) {
+              try {
+                const prompt = [
+                  `A Git cherry-pick backport of PR #${PR_NUMBER} ("${PR_TITLE}") to branch \`${TARGET}\``,
+                  `has produced merge conflicts in the following files:`,
+                  ``,
+                  conflictFiles.map(f => `  - ${f}`).join('\n'),
+                  ``,
+                  `Below is the unified diff from the original PR (may be truncated):`,
+                  `\`\`\`diff`,
+                  PR_DIFF,
+                  `\`\`\``,
+                  ``,
+                  `Please provide:`,
+                  `1. A brief explanation of **why** conflicts likely occurred.`,
+                  `2. **Step-by-step instructions** for a developer to resolve each conflicting file.`,
+                  `3. Which content to **keep from the incoming change** vs **keep from the target branch**.`,
+                  `4. Any **risks or regressions** to watch for after resolving.`,
+                  `5. A ready-to-use **git command sequence** to complete the backport manually.`,
+                ].join('\n');
+
+                const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+                  method:  'POST',
+                  headers: {
+                    'Authorization': `Bearer ${OPENAI_API_KEY}`,
+                    'Content-Type':  'application/json'
+                  },
+                  body: JSON.stringify({
+                    model:      'gpt-4o-mini',
+                    messages:   [
+                      { role: 'system',  content: 'You are a senior software engineer specialising in Git workflows and merge conflict resolution. Be concise, actionable, and precise.' },
+                      { role: 'user',    content: prompt }
+                    ],
+                    max_tokens: 1200,
+                    temperature: 0.2
+                  })
+                });
+
+                if (!resp.ok) {
+                  const err = await resp.text();
+                  throw new Error(`OpenAI API error ${resp.status}: ${err}`);
+                }
+
+                const data = await resp.json();
+                aiBody = data.choices?.[0]?.message?.content?.trim() || 'No response from AI.';
+
+              } catch (err) {
+                console.error('AI request failed:', err.message);
+                aiBody = `> ⚠️ AI analysis failed: ${err.message}`;
+              }
+            } else {
+              aiBody = [
+                `> ℹ️ **AI suggestions are disabled** — add an \`OPENAI_API_KEY\` repository secret to enable them.`,
+                ``,
+                `**General guidance for cherry-pick conflicts:**`,
+                `- Conflicts typically occur when the target branch has diverged significantly from the source.`,
+                `- Review each conflict marker (\`<<<<<<<\`, \`=======\`, \`>>>>>>>\`) carefully.`,
+                `- Preserve the intent of the incoming change while respecting any refactoring on the target branch.`,
+              ].join('\n');
+            }
+
+            core.setOutput('ai_body', aiBody);
+
+      - name: Create conflict resolution issue
+        if: steps.cherry_pick.outputs.conflict == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.RDKCM_RDKE }}
+          script: |
+            const { PR_NUMBER, PR_TITLE, PR_AUTHOR, TARGET, COMMITS } = process.env;
+            const conflictFiles = '${{ steps.cherry_pick.outputs.conflict_files }}'.split(',').filter(Boolean);
+            const aiBody        = `${{ steps.ai_suggest.outputs.ai_body }}`;
+            const safeTarget    = TARGET.replace(/\//g, '-');
+            const backportBranch = `backport/pr-${PR_NUMBER}-to-${safeTarget}`;
+
+            // Build the commit list section
+            const commitLines = COMMITS.split(',')
+              .filter(Boolean)
+              .map(sha => `- [\`${sha.substring(0,7)}\`](../../commit/${sha})`)
+              .join('\n');
+
+            const issueBody = [
+              `## ⚠️ Backport Conflict: PR #${PR_NUMBER} → \`${TARGET}\``,
+              ``,
+              `The **Smart Backport** workflow attempted to cherry-pick PR #${PR_NUMBER} onto`,
+              `\`${TARGET}\` but encountered merge conflicts.`,
+              ``,
+              `---`,
+              `### 📋 Details`,
+              `| Field             | Value                     |`,
+              `|-------------------|---------------------------|`,
+              `| Source PR         | #${PR_NUMBER} — ${PR_TITLE} |`,
+              `| Target branch     | \`${TARGET}\`             |`,
+              `| Requested by      | @${PR_AUTHOR}             |`,
+              ``,
+              `**Conflicting files:**`,
+              conflictFiles.map(f => `- \`${f}\``).join('\n'),
+              ``,
+              `**Commits that need to be applied:**`,
+              commitLines,
+              ``,
+              `---`,
+              `### 🤖 AI Conflict Resolution Suggestions`,
+              ``,
+              aiBody,
+              ``,
+              `---`,
+              `### 🛠️ Manual Resolution Steps`,
+              ``,
+              `\`\`\`bash`,
+              `# 1. Clone / refresh the repo`,
+              `git clone https://github.com/${{ github.repository }}.git`,
+              `cd $(basename ${{ github.repository }}  )`,
+              ``,
+              `# 2. Checkout a new backport branch from the target`,
+              `git fetch origin`,
+              `git checkout -b ${backportBranch} origin/${TARGET}`,
+              ``,
+              `# 3. Cherry-pick each commit (replace SHAs below)`,
+              COMMITS.split(',').filter(Boolean).map(sha => `git cherry-pick ${sha}`).join('\n'),
+              ``,
+              `# 4. When a conflict appears:`,
+              `#    a) Open the conflicting file and look for <<<<<<< markers`,
+              `#    b) Resolve the conflict manually`,
+              `#    c) Stage the resolved file`,
+              `git add <resolved-file>`,
+              `git cherry-pick --continue`,
+              ``,
+              `# 5. Push and open a PR`,
+              `git push origin ${backportBranch}`,
+              `\`\`\``,
+              ``,
+              `---`,
+              `*Created automatically by the Smart Backport workflow.*`,
+            ].join('\n');
+
+            // Create the issue
+            const { data: issue } = await github.rest.issues.create({
+              owner:     context.repo.owner,
+              repo:      context.repo.repo,
+              title:     `[Backport Conflict] PR #${PR_NUMBER} → ${TARGET}`,
+              body:      issueBody,
+              labels:    ['backport-conflict', 'needs-manual-resolution'],
+              assignees: [PR_AUTHOR]
+            });
+
+            console.log(`Created conflict issue #${issue.number}`);
+
+            // Comment on the original PR so the author is notified
+            await github.rest.issues.createComment({
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              issue_number: parseInt(PR_NUMBER),
+              body: [
+                `## ⚠️ Backport to \`${TARGET}\` failed — merge conflicts detected`,
+                ``,
+                `| Conflicting file | Action required |`,
+                `|------------------|-----------------|`,
+                ...conflictFiles.map(f => `| \`${f}\` | Manual resolution needed |`),
+                ``,
+                `A detailed issue with AI-powered resolution suggestions has been created: #${issue.number}`,
+                ``,
+                `@${PR_AUTHOR} — please resolve the conflicts and push a backport PR to \`${TARGET}\`.`,
+              ].join('\n')
+            });

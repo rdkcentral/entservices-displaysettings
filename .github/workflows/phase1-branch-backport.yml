@@ -1,0 +1,327 @@
+# =============================================================================
+# PHASE 1 — Manual Branch-to-Branch Backport (Experiment / Trial)
+# =============================================================================
+#
+# WHAT THIS DOES:
+#   You have a feature branch (source_branch) with some new commits.
+#   This workflow takes those commits and applies them to one or more
+#   release/support branches WITHOUT waiting for a merge into develop.
+#
+# HOW TO RUN:
+#   GitHub → Actions tab → "Phase 1 - Manual Branch Backport" → Run workflow
+#   Fill in the inputs and click "Run workflow"
+#
+# INPUTS:
+#   source_branch   : Your feature branch that has the changes
+#                     Example: feature/RDKEMW-1234-my-fix
+#
+#   base_branch     : The branch source_branch was created FROM
+#                     This is used to detect which commits are "new"
+#                     Default: develop
+#
+#   target_branches : Comma-separated list of branches to apply changes to
+#                     Example: support/8.3.4.0
+#                     Example: support/8.3.4.0,support/8.4.1.0
+#
+# WHAT IT DOES FOR EACH TARGET BRANCH:
+#   1. Checks if source_branch exists    → error if not found
+#   2. Checks if target branch exists    → error if not found
+#   3. Creates new branch:  backport/<source>-to-<safe-target>
+#      (branched OFF the target, not off develop)
+#   4. Cherry-picks all new commits from source_branch
+#   5. Pushes the new branch
+#   6. Raises a PR: backport branch → target branch
+#
+# EXAMPLE:
+#   source_branch   = feature/RDKEMW-1234-audio-fix
+#   base_branch     = develop
+#   target_branches = support/8.3.4.0
+#
+#   Result:
+#     New branch created:  backport/RDKEMW-1234-audio-fix-to-support-8.3.4.0
+#     PR opened:           backport branch → support/8.3.4.0
+#
+# =============================================================================
+
+name: Manual Branch Backport
+
+on:
+  push:
+    branches:
+      - feature/Github_POC   # temporary — remove this line after PR is merged to develop
+  workflow_dispatch:
+    inputs:
+
+      source_branch:
+        description: "Source branch that has your changes (e.g. feature/my-fix)"
+        required: true
+        type: string
+
+      base_branch:
+        description: "Branch the source was created FROM — used to detect new commits (default: develop)"
+        required: true
+        type: string
+        default: "develop"
+
+      target_branches:
+        description: "Target branch(es) to backport into — comma-separated (e.g. support/8.3.4.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# =============================================================================
+# JOB: backport
+# Runs once — handles all target branches sequentially inside one job
+# (simple for Phase 1 / experiment; can be made parallel later)
+# =============================================================================
+jobs:
+  backport:
+    runs-on: ubuntu-latest
+    # Only run when manually triggered via workflow_dispatch
+    # The push trigger above is only to make this workflow visible in the Actions sidebar
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+
+      # ── Step 1: Checkout full repo history ──────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0                    # need full history for cherry-pick
+          token: ${{ secrets.RDKCM_RDKE }}
+
+      # ── Step 2: Set Git identity ─────────────────────────────────────────────
+      - name: Configure Git identity
+        run: |
+          git config user.name  "GitHub Actions [Phase1 Backport]"
+          git config user.email "187267378+rdkcm-rdke@users.noreply.github.com"
+
+      # ── Step 3: Validate source branch exists ────────────────────────────────
+      - name: Validate source branch
+        env:
+          SOURCE: ${{ github.event.inputs.source_branch }}
+        run: |
+          echo "Checking source branch: $SOURCE"
+
+          if ! git ls-remote --exit-code --heads origin "$SOURCE" > /dev/null 2>&1; then
+            echo "::error::Source branch '$SOURCE' does not exist on remote."
+            echo "Please check the branch name and try again."
+            exit 1
+          fi
+
+          echo "✅ Source branch '$SOURCE' found."
+
+      # ── Step 4: Detect which commits to cherry-pick ──────────────────────────
+      #
+      #   We want commits that are IN source_branch but NOT in base_branch.
+      #   This gives us only the "new" commits the developer added.
+      #
+      #   Example:
+      #     base_branch (develop):  A - B - C
+      #     source_branch:          A - B - C - D - E   ← D and E are new
+      #     cherry-pick list:       D, E  (in oldest-first order)
+      #
+      - name: Detect new commits in source branch
+        id: get_commits
+        env:
+          SOURCE: ${{ github.event.inputs.source_branch }}
+          BASE:   ${{ github.event.inputs.base_branch }}
+        run: |
+          echo "Fetching branches…"
+          git fetch origin "$SOURCE"
+          git fetch origin "$BASE"
+
+          echo ""
+          echo "Finding commits in '$SOURCE' that are NOT in '$BASE'…"
+
+          # --reverse = oldest first, so cherry-pick applies in correct order
+          COMMITS=$(git log --reverse --pretty=format:"%H" \
+                      "origin/$BASE..origin/$SOURCE")
+
+          if [ -z "$COMMITS" ]; then
+            echo "::error::No commits found in '$SOURCE' that are not already in '$BASE'."
+            echo "The source branch has no new commits compared to '$BASE'."
+            exit 1
+          fi
+
+          COUNT=$(echo "$COMMITS" | wc -l)
+          echo ""
+          echo "Found $COUNT commit(s) to cherry-pick:"
+          git log --oneline "origin/$BASE..origin/$SOURCE"
+
+          # Store as comma-separated for later steps
+          COMMITS_CSV=$(echo "$COMMITS" | tr '\n' ',' | sed 's/,$//')
+          echo "commits=$COMMITS_CSV" >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT"         >> "$GITHUB_OUTPUT"
+
+      # ── Step 5: Process each target branch ───────────────────────────────────
+      #
+      #   For each target branch in the comma-separated input:
+      #     a) Validate it exists
+      #     b) Create a new backport branch FROM that target
+      #     c) Cherry-pick the new commits one by one
+      #     d) Push the backport branch
+      #     e) Create a PR via GitHub API
+      #
+      - name: Backport to each target branch
+        id: backport_loop
+        env:
+          SOURCE:          ${{ github.event.inputs.source_branch }}
+          BASE:            ${{ github.event.inputs.base_branch }}
+          TARGET_BRANCHES: ${{ github.event.inputs.target_branches }}
+          COMMITS_CSV:     ${{ steps.get_commits.outputs.commits }}
+          COMMIT_COUNT:    ${{ steps.get_commits.outputs.count }}
+          GH_TOKEN:        ${{ secrets.RDKCM_RDKE }}
+          REPO:            ${{ github.repository }}
+          ACTOR:           ${{ github.actor }}
+        run: |
+          set -euo pipefail
+
+          # Split comma-separated targets into an array
+          IFS=',' read -ra TARGETS <<< "$TARGET_BRANCHES"
+
+          TOTAL=${#TARGETS[@]}
+          echo "Processing $TOTAL target branch(es)…"
+          echo ""
+
+          SUCCESS_LIST=""
+          FAILED_LIST=""
+
+          for TARGET in "${TARGETS[@]}"; do
+
+            # Trim whitespace from branch name
+            TARGET=$(echo "$TARGET" | xargs)
+
+            echo "════════════════════════════════════════════════"
+            echo "  TARGET: $TARGET"
+            echo "════════════════════════════════════════════════"
+
+            # ── a) Validate target branch exists ─────────────────────────────
+            echo "→ Checking if '$TARGET' exists on remote…"
+            if ! git ls-remote --exit-code --heads origin "$TARGET" > /dev/null 2>&1; then
+              echo "::error::Target branch '$TARGET' does not exist on remote. Skipping."
+              FAILED_LIST="$FAILED_LIST\n- '$TARGET' → branch not found"
+              continue
+            fi
+            echo "  ✅ Branch found."
+
+            # ── b) Build backport branch name ─────────────────────────────────
+            #   Replace / with - so branch names are valid
+            SAFE_SOURCE="${SOURCE//\//-}"
+            SAFE_TARGET="${TARGET//\//-}"
+            BACKPORT_BRANCH="backport/${SAFE_SOURCE}-to-${SAFE_TARGET}"
+
+            echo "→ Backport branch will be: $BACKPORT_BRANCH"
+
+            # Clean up any leftover local branch from a previous run
+            git branch -D "$BACKPORT_BRANCH" 2>/dev/null || true
+
+            # ── c) Create new branch FROM the target branch ───────────────────
+            git fetch origin "$TARGET"
+            git checkout -b "$BACKPORT_BRANCH" "origin/$TARGET"
+            echo "  ✅ Created '$BACKPORT_BRANCH' from 'origin/$TARGET'."
+
+            # ── d) Cherry-pick commits one by one ─────────────────────────────
+            echo "→ Cherry-picking $COMMIT_COUNT commit(s)…"
+
+            CHERRY_OK=true
+            CONFLICT_FILES=""
+
+            IFS=',' read -ra COMMIT_LIST <<< "$COMMITS_CSV"
+            for SHA in "${COMMIT_LIST[@]}"; do
+              SHORT="${SHA:0:7}"
+              echo "  Cherry-picking $SHORT…"
+
+              if ! git cherry-pick "$SHA"; then
+                CHERRY_OK=false
+                CONFLICT_FILES=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
+                echo "  ❌ Conflict on $SHORT. Conflicting files: $CONFLICT_FILES"
+                git cherry-pick --abort 2>/dev/null || true
+                break
+              fi
+
+              echo "  ✅ Applied $SHORT"
+            done
+
+            if [ "$CHERRY_OK" = false ]; then
+              echo ""
+              echo "  ⚠️  Cherry-pick FAILED for target '$TARGET'."
+              echo "  Conflicting files: $CONFLICT_FILES"
+              FAILED_LIST="$FAILED_LIST\n- '$TARGET' → conflict in: $CONFLICT_FILES"
+              git checkout develop 2>/dev/null || git checkout --detach HEAD
+              continue
+            fi
+
+            # ── e) Push the backport branch ───────────────────────────────────
+            echo "→ Pushing '$BACKPORT_BRANCH'…"
+            git push origin "$BACKPORT_BRANCH"
+            echo "  ✅ Pushed."
+
+            # ── f) Create PR via GitHub API ───────────────────────────────────
+            echo "→ Creating Pull Request…"
+
+            # Build commit list for PR body
+            COMMIT_LINES=$(git log --oneline "origin/$TARGET..HEAD" | \
+                           sed 's/^/- /' | head -20)
+
+            # Write PR body to a temp file (avoids YAML heredoc issues)
+            PR_BODY_FILE=$(mktemp)
+            {
+              printf "## Phase 1 Backport\n\n"
+              printf "This PR was automatically created by the **Phase 1 Branch Backport** workflow.\n\n"
+              printf "| Field            | Value                     |\n"
+              printf "|------------------|---------------------------|\n"
+              printf "| Source branch    | \`%s\`                    |\n" "$SOURCE"
+              printf "| Base branch      | \`%s\`                    |\n" "$BASE"
+              printf "| Target branch    | \`%s\`                    |\n" "$TARGET"
+              printf "| Triggered by     | @%s                       |\n" "$ACTOR"
+              printf "| Commits applied  | %s                        |\n" "$COMMIT_COUNT"
+              printf "\n### Commits included\n"
+              printf "%s\n" "$COMMIT_LINES"
+              printf "\n---\n"
+              printf "*Review and merge when ready. This was a trial/experiment run.*\n"
+            } > "$PR_BODY_FILE"
+
+            PR_JSON=$(gh pr create \
+              --title "[Backport to $TARGET] from $SOURCE" \
+              --body-file "$PR_BODY_FILE" \
+              --head "$BACKPORT_BRANCH" \
+              --base "$TARGET" \
+              --repo "$REPO" 2>&1) || true
+
+            rm -f "$PR_BODY_FILE"
+
+            if echo "$PR_JSON" | grep -q "https://"; then
+              PR_URL=$(echo "$PR_JSON" | grep -o "https://[^ ]*")
+              echo "  ✅ PR created: $PR_URL"
+              SUCCESS_LIST="$SUCCESS_LIST\n- '$TARGET' → $PR_URL"
+            else
+              echo "  ⚠️  PR creation output: $PR_JSON"
+              FAILED_LIST="$FAILED_LIST\n- '$TARGET' → PR creation issue: $PR_JSON"
+            fi
+
+            echo ""
+          done
+
+          # ── Final Summary ───────────────────────────────────────────────────
+          echo ""
+          echo "════════════════════════════════════════════════"
+          echo "  SUMMARY"
+          echo "════════════════════════════════════════════════"
+
+          if [ -n "$SUCCESS_LIST" ]; then
+            echo ""
+            echo "✅ SUCCEEDED:"
+            echo -e "$SUCCESS_LIST"
+          fi
+
+          if [ -n "$FAILED_LIST" ]; then
+            echo ""
+            echo "❌ FAILED:"
+            echo -e "$FAILED_LIST"
+            echo ""
+            echo "::warning::Some targets failed. See above for details."
+          fi

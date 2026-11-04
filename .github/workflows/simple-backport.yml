@@ -1,0 +1,608 @@
+name: Simple Branch Backport
+
+on:
+  push:
+    branches:
+      - feature/Github_POC   # keeps workflow visible in Actions sidebar
+  workflow_dispatch:
+    inputs:
+
+      source_branch:
+        description: "Feature branch with your changes (e.g. feature/Github_POC)"
+        required: true
+        type: string
+
+      support_branch:
+        description: "Release branch to apply changes into (e.g. support/8.3.4.0)"
+        required: true
+        type: string
+
+      new_branch_name:
+        description: "New branch name to create on top of support branch (e.g. feature/RDKEMW-21092)"
+        required: true
+        type: string
+
+      specific_commits:
+        description: "OPTIONAL: Comma-separated specific commit SHAs to apply (e.g. 9e4c2b6,a1b2c3d). Leave empty to apply ALL new commits from source branch."
+        required: false
+        type: string
+        default: ""
+
+      pr_title:
+        description: "PR title (e.g. RDKEMW-21092: Fix log message in Request)"
+        required: false
+        type: string
+        default: ""
+
+      pr_body:
+        description: "PR description / change summary"
+        required: false
+        type: string
+        default: "Automated backport created by simple-backport workflow."
+
+      ai_token:
+        description: "OPTIONAL: Anthropic API key (sk-ant-...) for AI conflict resolution suggestions. Leave empty to skip AI."
+        required: false
+        type: string
+        default: ""
+
+      ollama_url:
+        description: "OPTIONAL: External Ollama URL (e.g. http://192.168.1.100:11434). Leave empty to use Ollama installed on the runner automatically."
+        required: false
+        type: string
+        default: ""
+
+      auto_apply:
+        description: "OPTIONAL: If 'true', automatically apply the AI-suggested fix and commit it when a conflict is detected."
+        required: false
+        type: string
+        default: "false"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  backport:
+    runs-on: ubuntu-latest   # change to [self-hosted] when using ollama_url (private LAN Ollama)
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RDKCM_RDKE }}
+
+      - name: Configure Git
+        run: |
+          git config user.name  "GitHub Actions [Backport]"
+          git config user.email "github-actions@users.noreply.github.com"
+          # Save helper script to /tmp before any branch switch removes it
+          cp .github/scripts/conflict_viewer.py /tmp/conflict_viewer.py
+
+      # ── STEP 1: Check support branch exists ─────────────────────────────────
+      - name: Check support branch exists
+        env:
+          SUPPORT: ${{ github.event.inputs.support_branch }}
+        run: |
+          echo "Checking if support branch '$SUPPORT' exists..."
+
+          if ! git ls-remote --exit-code --heads origin "$SUPPORT" > /dev/null 2>&1; then
+            echo ""
+            echo "❌ Branch not found: '$SUPPORT'"
+            echo "   Please check the branch name and try again."
+            exit 1
+          fi
+
+          echo "✅ Branch '$SUPPORT' found."
+
+      # ── STEP 2: Get commits from source branch ───────────────────────────────
+      - name: Get commits to apply
+        id: get_commits
+        env:
+          SOURCE:      ${{ github.event.inputs.source_branch }}
+          SUPPORT:     ${{ github.event.inputs.support_branch }}
+          NEW_BRANCH:  ${{ github.event.inputs.new_branch_name }}
+          SPECIFIC:    ${{ github.event.inputs.specific_commits }}
+        run: |
+          set +e
+          # ── If user provided specific commit SHAs, use those directly ────────
+          if [ -n "$SPECIFIC" ]; then
+            echo "Using specific commits provided by user: $SPECIFIC"
+            COUNT=$(echo "$SPECIFIC" | tr ',' '\n' | grep -c '.')
+            echo "commits=$SPECIFIC" >> "$GITHUB_OUTPUT"
+            echo "count=$COUNT"      >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # ── Otherwise, find ALL code commits not yet backported to target ───
+          echo "Fetching branches..."
+          git fetch origin "$SOURCE"
+          git fetch origin "$SUPPORT"
+
+          # Use new_branch if it exists on remote, otherwise use support branch
+          if git ls-remote --exit-code --heads origin "$NEW_BRANCH" > /dev/null 2>&1; then
+            git fetch origin "$NEW_BRANCH"
+            CHECK_REF="origin/$NEW_BRANCH"
+            echo "Checking against target branch: $NEW_BRANCH"
+          else
+            CHECK_REF="origin/$SUPPORT"
+            echo "Checking against support branch: $SUPPORT (target branch not yet created)"
+          fi
+
+          # Build list of commits already backported (by [backported:SHA] tag)
+          TARGET_LOG=$(git log "$CHECK_REF" --format='%s' 2>/dev/null)
+
+          PENDING=""
+          COUNT=0
+          for SHA in $(git log --pretty=format:"%H" -20 "origin/$SOURCE"); do
+            # Skip .github/-only commits (workflow/script changes, not code)
+            FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$' | grep -v '^\.github/')
+            [ -z "$FILES" ] && continue
+
+            SHORT="${SHA:0:7}"
+
+            # Skip if already tagged as backported in target branch history
+            if echo "$TARGET_LOG" | grep -qF "[backported:$SHORT]"; then
+              echo "  Skipping $SHORT — already backported (found [backported:$SHORT] in target)"
+              continue
+            fi
+
+            echo "  Queued $SHORT — $(git log -1 --format='%s' "$SHA")"
+            # Prepend so that the oldest commit ends up first (git log returns newest first)
+            if [ -z "$PENDING" ]; then
+              PENDING="$SHA"
+            else
+              PENDING="$SHA,$PENDING"
+            fi
+            COUNT=$((COUNT + 1))
+          done
+
+          if [ -z "$PENDING" ]; then
+            echo ""
+            echo "✅ Nothing to do — all commits from '$SOURCE' are already applied to '$NEW_BRANCH'."
+            echo "commits=" >> "$GITHUB_OUTPUT"
+            echo "count=0"  >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo ""
+          echo "Found $COUNT unapplied commit(s) to apply."
+          echo "commits=$PENDING" >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT"     >> "$GITHUB_OUTPUT"
+
+      # ── STEP 3: Create or checkout branch on top of support ─────────────────
+      - name: Create or checkout branch on support
+        id: create_branch
+        env:
+          SUPPORT:    ${{ github.event.inputs.support_branch }}
+          NEW_BRANCH: ${{ github.event.inputs.new_branch_name }}
+        run: |
+          echo "Fetching '$SUPPORT'..."
+          git fetch origin "$SUPPORT"
+
+          if git ls-remote --exit-code --heads origin "$NEW_BRANCH" > /dev/null 2>&1; then
+            echo "Branch '$NEW_BRANCH' already exists on remote — checking it out..."
+            git fetch origin "$NEW_BRANCH"
+            git checkout "$NEW_BRANCH"
+            git reset --hard "origin/$NEW_BRANCH"
+            echo "branch_existed=true" >> "$GITHUB_OUTPUT"
+            echo "✅ Checked out existing '$NEW_BRANCH'."
+          else
+            echo "Creating '$NEW_BRANCH' from 'origin/$SUPPORT'..."
+            git checkout -b "$NEW_BRANCH" "origin/$SUPPORT"
+            echo "branch_existed=false" >> "$GITHUB_OUTPUT"
+            echo "✅ Created '$NEW_BRANCH' on top of '$SUPPORT'."
+          fi
+
+      # ── STEP 3b: Install Ollama on runner ────────────────────────────────
+      - name: Setup Ollama on runner
+        continue-on-error: true
+        run: |
+          echo "Installing Ollama on runner..."
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve &
+          echo "Waiting for Ollama to be ready..."
+          for _i in $(seq 1 30); do
+            curl -sf http://localhost:11434/api/version > /dev/null && break
+            sleep 2
+          done
+          echo "Pulling phi3:3.8b model (2.2GB — fits in runner memory)..."
+          ollama pull phi3:3.8b
+          echo "✅ Ollama ready at localhost:11434"
+
+      # ── STEP 4: Apply commits ─────────────────────────────────────────────
+      - name: Apply changes via patch
+        id: cherry_pick
+        env:
+          COMMITS_CSV:   ${{ steps.get_commits.outputs.commits }}
+          COMMIT_COUNT:  ${{ steps.get_commits.outputs.count }}
+          SOURCE:        ${{ github.event.inputs.source_branch }}
+          MODELS_TOKEN:  ${{ github.event.inputs.ai_token }}
+          OLLAMA_URL:    ${{ github.event.inputs.ollama_url || 'http://localhost:11434' }}
+          BP_AUTO_APPLY: ${{ github.event.inputs.auto_apply }}
+          BP_TOK:        ${{ secrets.RDKCM_RDKE }}
+          BP_REPO:       ${{ github.repository }}
+          BP_RUNID:      ${{ github.run_id }}
+        run: |
+          set +e
+          if [ "$COMMIT_COUNT" = "0" ] || [ -z "$COMMITS_CSV" ]; then
+            echo "✅ Nothing to apply — branch is already up to date."
+            exit 0
+          fi
+          echo "Applying $COMMIT_COUNT commit(s) from '$SOURCE'..."
+          echo ""
+
+          IFS=',' read -ra COMMIT_LIST <<< "$COMMITS_CSV"
+          for SHA in "${COMMIT_LIST[@]}"; do
+            [ -z "$SHA" ] && continue
+            SHORT="${SHA:0:7}"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  Applying $SHORT..."
+
+            # ── Hard idempotency: skip if already backported in local history ─
+            # Covers both auto-discovery and specific_commits mode.
+            if git log --format='%s' HEAD | grep -qF "[backported:$SHORT]"; then
+              echo "  ✅ $SHORT already in branch history [backported:$SHORT] — skipping (no re-apply)"
+              continue
+            fi
+
+            # ── Pre-check: detect conflict risk (missing context) ────────
+            PRECHECK_FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$' | grep -v '^\.github/')
+            SKIP_CHERRY_PICK=false
+
+            for PC_FILE in $PRECHECK_FILES; do
+              PC_BASE=$(basename "$PC_FILE")
+              PC_TARGET=$(find . -name "$PC_BASE" -not -path "./.git/*" -not -path "./.github/*" 2>/dev/null | head -1 | sed 's|^\./||')
+              [ -z "$PC_TARGET" ] && continue
+
+              PC_MINUS=$(git show "$SHA" -- "$PC_FILE" | grep '^-' | grep -v '^---' | sed 's/^-//' | grep -v '^[[:space:]]*$' | head -1)
+
+              # If the line the commit wants to REMOVE is missing → conflict risk, skip cherry-pick
+              if [ -n "$PC_MINUS" ] && ! grep -qF "$PC_MINUS" "$PC_TARGET" 2>/dev/null; then
+                echo "  ⚠️  Pre-check: original content not found in $PC_TARGET"
+                echo "     Expected : $PC_MINUS"
+                echo "     Target may have conflicting content — skipping cherry-pick, using patch"
+                SKIP_CHERRY_PICK=true
+              fi
+            done
+
+            # ── Try direct cherry-pick (only if pre-check says safe) ──────
+            if [ "$SKIP_CHERRY_PICK" = false ]; then
+              CHERRY_OUTPUT=$(git cherry-pick "$SHA" 2>&1)
+              CHERRY_EXIT=$?
+              if [ "$CHERRY_EXIT" -eq 0 ]; then
+                git commit --amend -m "$(git log -1 --format='%s') [backported:$SHORT]" 2>/dev/null || true
+                echo "  ✅ Applied $SHORT (direct cherry-pick)"
+                continue
+              fi
+              echo "  cherry-pick failed — falling back to patch approach"
+              git cherry-pick --abort 2>/dev/null
+            fi
+
+            # ── Get list of files changed in this commit ──────────────────
+            CHANGED_FILES=$(git show "$SHA" --name-only --format="" | grep -v '^$' | grep -v '^\.github/')
+            echo "  Files in commit: $(echo $CHANGED_FILES | tr '\n' ' ')"
+
+            ALL_OK=true
+            for ORIG_FILE in $CHANGED_FILES; do
+              BASENAME=$(basename "$ORIG_FILE")
+              echo ""
+              echo "  Processing: $ORIG_FILE  (filename: $BASENAME)"
+
+              # ── Find file by NAME in current branch ────────────────────
+              TARGET_FILE=$(find . -name "$BASENAME" \
+                -not -path "./.git/*" \
+                -not -path "./.github/*" \
+                2>/dev/null | head -1 | sed 's|^\./||')
+              echo "  Found at: ${TARGET_FILE:-NOT FOUND}"
+
+              if [ -z "$TARGET_FILE" ]; then
+                echo "  ⚠️  Skipping '$BASENAME' — not found in support branch"
+                continue
+              fi
+
+              # ── Rewrite paths in diff and apply with patch --fuzz ──────
+              PATCH_OUT=$(git show "$SHA" -- "$ORIG_FILE" \
+                | sed "s|a/$ORIG_FILE|a/$TARGET_FILE|g; s|b/$ORIG_FILE|b/$TARGET_FILE|g" \
+                | patch -p1 --fuzz=5 --ignore-whitespace --forward 2>&1)
+              PATCH_EXIT=$?
+              echo "$PATCH_OUT"
+
+              if [ "$PATCH_EXIT" -eq 0 ] || echo "$PATCH_OUT" | grep -qi "already applied\|Skipping patch"; then
+                echo "  ✅ patch applied successfully (or already applied)"
+                rm -f "${TARGET_FILE}.rej" "${TARGET_FILE}.orig" 2>/dev/null
+                git add "$TARGET_FILE"
+                continue
+              fi
+
+              echo "  patch failed — checking for already-applied rejected hunks..."
+
+              # ── Check if .rej hunks are already in desired state ────────
+              # When patch partially fails (some hunks succeed, some fail), the .rej
+              # file holds the failed hunks. If the + lines of every failed hunk are
+              # already present in the target file the result is already correct —
+              # treat the partial patch as a success.
+              REJ_FILE="${TARGET_FILE}.rej"
+              if [ -f "$REJ_FILE" ]; then
+                REJ_ALL_APPLIED=true
+                REJ_PLUS=$(grep '^+' "$REJ_FILE" | grep -v '^+++' | sed 's/^+//' | grep -v '^[[:space:]]*$')
+                if [ -n "$REJ_PLUS" ]; then
+                  while IFS= read -r rej_line; do
+                    if [ -n "$rej_line" ] && ! grep -qF "$rej_line" "$TARGET_FILE" 2>/dev/null; then
+                      REJ_ALL_APPLIED=false
+                      break
+                    fi
+                  done <<< "$REJ_PLUS"
+                fi
+                if [ "$REJ_ALL_APPLIED" = true ]; then
+                  echo "  ✅ patch partially applied — rejected hunks already in desired state (skipping)"
+                  rm -f "$REJ_FILE" "${TARGET_FILE}.orig" 2>/dev/null
+                  git add "$TARGET_FILE"
+                  continue
+                fi
+              fi
+
+              # ── patch failed: check if pure addition → append to file ──
+              echo "  patch failed — checking if pure addition (new function/code)..."
+
+              MINUS_LINES=$(git show "$SHA" -- "$ORIG_FILE" | grep '^-' | grep -v '^---' | wc -l | tr -d ' ')
+              PLUS_LINES=$(git show  "$SHA" -- "$ORIG_FILE" | grep '^+' | grep -v '^+++' | wc -l | tr -d ' ')
+
+              if [ "$MINUS_LINES" -eq 0 ] && [ "$PLUS_LINES" -gt 0 ]; then
+                echo "  Pure addition detected ($PLUS_LINES lines) — appending to end of file..."
+                git show "$SHA" -- "$ORIG_FILE" | grep '^+' | grep -v '^+++' | sed 's/^+//' >> "$TARGET_FILE"
+                echo "  ✅ Appended $PLUS_LINES line(s) to $TARGET_FILE"
+                rm -f "${TARGET_FILE}.rej" "${TARGET_FILE}.orig" 2>/dev/null
+                git add "$TARGET_FILE"
+              else
+                COMMIT_MSG=$(git log -1 --format='%s' "$SHA")
+                REJ_LINE=$(grep -m1 "^@@" "${TARGET_FILE}.rej" 2>/dev/null | grep -oE '\+[0-9]+' | tr -d '+' || echo "0")
+                # Adjust REJ_LINE by patch offset (e.g. "offset -208 lines" → shift location)
+                # Use [-0-9] instead of -? to avoid grep '?' quantifier issues on some runners
+                _OFFSET=$(echo "$PATCH_OUT" | grep -oE 'offset [-0-9]+ line' | grep -oE '[-0-9]+' | head -1 || true)
+                [ -n "$_OFFSET" ] && [ "$_OFFSET" != "0" ] && REJ_LINE=$((REJ_LINE + _OFFSET)) || true
+                # If REJ_LINE is 0 or beyond file, locate conflict using context lines from commit diff
+                # awk outputs "offset|context_line" where offset = (minus_pos - context_pos) in target
+                _FILE_LINES=$(wc -l < "$TARGET_FILE" 2>/dev/null || echo "0")
+                if [ "$REJ_LINE" -eq 0 ] || [ "$REJ_LINE" -gt "$_FILE_LINES" ]; then
+                  while IFS= read -r _info; do
+                    _off="${_info%%|*}"
+                    _ctx="${_info#*|}"
+                    [ -z "$_ctx" ] && continue
+                    _cnt=$(grep -cF "$_ctx" "$TARGET_FILE" 2>/dev/null || echo "0")
+                    if [ "$_cnt" -eq 1 ]; then
+                      _found=$(grep -nF "$_ctx" "$TARGET_FILE" 2>/dev/null | cut -d: -f1)
+                      if [ -n "$_found" ]; then
+                        REJ_LINE=$((_found + _off))
+                        [ "$REJ_LINE" -lt 1 ] && REJ_LINE=1
+                        break
+                      fi
+                    fi
+                  done < <(git show "$SHA" -- "$ORIG_FILE" | awk '
+                    /^@@/{
+                      if(buf_n>0&&change_tpos>=0)for(i=0;i<buf_n;i++)print (change_tpos-buf_tpos[i])"|"buf[i]
+                      split("",buf);split("",buf_tpos);buf_n=0;change_tpos=-1;tpos=0;in_hunk=1;next
+                    }
+                    !in_hunk{next}
+                    /^---/{next}
+                    /^\+\+\+/{next}
+                    /^-[^-]/{if(change_tpos<0)change_tpos=tpos;next}
+                    /^\+[^+]/{tpos++;next}
+                    /^ /{ctx=substr($0,2);if(ctx!~/^[[:space:]]*$/){buf[buf_n]=ctx;buf_tpos[buf_n]=tpos;buf_n++};tpos++;next}
+                    {tpos++}
+                    END{if(buf_n>0&&change_tpos>=0)for(i=0;i<buf_n;i++)print (change_tpos-buf_tpos[i])"|"buf[i]}
+                  ')
+                fi
+
+                echo ""
+                echo "  ╔══════════════════════════════════════════════════════════════════════════╗"
+                echo "  ║                      ⚠️  MERGE CONFLICT DETECTED                        ║"
+                echo "  ╚══════════════════════════════════════════════════════════════════════════╝"
+                echo ""
+                echo "  ┌─ CONFLICT OVERVIEW ──────────────────────────────────────────────────────┐"
+                echo "  │  Commit SHA   : $SHA"
+                echo "  │  Commit Msg   : $COMMIT_MSG"
+                echo "  │  Source branch: $SOURCE"
+                echo "  │  Target branch: $(git rev-parse --abbrev-ref HEAD)"
+                echo "  │  Source file  : $ORIG_FILE"
+                echo "  │  Target file  : $TARGET_FILE"
+                echo "  └──────────────────────────────────────────────────────────────────────────┘"
+                echo ""
+                echo "  ┌─ WHAT THE SOURCE COMMIT WANTS TO DO ────────────────────────────────────┐"
+                echo "  │  (from $SOURCE : $ORIG_FILE)"
+                git show "$SHA" -- "$ORIG_FILE" | grep '^[-+]' | grep -v '^---\|^+++' | head -20 \
+                  | sed 's/^-/  │  REMOVE: /; s/^+/  │  ADD:    /'
+                echo "  └──────────────────────────────────────────────────────────────────────────┘"
+                echo ""
+                echo "  ┌─ WHAT THE TARGET FILE ACTUALLY HAS ─────────────────────────────────────┐"
+                echo "  │  (from $(git rev-parse --abbrev-ref HEAD) : $TARGET_FILE  — around line $REJ_LINE)"
+                if [ "$REJ_LINE" -gt 0 ]; then
+                  START=$((REJ_LINE > 5 ? REJ_LINE - 5 : 1))
+                  END=$((REJ_LINE + 7))
+                  sed -n "${START},${END}p" "$TARGET_FILE" \
+                    | nl -ba -v "$START" \
+                    | sed "s/^/  │  /"
+                else
+                  echo "  │  (could not determine conflict line — .rej parse failed)"
+                fi
+                echo "  └──────────────────────────────────────────────────────────────────────────┘"
+                echo ""
+                echo "  ┌─ LINE-BY-LINE CONFLICT DETAIL ──────────────────────────────────────────┐"
+                echo "  │  For each line the commit tried to REMOVE:"
+                git show "$SHA" -- "$ORIG_FILE" | grep '^-' | grep -v '^---' | sed 's/^-//' \
+                  | grep -v '^[[:space:]]*$' | head -10 \
+                  | while IFS= read -r exp_line; do
+                      trimmed=$(echo "$exp_line" | sed 's/^[[:space:]]*//')
+                      if grep -qF "$trimmed" "$TARGET_FILE" 2>/dev/null; then
+                        echo "  │    FOUND   ✅ : $trimmed"
+                      else
+                        echo "  │    MISSING ❌ : $trimmed"
+                        echo "  │              → This line is MISSING from target — root cause of conflict"
+                      fi
+                    done
+                echo "  │"
+                if [ "$REJ_LINE" -gt 0 ]; then
+                  # Read EXPECTED from the .rej file (failed hunk only, not the full diff)
+                  EXPECTED_LINE=$(grep '^-' "${TARGET_FILE}.rej" 2>/dev/null | grep -v '^---' | head -1 | sed 's/^-//' | sed 's/^[[:space:]]*//')
+                  ACTUAL_LINE=$(sed -n "${REJ_LINE}p" "$TARGET_FILE" | sed 's/^[[:space:]]*//')
+                  # Fallback: if line is empty, search nearby (±5 lines) for non-blank content
+                  if [ -z "$ACTUAL_LINE" ]; then
+                    _S=$((REJ_LINE > 5 ? REJ_LINE - 5 : 1))
+                    _E=$((REJ_LINE + 5))
+                    ACTUAL_LINE=$(sed -n "${_S},${_E}p" "$TARGET_FILE" | grep -v '^[[:space:]]*$' | head -1 | sed 's/^[[:space:]]*//')
+                    [ -z "$ACTUAL_LINE" ] && ACTUAL_LINE="(could not determine)"
+                  fi
+                  echo "  │  Side-by-side at conflict line $REJ_LINE:"
+                  echo "  │    SOURCE EXPECTED : $EXPECTED_LINE"
+                  echo "  │    TARGET HAS      : $ACTUAL_LINE"
+                fi
+                echo "  └──────────────────────────────────────────────────────────────────────────┘"
+                echo ""
+                echo "  ┌─ HOW TO FIX MANUALLY ────────────────────────────────────────────────────┐"
+                echo "  │  1. git checkout $(git rev-parse --abbrev-ref HEAD)"
+                echo "  │  2. Open: $TARGET_FILE"
+                echo "  │  3. Find the conflicting area (near line $REJ_LINE)"
+                echo "  │  4. Apply the change manually that the commit wanted"
+                echo "  │  5. git add $TARGET_FILE && git commit -m \"$COMMIT_MSG [backported:$SHORT]\""
+                echo "  │  6. git push origin $(git rev-parse --abbrev-ref HEAD)"
+                echo "  └──────────────────────────────────────────────────────────────────────────┘"
+                echo "  ╔══════════════════════════════════════════════════════════════════════════╗"
+                echo "  ║  ❌ FAILED — manual resolution required (see above)                     ║"
+                echo "  ╚══════════════════════════════════════════════════════════════════════════╝"
+
+                # ── 🤖 AI Suggestion + 🌐 Interactive Conflict Viewer ──────────────────
+                export BP_CM="$COMMIT_MSG" BP_SHORT="$SHORT" BP_SHA="$SHA"
+                export BP_TF="$TARGET_FILE" BP_RL="$REJ_LINE"
+                export BP_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+                export BP_SD="$(git show "$SHA" -- "$ORIG_FILE" | grep '^[-+]' | grep -v '^---\|^+++' | head -20 || true)"
+                if [ "$REJ_LINE" -gt 0 ]; then
+                  _TS=$((REJ_LINE > 5 ? REJ_LINE - 5 : 1)); _TE=$((REJ_LINE + 10))
+                  export BP_TC="$(sed -n "${_TS},${_TE}p" "$TARGET_FILE" || true)"
+                else
+                  export BP_TC=""
+                fi
+
+                python3 /tmp/conflict_viewer.py || true
+                _AI_SUGGESTION="$(cat /tmp/bp_ai.txt 2>/dev/null || echo '(not available)')"
+                _AUTO_APPLIED="$(cat /tmp/bp_auto_applied.txt 2>/dev/null || echo 'false')"
+
+                echo ""
+                echo "  ┌─ 🤖 AI RESOLUTION SUGGESTION ───────────────────────────────────────────┐"
+                echo "$_AI_SUGGESTION" | head -20 | sed 's/^/  │  /'
+                echo "  └──────────────────────────────────────────────────────────────────────────┘"
+                echo ""
+
+                # Write to the workflow run Summary tab (always visible in Actions UI)
+                {
+                  printf '## ⚠️ Backport Conflict: `%s`\n\n' "$SHORT"
+                  printf '| Field | Value |\n|---|---|\n'
+                  printf '| **Commit** | `%s` |\n' "$SHORT"
+                  printf '| **Message** | %s |\n' "$COMMIT_MSG"
+                  printf '| **File** | `%s` |\n' "$TARGET_FILE"
+                  printf '| **Conflict Line** | `%s` |\n\n' "$REJ_LINE"
+                  printf '### Source diff\n```diff\n%s\n```\n\n' "$BP_SD"
+                  printf '### Target file (around line %s)\n```\n%s\n```\n\n' "$REJ_LINE" "$BP_TC"
+                  printf '### 🤖 AI Suggestion\n```\n%s\n```\n\n' "$_AI_SUGGESTION"
+                } >> "$GITHUB_STEP_SUMMARY"
+
+                rm -f "${TARGET_FILE}.rej" "${TARGET_FILE}.orig" 2>/dev/null
+
+                # ── Auto-apply: if AI fixed the file, commit and continue ────
+                if [ "$_AUTO_APPLIED" = "true" ]; then
+                  echo ""
+                  echo "  ✅ AI fix auto-applied to $TARGET_FILE — committing..."
+                  git add "$TARGET_FILE"
+                  git commit -m "$COMMIT_MSG [AI-assisted fix][backported:${SHA:0:7}]"
+                  ALL_OK=true
+                  AI_COMMITTED=true
+                  echo ""
+                  echo "✅ Applied $SHORT (AI auto-fix committed)"
+                  continue
+                fi
+
+                ALL_OK=false
+                break
+              fi
+            done
+
+            if [ "$ALL_OK" = false ]; then
+              echo ""
+              echo "❌ FAILED — could not apply commit $SHORT"
+              exit 1
+            fi
+
+            # Skip final commit if AI already committed for this SHA
+            if [ "${AI_COMMITTED:-false}" != "true" ]; then
+              git commit -m "$(git log -1 --format='%s' $SHA) [backported:$SHORT]"
+              echo ""
+              echo "  ✅ Applied $SHORT"
+            fi
+            AI_COMMITTED=false
+          done
+
+          echo ""
+          echo "✅ All $COMMIT_COUNT commit(s) applied successfully."
+
+      # ── STEP 5: Push the new branch ─────────────────────────────────────────
+      - name: Push new branch
+        if: steps.get_commits.outputs.count != '0'
+        env:
+          NEW_BRANCH: ${{ github.event.inputs.new_branch_name }}
+        run: |
+          echo "Pushing '$NEW_BRANCH'..."
+          git push origin "$NEW_BRANCH"
+          echo ""
+          echo "✅ SUCCESS"
+          echo "   Branch '$NEW_BRANCH' is now on GitHub with your changes applied."
+          echo "   You can open a PR from '$NEW_BRANCH' into '${{ github.event.inputs.support_branch }}'."
+
+      # ── STEP 6: Create Pull Request ─────────────────────────────────────────
+      - name: Create Pull Request
+        if: steps.get_commits.outputs.count != '0'
+        env:
+          NEW_BRANCH:   ${{ github.event.inputs.new_branch_name }}
+          BASE_BRANCH:  ${{ github.event.inputs.support_branch }}
+          PR_TITLE:     ${{ github.event.inputs.pr_title }}
+          PR_BODY:      ${{ github.event.inputs.pr_body }}
+          GH_TOKEN:     ${{ secrets.RDKCM_RDKE }}
+        run: |
+          set +e
+          # Use new_branch_name as title if pr_title is empty
+          TITLE="${PR_TITLE:-Backport ${NEW_BRANCH} into ${BASE_BRANCH}}"
+          BODY="${PR_BODY:-Automated backport created by simple-backport workflow.}"
+
+          echo "Creating PR: '$TITLE'"
+          echo "  head: $NEW_BRANCH  →  base: $BASE_BRANCH"
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/pulls \
+            -d "{\"title\":\"$TITLE\",\"body\":\"$BODY\",\"head\":\"$NEW_BRANCH\",\"base\":\"$BASE_BRANCH\"}")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY_RESP=$(echo "$RESPONSE" | head -n -1)
+
+          if [ "$HTTP_CODE" = "201" ]; then
+            PR_URL=$(echo "$BODY_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['html_url'])")
+            echo ""
+            echo "✅ PR created successfully!"
+            echo "   $PR_URL"
+          elif [ "$HTTP_CODE" = "422" ]; then
+            echo ""
+            ERROR_MSG=$(echo "$BODY_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); errs=d.get('errors',[]); print(errs[0].get('message',d.get('message','')) if errs else d.get('message',''))" 2>/dev/null || echo "unknown")
+            if echo "$ERROR_MSG" | grep -qi "already exists"; then
+              echo "✅ PR already exists for '$NEW_BRANCH' → '$BASE_BRANCH'"
+              echo "   New commit was pushed to the branch and appears in the existing PR automatically."
+            else
+              echo "⚠️  PR could not be created: $ERROR_MSG"
+              echo "   (Branch is pushed. Check if there are commits between '$NEW_BRANCH' and '$BASE_BRANCH')"
+            fi
+          else
+            echo "⚠️  PR creation returned HTTP $HTTP_CODE"
+            echo "   (Branch is pushed. Create PR manually if needed)"
+            echo "   $BODY_RESP"
+          fi
