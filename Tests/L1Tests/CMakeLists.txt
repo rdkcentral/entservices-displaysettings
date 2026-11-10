@@ -25,9 +25,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(${NAMESPACE}Plugins REQUIRED)
 
-set (TEST_SRC
-    tests/test_UtilsFile.cpp
-)
+set (TEST_SRC)
 
 set (TEST_LIB
     ${NAMESPACE}Plugins::${NAMESPACE}Plugins
@@ -103,7 +101,7 @@ macro(add_plugin_test plugin_name test_files)
 endmacro()
 
 # DisplaySettings plugin does not have L1 tests
-
+if(TEST_SRC)
 add_library(${MODULE_NAME} SHARED ${TEST_SRC})
 
 include_directories(${TEST_INC})
@@ -126,5 +124,6 @@ target_include_directories(${MODULE_NAME}
 
 install(TARGETS ${MODULE_NAME} DESTINATION lib)
 write_config(${PLUGIN_NAME})
+endif()
 
 
