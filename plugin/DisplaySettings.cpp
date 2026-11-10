@@ -36,6 +36,7 @@
 #include "UtilsisValidInt.h"
 #include "tracing/Logging.h"
 #include <syscall.h>
+#include <cstring>
 
 using namespace std;
 
@@ -1572,7 +1573,7 @@ namespace Plugin {
                         auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                         if (vp != nullptr) {
                             Exchange::IDeviceSettingsVideoPort::VideoPortResolution vpRes;
-                            auto comRc = vp->GetVideoPortResolution(videoHandle, vpRes);
+                            auto comRc = vp->GetVideoPortResolution(videoHandle, vpRes, false);
                             if (comRc == Core::ERROR_NONE){
                                 currentResolutionCache = vpRes.name;
                                 isResCacheUpdated = true;
@@ -1894,6 +1895,7 @@ namespace Plugin {
                         bool isArc = Utils::String::stringContains(audioPort, "HDMI_ARC");
 
                         if (portConnected) {
+                            LOGINFO("Port connected: %s, HDMI: %d, ARC: %d", audioPort.c_str(), isHdmi, isArc);
                             if (isHdmi && comMode != Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH) {
                                 // HDMI + non-passthru: set stereoAuto then stereoMode
                                 comResult = audio->SetStereoAuto(audioHandle, stereoAuto ? 1 : 0, persist);
@@ -1939,7 +1941,8 @@ namespace Plugin {
                                     LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
                                     success = false;
                                 }
-                            } else if (isHdmi) {
+                            }
+                            else if (isHdmi) {
                                 // HDMI + passthru: reset stereoAuto
                                 LOGWARN("Reset auto on %s for mode = %s!", audioPort.c_str(), soundMode.c_str());
                                 comResult = audio->SetStereoAuto(audioHandle, 0, persist);
@@ -1952,7 +1955,9 @@ namespace Plugin {
                                     LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
                                     success = false;
                                 }
-                            } else if (isArc) {
+                            }
+                            else if (isArc) {
+                                LOGINFO("ARC port handling: %s, HDMI: %d, ARC: %d", audioPort.c_str(), isHdmi, isArc);
                                 if (!stereoAuto && (comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND ||
                                                     comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH ||
                                                     comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_STEREO)) {
@@ -2020,13 +2025,10 @@ namespace Plugin {
                                             success = false;
                                         }
                                     }
-                                    comResult = audio->SetStereoMode(audioHandle, comMode, persist);
-                                    if (comResult != Core::ERROR_NONE) {
-                                        LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
-                                        success = false;
-                                    }
+                                    // don't set stereo mode ARC Port in Auto mode
                                 }
-                            } else if (Utils::String::stringContains(audioPort, "SPDIF") || Utils::String::stringContains(audioPort, "HEADPHONE")) {
+                            }
+                            else if (Utils::String::stringContains(audioPort, "SPDIF") || Utils::String::stringContains(audioPort, "HEADPHONE")) {
                                 // DS_IARM: else if (kSPDIF || kHEADPHONE)
                                 if (!stereoAuto) {
                                     comResult = audio->SetStereoAuto(audioHandle, 0, persist);
@@ -2047,7 +2049,9 @@ namespace Plugin {
                                     }
                                 }
                             }
-                        } else {
+                        }
+                        else {
+                            LOGINFO("Port not connected: %s, HDMI: %d, ARC: %d", audioPort.c_str(), isHdmi, isArc);
                             // Port not connected — mirror DS_IARM disconnected-port handling
                             if (isArc) {
                                 if (!stereoAuto && (comMode == Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_SURROUND ||
@@ -2069,13 +2073,10 @@ namespace Plugin {
                                         LOGERR("SetStereoAuto failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
                                         success = false;
                                     }
-                                    comResult = audio->SetStereoMode(audioHandle, comMode, persist);
-                                    if (comResult != Core::ERROR_NONE) {
-                                        LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
-                                        success = false;
-                                    }
+                                    // don't set stereo mode ARC Port in Auto mode
                                 }
-                            } else if (isHdmi) {
+                            }
+                            else if (isHdmi) {
                                 if (comMode != Exchange::IDeviceSettingsAudio::StereoMode::AUDIO_STEREO_PASSTHROUGH) {
                                     comResult = audio->SetStereoAuto(audioHandle, stereoAuto ? 1 : 0, persist);
                                     if (comResult != Core::ERROR_NONE) {
@@ -2096,7 +2097,8 @@ namespace Plugin {
                                     LOGERR("SetStereoMode failed for audio handle %d, Error=%d", audioHandle, static_cast<int>(comResult));
                                     success = false;
                                 }
-                            } else {
+                            }
+                            else {
                                 LOGERR("setSoundMode failed !! Device Not Connected...\n");
                                 success = false;
                             }
@@ -5726,7 +5728,10 @@ namespace Plugin {
                                             case AUDIO_DEVICE_SAD_RECEIVED: {
                                                 LOGINFO("%s: Update Audio device SAD\n", __FUNCTION__);
                                                 setAudioDeviceSADState(AUDIO_DEVICE_SAD_UPDATED);
-                                                std::vector<uint8_t> sadBytes(sad_list.begin(), sad_list.end());
+                                                // sad_list holds full packed SAD codes - flatten the raw int bytes, don't narrow each to uint8_t.
+                                                std::vector<uint8_t> sadBytes(sad_list.size() * sizeof(int));
+                                                memcpy(sadBytes.data(), sad_list.data(), sadBytes.size());
+                                                LOGINFO("%s: SetSAD entries=%zu byteCount=%zu", __FUNCTION__, sad_list.size(), sadBytes.size());
                                                 comResult = audio->SetSAD(audioHandle, sadBytes.data(), static_cast<uint8_t>(sadBytes.size()));
                                                 if (comResult != Core::ERROR_NONE) {
                                                     LOGWARN("SetSAD failed for audioPort='%s', Error=%d", audioPort.c_str(), static_cast<int>(comResult));
@@ -5882,8 +5887,10 @@ namespace Plugin {
                 if (INVALID_DS_HANDLE != audioHandle) {
                     auto* audio = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsAudio>();
                     if (audio != nullptr) {
-                        // Build flat SAD array from sad_list
-                        std::vector<uint8_t> sadArray(sad_list.begin(), sad_list.end());
+                        // Build flat SAD array from sad_list - flatten the raw int bytes, don't narrow each to uint8_t.
+                        std::vector<uint8_t> sadArray(sad_list.size() * sizeof(int));
+                        memcpy(sadArray.data(), sad_list.data(), sadArray.size());
+                        LOGINFO("SetSAD entries=%zu byteCount=%zu", sad_list.size(), sadArray.size());
                         Core::hresult comResult = audio->SetSAD(audioHandle, sadArray.data(), static_cast<uint8_t>(sadArray.size()));
                         if (comResult != Core::ERROR_NONE) {
                             LOGWARN("SetSAD failed for audioPort='HDMI_ARC0', Error=%d", static_cast<int>(comResult));
@@ -6505,7 +6512,10 @@ namespace Plugin {
                             LOGINFO("%s: Updating SAD \n", __FUNCTION__);
                             setAudioDeviceSADState(AUDIO_DEVICE_SAD_UPDATED);
                             {
-                                std::vector<uint8_t> sadB(sad_list.begin(), sad_list.end());
+                                // sad_list holds full packed SAD codes - flatten the raw int bytes, don't narrow each to uint8_t.
+                                std::vector<uint8_t> sadB(sad_list.size() * sizeof(int));
+                                memcpy(sadB.data(), sad_list.data(), sadB.size());
+                                LOGINFO("%s: SetSAD entries=%zu byteCount=%zu", __FUNCTION__, sad_list.size(), sadB.size());
                                 arcAudio->SetSAD(arcHandle, sadB.data(), static_cast<uint8_t>(sadB.size()));
                             }
                             int32_t sAuto = 0;
@@ -6547,7 +6557,10 @@ namespace Plugin {
                             LOGINFO("%s: Updating SAD since audio is already routed and ARC is initiated\n", __FUNCTION__);
                             setAudioDeviceSADState(AUDIO_DEVICE_SAD_UPDATED);
                             {
-                                std::vector<uint8_t> sadB2(sad_list.begin(), sad_list.end());
+                                // sad_list holds full packed SAD codes - flatten the raw int bytes, don't narrow each to uint8_t.
+                                std::vector<uint8_t> sadB2(sad_list.size() * sizeof(int));
+                                memcpy(sadB2.data(), sad_list.data(), sadB2.size());
+                                LOGINFO("%s: SetSAD entries=%zu byteCount=%zu", __FUNCTION__, sad_list.size(), sadB2.size());
                                 arcAudio->SetSAD(arcHandle, sadB2.data(), static_cast<uint8_t>(sadB2.size()));
                             }
                             int32_t sAuto2 = 0;
@@ -7219,11 +7232,17 @@ namespace Plugin {
                 LOGERR("isConnectedDeviceRepeater failure: display not connected on %s\n", strVideoPort.c_str());
                 success = false;
             } else {
+                // Legacy: vPort.getDisplay() uses the default video port's own type/index (not a fixed HDMI port)
+                VideoPortEntry portEntry;
                 auto* disp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
-                if (disp != nullptr) {
+                if (disp != nullptr && !DSHelper::resolveVideoPortByName(strVideoPort, portEntry)) {
+                    LOGERR("video port '%s' not found", strVideoPort.c_str());
+                    success = false;
+                    disp->Release();
+                } else if (disp != nullptr) {
                     int32_t displayHandle = -1;
                     Core::hresult comResult = Core::ERROR_NONE;
-                    comResult = disp->GetDisplay(Exchange::IDeviceSettingsDisplay::DS_DISPLAY_PORT_TYPE_HDMI, 0, displayHandle);
+                    comResult = disp->GetDisplay(static_cast<Exchange::IDeviceSettingsDisplay::DisplayPortType>(portEntry.type), portEntry.index, displayHandle);
                     if (comResult == Core::ERROR_NONE && INVALID_DS_HANDLE != displayHandle) {
                         Exchange::IDeviceSettingsDisplay::DisplayEDID edId{};
                         Exchange::IDeviceSettingsDisplay::IDSVideoPortResolutionIterator* resList = nullptr;
@@ -7235,8 +7254,8 @@ namespace Plugin {
                                 resList = nullptr;
                             }
                         } else {
-                            LOGERR("GetDisplayEdid failed, Error=%d", static_cast<int>(comResult));
-                            success = false;
+                            // Legacy getDisplay() only logs an EDID read failure and still succeeds
+                            LOGWARN("GetDisplayEdid failed, Error=%d", static_cast<int>(comResult));
                         }
                     } else {
                         LOGERR("video port handle not found, Error=%d", static_cast<int>(comResult));
