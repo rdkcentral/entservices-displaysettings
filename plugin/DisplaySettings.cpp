@@ -20,6 +20,7 @@
 // I have put several "TODO(MROLLINS)" in the code below to mark areas of concern I encountered
 //   when refactoring the servicemanager's version of displaysettings into this new thunder plugin format
 
+
 #include "DisplaySettings.h"
 #include "UtilsSynchro.hpp"
 #include "tr181api.h"
@@ -37,6 +38,7 @@
 #include "tracing/Logging.h"
 #include <syscall.h>
 #include <cstring>
+
 
 using namespace std;
 
