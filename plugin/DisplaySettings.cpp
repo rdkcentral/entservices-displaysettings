@@ -7389,8 +7389,28 @@ namespace Plugin {
                     else if (width == 3840 && height == 2160) pixRes = VR::DS_VIDEO_PIXELRES_3840X2160;
                     else if (width == 4096 && height == 2160) pixRes = VR::DS_VIDEO_PIXELRES_4096X2160;
 
+                    // Width/height alone is ambiguous (e.g. 3840x2160 maps to 2160p24/25/30/50/60),
+                    // so prefer the name of the resolution actually applied by Device Settings.
+                    auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                    if (vp != nullptr) {
+                        Exchange::IDeviceSettingsVideoPort::VideoPortResolution vpRes;
+                        auto comRc = vp->GetVideoPortResolution(videoHandle, vpRes, false);
+                        if (comRc == Core::ERROR_NONE) {
+                            if (pixRes == VR::DS_VIDEO_PIXELRES_MAX || vpRes.pixelResolution == pixRes) {
+                                resolution = vpRes.name;
+                            } else {
+                                LOGWARN("resolutionChanged: current resolution '%s' does not match notified %dx%d on port '%s'", vpRes.name.c_str(), width, height, display.c_str());
+                            }
+                        } else {
+                            LOGERR("GetVideoPortResolution failed for '%s', Error=%d", display.c_str(), static_cast<int>(comRc));
+                        }
+                        vp->Release();
+                    } else {
+                        LOGERR("IDeviceSettingsVideoPort not available");
+                    }
+
                     VideoPortEntry vpEntry;
-                    if (pixRes != VR::DS_VIDEO_PIXELRES_MAX && DSHelper::resolveVideoPortByName(display, vpEntry)) {
+                    if (resolution.empty() && pixRes != VR::DS_VIDEO_PIXELRES_MAX && DSHelper::resolveVideoPortByName(display, vpEntry)) {
                         std::vector<VideoPortResolution> vpResolutions;
                         if (DSHelper::getVideoPortResolutionsForType(vpEntry.type, vpResolutions)) {
                             for (const auto& r : vpResolutions) {
