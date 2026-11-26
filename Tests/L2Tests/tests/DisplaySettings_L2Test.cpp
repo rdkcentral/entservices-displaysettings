@@ -595,3 +595,44 @@ TEST_F(DisplaySettingsL2Test, CoversDisplayInformationEndpoints)
         EXPECT_TRUE(result.HasLabel("success"));
     }
 }
+
+TEST_F(DisplaySettingsL2Test, CoversAudioControlEndpointsWithDefaultParameters)
+{
+    const std::vector<const char*> methods = {
+        "getBassEnhancer", "isSurroundDecoderEnabled", "getDRCMode",
+        "getSurroundVirtualizer", "getMISteering", "getGain", "getMuted",
+        "getVolumeLevel", "getMS12AudioCompression", "getDolbyVolumeMode",
+        "getDialogEnhancement", "getIntelligentEqualizerMode",
+        "getGraphicEqualizerMode", "getMS12AudioProfile",
+        "getSupportedMS12AudioProfiles", "getAssociatedAudioMixing",
+        "getFaderControl", "getPrimaryLanguage", "getSecondaryLanguage",
+        "getAudioDelay", "getSinkAtmosCapability", "getPreferredColorDepth",
+        "getColorDepthCapabilities", "getSupportedMS12Config", "getAudioEncoding",
+        "getDisplayAspectRatio"
+    };
+
+    for (const char* method : methods) {
+        JsonObject parameters;
+        JsonObject result;
+        const uint32_t status = InvokeServiceMethod(
+            kDisplaySettingsCallsign, method, parameters, result);
+
+        SCOPED_TRACE(method);
+        EXPECT_EQ(Core::ERROR_NONE, status);
+        EXPECT_TRUE(result.HasLabel("success"));
+    }
+}
+
+TEST_F(DisplaySettingsL2Test, RejectsInvalidZoomSetting)
+{
+    JsonObject parameters;
+    JsonObject result;
+    parameters["zoomSetting"] = "invalid";
+
+    const uint32_t status = InvokeServiceMethod(
+        kDisplaySettingsCallsign, "setZoomSetting", parameters, result);
+
+    EXPECT_EQ(Core::ERROR_NONE, status);
+    ASSERT_TRUE(result.HasLabel("success"));
+    EXPECT_FALSE(result["success"].Boolean());
+}

@@ -100,7 +100,18 @@ macro(add_plugin_test plugin_name test_files)
     add_plugin_test_ex(${plugin_opt} "${test_files}" "../../${plugin_name}" "${NAMESPACE}${plugin_name}")
 endmacro()
 
-# DisplaySettings plugin does not have L1 tests
+set (DISPLAYSETTINGS_INC
+    ${CMAKE_SOURCE_DIR}/plugin
+    ${CMAKE_SOURCE_DIR}/../entservices-helpers/helpers
+)
+set (DISPLAYSETTINGS_LIBS
+    ${NAMESPACE}DisplaySettings
+)
+add_plugin_test_ex(PLUGIN_DISPLAYSETTINGS
+    tests/test_DisplaySettings.cpp
+    "${DISPLAYSETTINGS_INC}"
+    "${DISPLAYSETTINGS_LIBS}")
+
 if(TEST_SRC)
 add_library(${MODULE_NAME} SHARED ${TEST_SRC})
 
