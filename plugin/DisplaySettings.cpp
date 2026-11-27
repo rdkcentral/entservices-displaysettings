@@ -1408,10 +1408,10 @@ namespace Plugin {
 
             if (displayConnected && surroundMode != VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_NONE) {
                 // DS_IARM: if(surroundMode & dsSURROUNDMODE_DDPLUS) / else if(surroundMode & dsSURROUNDMODE_DD)
-                if (surroundMode == VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_DDPLUS) {
+                if (surroundMode & VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_DDPLUS) {
                     LOGINFO("HDMI0 has surround DD Plus");
                     supportedAudioModes.emplace_back("AUTO (Dolby Digital Plus)");
-                } else if (surroundMode == VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_DD) {
+                } else if (surroundMode & VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_DD) {
                     LOGINFO("HDMI0 has surround DD5.1");
                     supportedAudioModes.emplace_back("AUTO (Dolby Digital 5.1)");
                 }
@@ -1766,9 +1766,9 @@ namespace Plugin {
                             else {
                                 LOGERR("No video port handle found for videoDisplay '%s'", videoDisplay.c_str());
                             }
-                            if (surroundMode == VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_DDPLUS) {
+                            if (surroundMode & VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_DDPLUS) {
                                 modeString = "AUTO (Dolby Digital Plus)";
-                            } else if (surroundMode == VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_DD) {
+                            } else if (surroundMode & VideoPortSurroundMode::DS_VIDEO_PORT_SURROUNDMODE_DD) {
                                 modeString = "AUTO (Dolby Digital 5.1)";
                             } else {
                                 modeString = "AUTO (Stereo)";
