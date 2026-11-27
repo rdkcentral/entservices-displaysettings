@@ -4992,24 +4992,17 @@ namespace Plugin {
         bool enable = parameters["enable"].Boolean();
 
         bool success = false;
-        {
-            // DS_IARM: only enable/disable if display is connected
-            if (!isDisplayConnected(videoDisplay)) {
-                LOGERR("display NOT connected on port %s", videoDisplay.c_str());
-            } else {
-                const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(videoDisplay);
-                if (INVALID_DS_HANDLE != videoHandle) {
-                    auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
-                    if (vp != nullptr) {
-                        Core::hresult comResult = vp->EnableVideoPort(videoHandle, enable);
-                        if (comResult == Core::ERROR_NONE) {
-                            success = true;
-                        } else {
-                            LOGERR("EnableVideoPort failed for videoDisplay='%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comResult));
-                        }
-                        vp->Release();
-                    }
+        const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(videoDisplay);
+        if (INVALID_DS_HANDLE != videoHandle) {
+            auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+            if (vp != nullptr) {
+                Core::hresult comResult = vp->EnableVideoPort(videoHandle, enable);
+                if (comResult == Core::ERROR_NONE) {
+                    success = true;
+                } else {
+                    LOGERR("EnableVideoPort failed for videoDisplay='%s', Error=%d", videoDisplay.c_str(), static_cast<int>(comResult));
                 }
+                vp->Release();
             }
         }
         returnResponse(success);
